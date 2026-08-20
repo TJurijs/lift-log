@@ -1,0 +1,51 @@
+{
+  "name": "lift-log-app",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "npm run dev:hosted",
+    "dev:demo": "vite --mode demo",
+    "dev:hosted": "node scripts/validate-build-env.mjs nonprod && vite --mode nonprod",
+    "build": "tsc --noEmit && vite build",
+    "build:nonprod": "node scripts/validate-build-env.mjs nonprod && tsc --noEmit && vite build --mode nonprod",
+    "build:prod": "node scripts/validate-build-env.mjs production && tsc --noEmit && vite build --mode production",
+    "preview": "vite preview",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:integration": "node tests/run-supabase-integration.mjs",
+    "lint": "eslint . --ignore-pattern dist",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset --local",
+    "db:lint": "supabase db lint --local"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "5.2.8",
+    "@supabase/supabase-js": "2.112.3",
+    "lucide-react": "0.468.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "eslint": "9.39.4",
+    "eslint-plugin-jsx-a11y": "6.10.2",
+    "eslint-plugin-react": "7.37.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "16.4.0",
+    "postgres": "^3.4.9",
+    "supabase": "^2.115.0",
+    "tailwindcss": "4.2.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.59.3",
+    "vite": "8.0.13"
+  },
+  "type": "module"
+}
