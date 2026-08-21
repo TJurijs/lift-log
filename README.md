@@ -7,6 +7,7 @@ Lift Log is a mobile-first training planner and workout logger for self-coached 
 - React + TypeScript single-page application built with Vite
 - Responsive mobile and desktop interfaces
 - Supabase Google authentication in configured environments
+- Development-only test-persona sign-in for repeatable athlete/coach QA
 - Supabase Postgres repository for programs, workout logging, history, exercise libraries, and coaching
 - Row Level Security for athlete isolation and revocable coach access
 - Immutable published programs and completed workout history
@@ -31,6 +32,20 @@ npm run dev
 ```
 
 `npm run dev` is an alias for `npm run dev:hosted`. It loads `.env.nonprod`, which stays on your computer and is ignored by Git. After a fresh clone, create it from `.env.example` and add the development Supabase URL and publishable key. Never put a secret/service-role key or database password in a `VITE_` variable.
+
+### Development test population
+
+Nonprod can contain nine isolated fictional accounts based on Latvian presidents. They cover self-coached athletes, ordinary coach relationships, one athlete with two coaches, a coach who is also an athlete, first-login onboarding, and a coach with no athletes.
+
+The login screen and signed-in sidebar expose a **Test population** switcher only when all three safeguards match: the `nonprod` build mode, the exact `liftlog-dev` Supabase project, and `VITE_ENABLE_TEST_PERSONAS=true`. The shared password is entered once and kept only in page memory; it belongs in ignored `.env.test-personas`, never in a `VITE_` variable.
+
+After applying migrations, reset and rebuild the fixture with:
+
+```bash
+npm run seed:test-population
+```
+
+The command refuses production and unknown Supabase projects, preserves real development accounts, retains stable fixture Auth identities, and resets only the exact fixture namespace. Set optional `TEST_POPULATION_AS_OF=YYYY-MM-DD` in `.env.test-personas` when a reproducible date anchor is needed.
 
 ### Demo
 
@@ -65,7 +80,7 @@ npm run test:integration
 npm run db:lint
 ```
 
-The integration test creates temporary local users and proves athlete isolation, active and revoked coach access, publishing, schedule creation, and immutable completed history. It refuses to run against a non-local Supabase URL.
+The integration test creates temporary local users and proves athlete isolation, active and revoked coach access, publishing, schedule creation, and immutable completed history. It refuses to run against a non-local Supabase URL. The regular test suite also verifies the exact test-persona graph and its production safety guards.
 
 ## Nonprod and production builds
 
@@ -81,6 +96,8 @@ npm run build:prod
 
 These commands fail before building if the public site URL, Supabase URL, or publishable key is missing or is not HTTPS. Only the resulting `dist/` directory is deployed.
 
+Production builds fail if test personas are enabled. Nonprod builds also fail if that feature points anywhere except the exact development project.
+
 ## Google authentication
 
 The first real-auth test environment is nonprod. Google OAuth may remain in Testing mode for the small pilot, with each athlete and coach added as a Google test user. Configure the Supabase Google provider and exact `https://dev.liftlog.cc` redirect first; production gets its own project, callback, and keys later.
@@ -89,5 +106,6 @@ The database model is defined by:
 
 - `supabase/migrations/202608200001_initial_schema.sql`
 - `supabase/migrations/202608210001_operational_mvp.sql`
+- `supabase/migrations/202608210002_test_population_and_multi_coach.sql`
 
 See [docs/MVP_AND_ARCHITECTURE.md](docs/MVP_AND_ARCHITECTURE.md) for the product and authorization model, and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the staged hosting layout.

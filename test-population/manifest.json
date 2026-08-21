@@ -1,0 +1,67 @@
+{
+  "namespace": "latvian-presidents-v1",
+  "label": "Latvian Presidents",
+  "personas": [
+    {
+      "key": "janis-cakste",
+      "name": "Jānis Čakste",
+      "email": "janis-cakste@presidents.liftlog.test",
+      "scenario": "Self-coached athlete with training history"
+    },
+    {
+      "key": "gustavs-zemgals",
+      "name": "Gustavs Zemgals",
+      "email": "gustavs-zemgals@presidents.liftlog.test",
+      "scenario": "Self-coached athlete testing invitations"
+    },
+    {
+      "key": "alberts-kviesis",
+      "name": "Alberts Kviesis",
+      "email": "alberts-kviesis@presidents.liftlog.test",
+      "scenario": "Athlete coached by Valdis"
+    },
+    {
+      "key": "guntis-ulmanis",
+      "name": "Guntis Ulmanis",
+      "email": "guntis-ulmanis@presidents.liftlog.test",
+      "scenario": "Shared athlete coached by Valdis and Raimonds"
+    },
+    {
+      "key": "vaira-vike-freiberga",
+      "name": "Vaira Vīķe-Freiberga",
+      "email": "vaira-vike-freiberga@presidents.liftlog.test",
+      "scenario": "Athlete coached by Raimonds"
+    },
+    {
+      "key": "valdis-zatlers",
+      "name": "Valdis Zatlers",
+      "email": "valdis-zatlers@presidents.liftlog.test",
+      "scenario": "Coach with three athletes and a personal plan"
+    },
+    {
+      "key": "raimonds-vejonis",
+      "name": "Raimonds Vējonis",
+      "email": "raimonds-vejonis@presidents.liftlog.test",
+      "scenario": "Coach who is also coached by Valdis"
+    },
+    {
+      "key": "egils-levits",
+      "name": "Egils Levits",
+      "email": "egils-levits@presidents.liftlog.test",
+      "scenario": "Brand-new account for onboarding"
+    },
+    {
+      "key": "edgars-rinkevics",
+      "name": "Edgars Rinkēvičs",
+      "email": "edgars-rinkevics@presidents.liftlog.test",
+      "scenario": "Future coach with no active athletes"
+    }
+  ],
+  "relationships": [
+    { "athlete": "alberts-kviesis", "coach": "valdis-zatlers" },
+    { "athlete": "guntis-ulmanis", "coach": "valdis-zatlers" },
+    { "athlete": "guntis-ulmanis", "coach": "raimonds-vejonis" },
+    { "athlete": "vaira-vike-freiberga", "coach": "raimonds-vejonis" },
+    { "athlete": "raimonds-vejonis", "coach": "valdis-zatlers" }
+  ]
+}

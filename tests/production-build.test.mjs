@@ -5,6 +5,10 @@ import test from "node:test";
 test("builds a static Hetzner-ready application shell", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
   const assets = await readdir(new URL("../dist/assets/", import.meta.url));
+  const javascript = (await Promise.all(
+    assets.filter((asset) => asset.endsWith(".js"))
+      .map((asset) => readFile(new URL(`../dist/assets/${asset}`, import.meta.url), "utf8")),
+  )).join("\n");
 
   assert.match(html, /<title>Lift Log<\/title>/i);
   assert.match(html, /name="viewport"[^>]+viewport-fit=cover/i);
@@ -12,6 +16,7 @@ test("builds a static Hetzner-ready application shell", async () => {
   assert.match(html, /<div id="root"><\/div>/i);
   assert.ok(assets.some((asset) => asset.endsWith(".js")), "expected a hashed JavaScript bundle");
   assert.ok(assets.some((asset) => asset.endsWith(".css")), "expected a hashed stylesheet");
+  assert.doesNotMatch(javascript, /presidents\.liftlog\.test|janis-cakste|Enter once, then choose an account/i);
   await access(new URL("../dist/og.png", import.meta.url));
 });
 

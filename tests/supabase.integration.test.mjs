@@ -91,7 +91,7 @@ test("Supabase enforces the complete athlete and coach authorization lifecycle",
         email: identity.email,
         password,
         email_confirm: true,
-        user_metadata: { display_name: identity.name },
+          user_metadata: { full_name: identity.name },
       });
       assert.equal(error, null, `create ${identity.role}: ${error?.message ?? "unknown auth error"}`);
       assert.ok(data.user);

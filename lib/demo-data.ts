@@ -95,13 +95,13 @@ export const demoWorkspace: WorkspaceData = {
   globalExercises,
   personalExercises: initialPersonalExercises,
   completedSessions,
-  coachConnection: {
+  coachConnections: [{
     relationshipId: "demo-relationship",
     coachId: "demo-coach",
     name: "Nina Kovacs",
     initials: "NK",
     connectedSince: "2026-07-12",
-  },
+  }],
   coachedAthletes: athleteSummaries,
   activeSession: null,
 };

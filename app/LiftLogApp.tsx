@@ -11,6 +11,7 @@ import {
   Copy,
   Dumbbell,
   Ellipsis,
+  FlaskConical,
   LayoutDashboard,
   Link2,
   ListPlus,
@@ -106,9 +107,10 @@ function workoutForToday(program: Program, activeSession: ActiveSession | null) 
     ?? allWorkouts[0];
 }
 
-export default function LiftLogApp({ viewer, onSignOut, initialWorkspace, repository }: {
+export default function LiftLogApp({ viewer, onSignOut, onOpenTestPersonas, initialWorkspace, repository }: {
   viewer: AppViewer;
   onSignOut: () => void;
+  onOpenTestPersonas?: () => void;
   initialWorkspace: WorkspaceData;
   repository: LiftLogRepository | null;
 }) {
@@ -392,9 +394,7 @@ export default function LiftLogApp({ viewer, onSignOut, initialWorkspace, reposi
     }
   }
 
-  async function removeCoachAccess() {
-    const connection = workspace.coachConnection;
-    if (!connection) return;
+  async function removeCoachAccess(connection: CoachConnection) {
     if (repository) {
       try {
         await repository.endCoachRelationship(connection.relationshipId);
@@ -404,7 +404,10 @@ export default function LiftLogApp({ viewer, onSignOut, initialWorkspace, reposi
         return;
       }
     } else {
-      setWorkspace((previous) => ({ ...previous, coachConnection: null }));
+      setWorkspace((previous) => ({
+        ...previous,
+        coachConnections: previous.coachConnections.filter((item) => item.relationshipId !== connection.relationshipId),
+      }));
     }
     notify("Coach access removed");
   }
@@ -430,13 +433,14 @@ export default function LiftLogApp({ viewer, onSignOut, initialWorkspace, reposi
 
   return (
     <main className="app-shell">
-      <Sidebar activeView={activeView} onNavigate={navigate} viewer={viewer} onSignOut={onSignOut} coachCount={workspace.coachedAthletes.length} />
+      <Sidebar activeView={activeView} onNavigate={navigate} viewer={viewer} onSignOut={onSignOut} onOpenTestPersonas={onOpenTestPersonas} coachCount={workspace.coachedAthletes.length} />
 
       <section className="app-content">
+        {viewer.isTest && <div className="test-data-banner"><FlaskConical size={15} /><span><strong>Test account</strong> Fictional development data can be reset at any time.</span>{onOpenTestPersonas && <button onClick={onOpenTestPersonas}>Switch persona</button>}</div>}
         <div className="mobile-topbar">
           <button className="brand-mark" onClick={() => navigate("today")}>LL</button>
           <strong>Lift Log</strong>
-          <button className="avatar mobile-avatar" aria-label={`Sign out ${viewer.name}`} title="Sign out" onClick={onSignOut}>{viewer.initials}</button>
+          <button className="avatar mobile-avatar" aria-label={onOpenTestPersonas ? "Open test accounts" : `Sign out ${viewer.name}`} title={onOpenTestPersonas ? "Test accounts" : "Sign out"} onClick={onOpenTestPersonas ?? onSignOut}>{viewer.initials}</button>
         </div>
 
         {activeView === "today" && todayWorkout && (
@@ -494,7 +498,7 @@ export default function LiftLogApp({ viewer, onSignOut, initialWorkspace, reposi
         {activeView === "coaching" && (
           <CoachingView
             mode={coachMode}
-            coachConnection={workspace.coachConnection}
+            coachConnections={workspace.coachConnections}
             athletes={workspace.coachedAthletes}
             selectedAthlete={selectedAthlete}
             onMode={setCoachMode}
@@ -514,7 +518,7 @@ export default function LiftLogApp({ viewer, onSignOut, initialWorkspace, reposi
   );
 }
 
-function Sidebar({ activeView, onNavigate, viewer, onSignOut, coachCount }: { activeView: ViewName; onNavigate: (view: ViewName) => void; viewer: AppViewer; onSignOut: () => void; coachCount: number }) {
+function Sidebar({ activeView, onNavigate, viewer, onSignOut, onOpenTestPersonas, coachCount }: { activeView: ViewName; onNavigate: (view: ViewName) => void; viewer: AppViewer; onSignOut: () => void; onOpenTestPersonas?: () => void; coachCount: number }) {
   return (
     <aside className="sidebar">
       <button className="brand" onClick={() => onNavigate("today")}><span className="brand-mark">LL</span><span><strong>Lift Log</strong><small>Training workspace</small></span></button>
@@ -525,7 +529,8 @@ function Sidebar({ activeView, onNavigate, viewer, onSignOut, coachCount }: { ac
         })}
       </nav>
       <div className="sidebar-callout"><Sparkles size={17} /><div><strong>Build your next week</strong><small>Your program is ready to edit.</small></div><button onClick={() => onNavigate("program")} aria-label="Open program"><ChevronRight size={16} /></button></div>
-      <div className="profile-menu"><span className="avatar">{viewer.initials}</span><div><strong>{viewer.name}</strong><small>{viewer.isDemo ? "Local demo workspace" : viewer.email}</small></div><button className="icon-button" aria-label="Sign out" title="Sign out" onClick={onSignOut}><LogOut size={17} /></button></div>
+      {onOpenTestPersonas && <button className="test-persona-open" onClick={onOpenTestPersonas}><FlaskConical size={15} />Test accounts</button>}
+      <div className="profile-menu"><span className="avatar">{viewer.initials}</span><div><strong>{viewer.name}</strong><small>{viewer.isDemo ? "Local demo workspace" : viewer.isTest ? "Test population" : viewer.email}</small></div><button className="icon-button" aria-label="Sign out" title="Sign out" onClick={onSignOut}><LogOut size={17} /></button></div>
     </aside>
   );
 }
@@ -640,21 +645,37 @@ function ExercisesView({ scope, query, global, personal, onScope, onQuery, onAdd
   </>;
 }
 
-function CoachingView({ mode, coachConnection, athletes, selectedAthlete, onMode, onInvite, onDisconnect, onSelectAthlete, onEditAthlete }: {
+function CoachingView({ mode, coachConnections, athletes, selectedAthlete, onMode, onInvite, onDisconnect, onSelectAthlete, onEditAthlete }: {
   mode: "athlete" | "coach";
-  coachConnection: CoachConnection | null;
+  coachConnections: CoachConnection[];
   athletes: AthleteSummary[];
   selectedAthlete: AthleteSummary | null;
   onMode: (mode: "athlete" | "coach") => void;
   onInvite: () => void;
-  onDisconnect: () => void;
+  onDisconnect: (connection: CoachConnection) => void;
   onSelectAthlete: (athlete: AthleteSummary) => void;
   onEditAthlete: (athlete: AthleteSummary) => void;
 }) {
-  const connectedDate = coachConnection ? new Date(`${coachConnection.connectedSince}T12:00:00`).toLocaleDateString("en", { day: "numeric", month: "long", year: "numeric" }) : "";
   return <>
-    <PageHeader eyebrow="Shared progress" title="Coaching" description="Invite someone you trust to plan with context, or manage the athletes who invited you."><div className="segmented-control compact"><button className={mode === "athlete" ? "active" : ""} onClick={() => onMode("athlete")}>My coach</button><button className={mode === "coach" ? "active" : ""} onClick={() => onMode("coach")}>Coach workspace</button></div></PageHeader>
-    {mode === "athlete" ? <div className="coaching-athlete-layout"><section className="panel coach-access-card">{coachConnection ? <><div className="access-heading"><span className="avatar large">{coachConnection.initials}</span><div><p className="eyebrow">Active coach</p><h2>{coachConnection.name}</h2><p>Connected since {connectedDate}</p></div><span className="connected-pill"><i />Connected</span></div><div className="permission-list"><h3>What {coachConnection.name} can do</h3><span><Check size={15} />View your calendar, sessions, RPE, and training notes</span><span><Check size={15} />Create and update future program versions</span><span><Check size={15} />Use personal exercises while building your plan</span><span className="locked"><LockKeyhole size={15} />Cannot alter your completed workout history</span></div><div className="access-actions"><button className="button danger" onClick={onDisconnect}><X size={15} />Remove access</button></div></> : <div className="invite-empty"><span><UserPlus size={26} /></span><h2>Train with more context</h2><p>Invite one coach to build future plans and review your workout history. You stay in control of access.</p><button className="button primary" onClick={onInvite}><Link2 size={15} />Create coach invitation</button></div>}</section><aside><div className="panel privacy-card"><LockKeyhole size={20} /><h3>Your data stays yours</h3><p>Removing coach access never removes your programs or workout history.</p></div>{!coachConnection && <div className="panel invite-card"><p className="eyebrow">Private invitation</p><h3>Share a secure link</h3><p>The link works only for the Google account matching the email you enter.</p><button className="button secondary full" onClick={onInvite}><UserPlus size={15} />Create invite link</button></div>}</aside></div> : <div className="coach-dashboard"><section className="panel athlete-list"><div className="panel-heading"><div><p className="eyebrow">Your athletes</p><h3>{athletes.length} active</h3></div><Users size={17} /></div>{athletes.length ? athletes.map((athlete) => <button key={athlete.id} className={selectedAthlete?.id === athlete.id ? "active" : ""} onClick={() => onSelectAthlete(athlete)}><span className="avatar">{athlete.initials}</span><div><strong>{athlete.name}</strong><small>{athlete.programTitle}</small></div>{athlete.trend === "watch" && <em>Check in</em>}<ChevronRight size={16} /></button>) : <div className="empty-state"><Users size={24} /><h3>No athletes yet</h3><p>An athlete appears here after accepting their invitation to you.</p></div>}</section>{selectedAthlete ? <section className="athlete-overview"><div className="panel athlete-hero"><div className="athlete-name"><span className="avatar large">{selectedAthlete.initials}</span><div><p className="eyebrow">Athlete overview</p><h2>{selectedAthlete.name}</h2><p>{selectedAthlete.programTitle}</p></div></div><button className="button primary" onClick={() => onEditAthlete(selectedAthlete)}><Pencil size={15} />Edit future plan</button></div><div className="athlete-kpis"><div className="panel"><small>This week</small><strong>{selectedAthlete.completedThisWeek}/{selectedAthlete.plannedThisWeek || "—"}</strong><span>sessions complete</span></div><div className="panel"><small>Latest RPE</small><strong>{selectedAthlete.latestRpe ?? "—"}</strong><span>{selectedAthlete.trend === "watch" ? "Higher than target" : "No high-RPE flag"}</span></div><div className="panel"><small>Last trained</small><strong>{selectedAthlete.lastTrainingLabel}</strong><span>Most recent synced log</span></div></div><div className="panel athlete-report"><div className="panel-heading"><div><p className="eyebrow">Current week</p><h3>Adherence at a glance</h3></div><span className="status-pill"><i />Live report</span></div><div className="report-bars">{Array.from({ length: Math.max(1, selectedAthlete.plannedThisWeek) }, (_, index) => <span key={index}><i style={{ height: index < selectedAthlete.completedThisWeek ? "82%" : "18%" }} className={selectedAthlete.trend === "watch" && index === selectedAthlete.completedThisWeek - 1 ? "watch" : ""} /><small>{index + 1}</small></span>)}</div><div className="report-legend"><span><i />Completed work</span><span><i className="watch" />Latest high RPE</span></div></div></section> : <section className="panel empty-state"><Users size={28} /><h3>Select an athlete</h3><p>Choose an athlete to view their latest training summary.</p></section>}</div>}
+    <PageHeader eyebrow="Shared progress" title="Coaching" description="Invite people you trust to plan with context, or manage the athletes who invited you.">
+      <div className="segmented-control compact"><button className={mode === "athlete" ? "active" : ""} onClick={() => onMode("athlete")}>My coaches</button><button className={mode === "coach" ? "active" : ""} onClick={() => onMode("coach")}>Coach workspace</button></div>
+    </PageHeader>
+    {mode === "athlete" ? <div className="coaching-athlete-layout">
+      <section className="panel coach-access-card">
+        {coachConnections.length ? <>
+          <div className="panel-heading"><div><p className="eyebrow">Plan access</p><h3>{coachConnections.length} active {coachConnections.length === 1 ? "coach" : "coaches"}</h3></div><button className="button secondary small" onClick={onInvite}><UserPlus size={14} />Invite another</button></div>
+          <div className="coach-connection-list">{coachConnections.map((connection) => {
+            const connectedDate = new Date(`${connection.connectedSince}T12:00:00`).toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric" });
+            return <article key={connection.relationshipId} className="coach-connection-row"><span className="avatar large">{connection.initials}</span><div><strong>{connection.name}</strong><small>Connected since {connectedDate}</small></div><span className="connected-pill"><i />Connected</span><button className="button danger small" onClick={() => onDisconnect(connection)}><X size={14} />Remove</button></article>;
+          })}</div>
+          <div className="permission-list"><h3>What your coaches can do</h3><span><Check size={15} />View your calendar, sessions, RPE, and training notes</span><span><Check size={15} />Create and update future program versions</span><span><Check size={15} />Use personal exercises while building your plan</span><span className="locked"><LockKeyhole size={15} />Cannot alter your completed workout history</span></div>
+        </> : <div className="invite-empty"><span><UserPlus size={26} /></span><h2>Train with more context</h2><p>Invite a coach to build future plans and review your workout history. You stay in control of every connection.</p><button className="button primary" onClick={onInvite}><Link2 size={15} />Create coach invitation</button></div>}
+      </section>
+      <aside><div className="panel privacy-card"><LockKeyhole size={20} /><h3>Your data stays yours</h3><p>Removing one coach never affects your programs, history, or other coach connections.</p></div><div className="panel invite-card"><p className="eyebrow">Private invitation</p><h3>{coachConnections.length ? "Add another coach" : "Share a secure link"}</h3><p>The link works only for the account matching the email you enter.</p><button className="button secondary full" onClick={onInvite}><UserPlus size={15} />Create invite link</button></div></aside>
+    </div> : <div className="coach-dashboard">
+      <section className="panel athlete-list"><div className="panel-heading"><div><p className="eyebrow">Your athletes</p><h3>{athletes.length} active</h3></div><Users size={17} /></div>{athletes.length ? athletes.map((athlete) => <button key={athlete.id} className={selectedAthlete?.id === athlete.id ? "active" : ""} onClick={() => onSelectAthlete(athlete)}><span className="avatar">{athlete.initials}</span><div><strong>{athlete.name}</strong><small>{athlete.programTitle}</small></div>{athlete.trend === "watch" && <em>Check in</em>}<ChevronRight size={16} /></button>) : <div className="empty-state"><Users size={24} /><h3>No athletes yet</h3><p>An athlete appears here after accepting their invitation to you.</p></div>}</section>
+      {selectedAthlete ? <section className="athlete-overview"><div className="panel athlete-hero"><div className="athlete-name"><span className="avatar large">{selectedAthlete.initials}</span><div><p className="eyebrow">Athlete overview</p><h2>{selectedAthlete.name}</h2><p>{selectedAthlete.programTitle}</p></div></div><button className="button primary" onClick={() => onEditAthlete(selectedAthlete)}><Pencil size={15} />Edit future plan</button></div><div className="athlete-kpis"><div className="panel"><small>This week</small><strong>{selectedAthlete.completedThisWeek}/{selectedAthlete.plannedThisWeek || "—"}</strong><span>sessions complete</span></div><div className="panel"><small>Latest RPE</small><strong>{selectedAthlete.latestRpe ?? "—"}</strong><span>{selectedAthlete.trend === "watch" ? "Higher than target" : "No high-RPE flag"}</span></div><div className="panel"><small>Last trained</small><strong>{selectedAthlete.lastTrainingLabel}</strong><span>Most recent synced log</span></div></div><div className="panel athlete-report"><div className="panel-heading"><div><p className="eyebrow">Current week</p><h3>Adherence at a glance</h3></div><span className="status-pill"><i />Live report</span></div><div className="report-bars">{Array.from({ length: Math.max(1, selectedAthlete.plannedThisWeek) }, (_, index) => <span key={index}><i style={{ height: index < selectedAthlete.completedThisWeek ? "82%" : "18%" }} className={selectedAthlete.trend === "watch" && index === selectedAthlete.completedThisWeek - 1 ? "watch" : ""} /><small>{index + 1}</small></span>)}</div><div className="report-legend"><span><i />Completed work</span><span><i className="watch" />Latest high RPE</span></div></div></section> : <section className="panel empty-state"><Users size={28} /><h3>Select an athlete</h3><p>Choose an athlete to view their latest training summary.</p></section>}
+    </div>}
   </>;
 }
 
@@ -696,5 +717,5 @@ function InviteModal({ onClose, onInvite }: { onClose: () => void; onInvite: (em
     await navigator.clipboard.writeText(link);
   }
 
-  return <ModalShell title="Invite a coach" description="They can plan future training and review your reports after accepting." onClose={onClose}>{link ? <><div className="invite-permissions"><span><Check size={14} />Private invitation created</span><span><LockKeyhole size={14} />Only {email} can accept it</span></div><label className="form-field full"><span>Invitation link</span><input readOnly value={link} onFocus={(event) => event.currentTarget.select()} /></label><div className="modal-actions"><button className="button secondary" onClick={onClose}>Done</button><button className="button primary" onClick={copyLink}><Copy size={15} />Copy link</button></div></> : <><div className="invite-permissions"><span><Check size={14} />View your training and reports</span><span><Check size={14} />Create future program versions</span><span><LockKeyhole size={14} />No access to change completed logs</span></div><label className="form-field full"><span>Coach’s Google account email</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="coach@example.com" /></label>{error && <p className="auth-error" role="alert">{error}</p>}<div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!email.includes("@") || sending} onClick={createLink}>{sending ? "Creating…" : "Create and copy link"}</button></div></>}</ModalShell>;
+  return <ModalShell title="Invite a coach" description="They can plan future training and review your reports after accepting." onClose={onClose}>{link ? <><div className="invite-permissions"><span><Check size={14} />Private invitation created</span><span><LockKeyhole size={14} />Only {email} can accept it</span></div><label className="form-field full"><span>Invitation link</span><input readOnly value={link} onFocus={(event) => event.currentTarget.select()} /></label><div className="modal-actions"><button className="button secondary" onClick={onClose}>Done</button><button className="button primary" onClick={copyLink}><Copy size={15} />Copy link</button></div></> : <><div className="invite-permissions"><span><Check size={14} />View your training and reports</span><span><Check size={14} />Create future program versions</span><span><LockKeyhole size={14} />No access to change completed logs</span></div><label className="form-field full"><span>Coach’s account email</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="coach@example.com" /></label>{error && <p className="auth-error" role="alert">{error}</p>}<div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!email.includes("@") || sending} onClick={createLink}>{sending ? "Creating…" : "Create and copy link"}</button></div></>}</ModalShell>;
 }

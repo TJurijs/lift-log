@@ -287,11 +287,11 @@ export class LiftLogRepository {
       void this.client.from("profiles").update({ timezone }).eq("id", this.viewerId);
     }
 
-    const [programs, exercises, completedSessions, coachConnection, coachedAthletes, activeSession] = await Promise.all([
+    const [programs, exercises, completedSessions, coachConnections, coachedAthletes, activeSession] = await Promise.all([
       this.loadProgramPair(this.viewerId),
       this.listExercises(),
       this.listCompletedSessions(this.viewerId),
-      this.loadCoachConnection(),
+      this.loadCoachConnections(),
       this.loadCoachedAthletes(),
       this.loadActiveSession(),
     ]);
@@ -301,7 +301,7 @@ export class LiftLogRepository {
       globalExercises: exercises.filter((exercise) => exercise.scope === "global"),
       personalExercises: exercises.filter((exercise) => exercise.scope === "personal"),
       completedSessions,
-      coachConnection,
+      coachConnections,
       coachedAthletes,
       activeSession,
     };
@@ -710,26 +710,31 @@ export class LiftLogRepository {
     };
   }
 
-  private async loadCoachConnection(): Promise<CoachConnection | null> {
+  private async loadCoachConnections(): Promise<CoachConnection[]> {
     const relationshipResult = await this.client.from("coach_relationships")
       .select("id, athlete_id, coach_id, accepted_at")
       .eq("athlete_id", this.viewerId)
       .is("ended_at", null)
-      .limit(1)
-      .maybeSingle();
+      .order("accepted_at", { ascending: true });
     if (relationshipResult.error) fail("Could not load coach access", relationshipResult.error);
-    if (!relationshipResult.data) return null;
-    const relationship = relationshipResult.data as RelationshipRow;
-    const profileResult = await this.client.from("profiles").select("id, display_name").eq("id", relationship.coach_id).single();
-    if (profileResult.error || !profileResult.data) fail("Could not load the coach profile", profileResult.error);
-    const profile = profileResult.data as ProfileRow;
-    return {
-      relationshipId: relationship.id,
-      coachId: relationship.coach_id,
-      name: profile.display_name,
-      initials: initials(profile.display_name),
-      connectedSince: relationship.accepted_at.slice(0, 10),
-    };
+    const relationships = relationshipResult.data as RelationshipRow[];
+    if (!relationships.length) return [];
+    const profileResult = await this.client.from("profiles")
+      .select("id, display_name")
+      .in("id", relationships.map((relationship) => relationship.coach_id));
+    if (profileResult.error) fail("Could not load coach profiles", profileResult.error);
+    const profiles = profileResult.data as ProfileRow[];
+    return relationships.map((relationship) => {
+      const profile = profiles.find((item) => item.id === relationship.coach_id);
+      const name = profile?.display_name ?? "Coach";
+      return {
+        relationshipId: relationship.id,
+        coachId: relationship.coach_id,
+        name,
+        initials: initials(name),
+        connectedSince: relationship.accepted_at.slice(0, 10),
+      };
+    });
   }
 
   private async loadCoachedAthletes(): Promise<AthleteSummary[]> {
@@ -808,7 +813,8 @@ export class LiftLogRepository {
     const result = await this.client.from("coach_relationships")
       .update({ ended_at: new Date().toISOString() })
       .eq("id", relationshipId)
-      .is("ended_at", null);
-    if (result.error) fail("Could not remove coach access", result.error);
+      .is("ended_at", null)
+      .select("id");
+    if (result.error || result.data?.length !== 1) fail("Could not remove coach access", result.error);
   }
 }

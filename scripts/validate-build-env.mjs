@@ -16,6 +16,11 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+if (mode === "production" && environment.VITE_ENABLE_TEST_PERSONAS === "true") {
+  process.stderr.write("Test personas must be disabled for production builds.\n");
+  process.exit(1);
+}
+
 for (const key of ["VITE_SITE_URL", "VITE_SUPABASE_URL"]) {
   let parsed;
   try {
@@ -26,6 +31,15 @@ for (const key of ["VITE_SITE_URL", "VITE_SUPABASE_URL"]) {
   }
   if (parsed.protocol !== "https:") {
     process.stderr.write(`${key} must use HTTPS for a hosted build.\n`);
+    process.exit(1);
+  }
+}
+
+
+if (environment.VITE_ENABLE_TEST_PERSONAS === "true") {
+  const supabaseHost = new URL(environment.VITE_SUPABASE_URL).hostname;
+  if (mode !== "nonprod" || supabaseHost !== "ofyeejyfroblunbspgve.supabase.co") {
+    process.stderr.write("Test personas may target only the liftlog-dev Supabase project in nonprod mode.\n");
     process.exit(1);
   }
 }

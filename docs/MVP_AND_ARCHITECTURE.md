@@ -2,7 +2,7 @@
 
 ## Product premise
 
-Every account can create and follow its own program for free. A user can invite another account to coach them. Coaching is a revocable permission relationship, not a permanent user role: a person may coach others while being coached themselves.
+Every account can create and follow its own program for free. A user can invite one or more other accounts to coach them. Coaching is a revocable permission relationship, not a permanent user role: a person may coach others while being coached themselves.
 
 The athlete owns their programs, schedule, and complete workout history. An active coach can read the athlete's training data, write coach feedback, and create or publish future program versions. Coaches cannot rewrite completed or in-progress sessions.
 
@@ -14,7 +14,7 @@ The athlete owns their programs, schedule, and complete workout history. An acti
 4. Log a workout containing any mix of instructions, strength sets, cardio results, and intervals.
 5. Review history in a calendar with session RPE and notes.
 6. Create a personal exercise and reuse it later.
-7. Invite, accept, and revoke a coach relationship.
+7. Invite, accept, and independently revoke coach relationships.
 8. Let a coach view adherence and effort, then publish a future plan version.
 
 ## Explicitly outside the MVP
@@ -26,7 +26,6 @@ The athlete owns their programs, schedule, and complete workout history. An acti
 - Bulk template updates and cohort tools
 - Wearable integrations
 - Nutrition tracking
-- Multiple simultaneous active coaches per athlete
 
 ## Universal program hierarchy
 
@@ -138,11 +137,12 @@ coach_feedback
 
 ## Environment model
 
-- Local development uses the Supabase CLI stack and may use the development-only demo.
+- Normal local development uses the hosted nonprod Supabase project; the local CLI stack remains available for isolated migration testing.
 - Nonprod uses its own hosted Supabase project and `https://dev.liftlog.cc`.
 - Production uses a separate hosted Supabase project and `https://app.liftlog.cc`.
 - Migrations are applied to nonprod and validated there before they are explicitly applied to production.
 - Supabase project refs, database passwords, OAuth clients, publishable keys, and application data are not shared between nonprod and production.
+- Test identities are explicitly marked and database constraints prevent coaching invitations or relationships between real and test accounts.
 
 ## Future extension points
 

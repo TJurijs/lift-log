@@ -2,6 +2,7 @@ import { Activity, ArrowRight, Check, LockKeyhole } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import LiftLogApp from "./LiftLogApp";
+import TestPersonaSwitcher, { type TestPersonaChoice } from "./TestPersonaSwitcher";
 import { demoWorkspace } from "../lib/demo-data";
 import {
   demoViewer,
@@ -14,6 +15,20 @@ import { LiftLogRepository } from "../lib/repository";
 
 type AuthStatus = "loading" | "anonymous" | "authenticated" | "demo";
 const localDemoAvailable = import.meta.env.DEV;
+const testPersonaFeatureConfigured = import.meta.env.MODE === "nonprod"
+  && import.meta.env.VITE_ENABLE_TEST_PERSONAS === "true"
+  && (() => {
+    try {
+      return new URL(import.meta.env.VITE_SUPABASE_URL ?? "").hostname === "ofyeejyfroblunbspgve.supabase.co";
+    } catch {
+      return false;
+    }
+  })();
+
+function testPersonaFeatureAvailable() {
+  if (!testPersonaFeatureConfigured || typeof window === "undefined") return false;
+  return ["localhost", "127.0.0.1", "dev.liftlog.cc"].includes(window.location.hostname);
+}
 
 export default function AppEntry() {
   const [status, setStatus] = useState<AuthStatus>(isSupabaseConfigured ? "loading" : "anonymous");
@@ -22,7 +37,13 @@ export default function AppEntry() {
   const [error, setError] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
   const [workspaceError, setWorkspaceError] = useState("");
+  const [personaPassword, setPersonaPassword] = useState("");
+  const [personaBusyKey, setPersonaBusyKey] = useState("");
+  const [personaError, setPersonaError] = useState("");
+  const [personaSwitcherOpen, setPersonaSwitcherOpen] = useState(false);
   const processedInvite = useRef(false);
+  const activeUserId = useRef<string | null>(null);
+  const testPersonasAvailable = testPersonaFeatureAvailable();
   const repository = useMemo(() => {
     if (!session) return null;
     const viewer = viewerFromSupabaseUser(session.user);
@@ -35,20 +56,28 @@ export default function AppEntry() {
     if (!client) return;
 
     let mounted = true;
+    function applySession(nextSession: Session | null) {
+      const nextUserId = nextSession?.user.id ?? null;
+      if (activeUserId.current !== nextUserId) {
+        activeUserId.current = nextUserId;
+        processedInvite.current = false;
+        setWorkspace(null);
+        setWorkspaceError("");
+      }
+      setSession(nextSession);
+      setStatus(nextSession ? "authenticated" : "anonymous");
+    }
+
     client.auth.getSession().then(({ data }) => {
       if (!mounted) return;
-      setSession(data.session);
-      setStatus(data.session ? "authenticated" : "anonymous");
+      applySession(data.session);
     });
 
     const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;
-      setSession(nextSession);
-      setStatus(nextSession ? "authenticated" : "anonymous");
-      if (!nextSession) {
-        setWorkspace(null);
-      }
+      applySession(nextSession);
       setConnecting(false);
+      setPersonaBusyKey("");
     });
 
     return () => {
@@ -67,10 +96,15 @@ export default function AppEntry() {
         const invitationToken = new URLSearchParams(window.location.search).get("coach_invite");
         if (invitationToken && !processedInvite.current) {
           processedInvite.current = true;
-          await activeRepository.acceptCoachInvite(invitationToken);
-          const cleanUrl = new URL(window.location.href);
-          cleanUrl.searchParams.delete("coach_invite");
-          window.history.replaceState({}, "", cleanUrl);
+          try {
+            await activeRepository.acceptCoachInvite(invitationToken);
+            const cleanUrl = new URL(window.location.href);
+            cleanUrl.searchParams.delete("coach_invite");
+            window.history.replaceState({}, "", cleanUrl);
+          } catch (inviteError) {
+            processedInvite.current = false;
+            throw inviteError;
+          }
         }
         const nextWorkspace = await activeRepository.loadWorkspace();
         if (active) {
@@ -101,6 +135,25 @@ export default function AppEntry() {
     }
   }
 
+  async function signInWithTestPersona(persona: TestPersonaChoice) {
+    const client = getSupabaseBrowserClient();
+    if (!client || !testPersonasAvailable || !personaPassword) return;
+    setPersonaBusyKey(persona.key);
+    setPersonaError("");
+    try {
+      const { error: signInError } = await client.auth.signInWithPassword({
+        email: persona.email,
+        password: personaPassword,
+      });
+      if (signInError) throw signInError;
+      setPersonaSwitcherOpen(false);
+    } catch {
+      setPersonaError("This test account could not be opened. Check the shared QA password or reseed the population.");
+    } finally {
+      setPersonaBusyKey("");
+    }
+  }
+
   async function signOut() {
     if (status === "demo") {
       setStatus("anonymous");
@@ -113,20 +166,42 @@ export default function AppEntry() {
     setStatus("anonymous");
   }
 
+  const personaDialog = testPersonasAvailable && personaSwitcherOpen ? <TestPersonaSwitcher
+    variant="dialog"
+    password={personaPassword}
+    currentEmail={session?.user.email}
+    busyKey={personaBusyKey}
+    error={personaError}
+    onPassword={setPersonaPassword}
+    onSelect={signInWithTestPersona}
+    onClose={() => setPersonaSwitcherOpen(false)}
+    onSignOut={signOut}
+  /> : null;
+
   if (status === "loading") {
     return <main className="auth-loading"><span className="auth-logo">LL</span><strong>Opening your training space…</strong></main>;
   }
 
   if (status === "authenticated" && session && workspace && repository) {
-    return <LiftLogApp viewer={viewerFromSupabaseUser(session.user)} onSignOut={signOut} initialWorkspace={workspace} repository={repository} />;
+    return <>
+      <LiftLogApp
+        key={session.user.id}
+        viewer={viewerFromSupabaseUser(session.user)}
+        onSignOut={signOut}
+        onOpenTestPersonas={testPersonasAvailable ? () => setPersonaSwitcherOpen(true) : undefined}
+        initialWorkspace={workspace}
+        repository={repository}
+      />
+      {personaDialog}
+    </>;
   }
 
   if (status === "authenticated" && session && workspaceError) {
-    return <main className="auth-loading"><span className="auth-logo">LL</span><strong>{workspaceError}</strong><button className="button secondary" onClick={() => window.location.reload()}>Try again</button></main>;
+    return <><main className="auth-loading"><span className="auth-logo">LL</span><strong>{workspaceError}</strong><div className="auth-loading-actions"><button className="button secondary" onClick={() => window.location.reload()}>Try again</button>{testPersonasAvailable && <button className="button primary" onClick={() => setPersonaSwitcherOpen(true)}>Switch test account</button>}<button className="text-button" onClick={signOut}>Sign out</button></div></main>{personaDialog}</>;
   }
 
   if (status === "authenticated" && session) {
-    return <main className="auth-loading"><span className="auth-logo">LL</span><strong>Loading your plans and training history…</strong></main>;
+    return <><main className="auth-loading"><span className="auth-logo">LL</span><strong>Loading your plans and training history…</strong>{testPersonasAvailable && <div className="auth-loading-actions"><button className="text-button" onClick={() => setPersonaSwitcherOpen(true)}>Switch test account</button><button className="text-button" onClick={signOut}>Sign out</button></div>}</main>{personaDialog}</>;
   }
 
   if (status === "demo") {
@@ -160,6 +235,14 @@ export default function AppEntry() {
               <span className="google-mark">G</span>{connecting ? "Connecting to Google…" : "Continue with Google"}<ArrowRight size={17} />
             </button>
             {error && <p className="auth-error" role="alert">{error}</p>}
+            {testPersonasAvailable && <TestPersonaSwitcher
+              variant="inline"
+              password={personaPassword}
+              busyKey={personaBusyKey}
+              error={personaError}
+              onPassword={setPersonaPassword}
+              onSelect={signInWithTestPersona}
+            />}
           </> : localDemoAvailable ? <>
             <p className="eyebrow">Local demo</p>
             <h2 id="auth-heading">Explore the working prototype</h2>

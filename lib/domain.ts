@@ -137,7 +137,7 @@ export interface WorkspaceData {
   globalExercises: Exercise[];
   personalExercises: Exercise[];
   completedSessions: CompletedSession[];
-  coachConnection: CoachConnection | null;
+  coachConnections: CoachConnection[];
   coachedAthletes: AthleteSummary[];
   activeSession: ActiveSession | null;
 }

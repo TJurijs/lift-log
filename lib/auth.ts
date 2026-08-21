@@ -12,6 +12,7 @@ export interface AppViewer {
   initials: string;
   avatarUrl?: string;
   isDemo: boolean;
+  isTest: boolean;
 }
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
@@ -37,7 +38,8 @@ export function viewerFromSupabaseUser(user: User): AppViewer {
   const initials = name.split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "LL";
   const avatarUrl = typeof user.user_metadata?.avatar_url === "string" ? user.user_metadata.avatar_url : undefined;
 
-  return { id: user.id, email, name, initials, avatarUrl, isDemo: false };
+  const isTest = user.app_metadata?.account_kind === "test";
+  return { id: user.id, email, name, initials, avatarUrl, isDemo: false, isTest };
 }
 
 export const demoViewer: AppViewer = {
@@ -46,4 +48,5 @@ export const demoViewer: AppViewer = {
   name: "Alex Morgan",
   initials: "AM",
   isDemo: true,
+  isTest: false,
 };
