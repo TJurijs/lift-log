@@ -18,7 +18,7 @@ const compiledHelper = ts.transpileModule(helperSource, {
 const helperModule = await import(
   `data:text/javascript;base64,${Buffer.from(compiledHelper).toString("base64")}`
 );
-const { selectNextWorkoutFocus } = helperModule;
+const { listUpcomingWorkouts, selectNextWorkoutFocus } = helperModule;
 
 function workout(id, title = id) {
   return {
@@ -187,6 +187,22 @@ test("dated workouts are classified as today or future", () => {
 
   assert.equal(todayFocus?.timing, "today");
   assert.equal(futureFocus?.timing, "future");
+});
+
+test("next workouts lists every planned calendar occurrence from today onward", () => {
+  const schedules = [
+    schedule({ id: "past", date: "2026-08-20" }),
+    schedule({ id: "today", date: "2026-08-21", sequence: 2 }),
+    schedule({ id: "first-future", date: "2026-08-23", sequence: 2 }),
+    schedule({ id: "second-future", date: "2026-08-23", sequence: 3 }),
+    schedule({ id: "skipped", date: "2026-08-24", status: "skipped" }),
+    schedule({ id: "finished", date: "2026-08-24", status: "completed" }),
+  ];
+
+  assert.deepEqual(
+    listUpcomingWorkouts(schedules, "2026-08-21").map(({ id }) => id),
+    ["today", "first-future", "second-future", "skipped"],
+  );
 });
 
 test("same-day choices use sequence then id without mutating input", () => {

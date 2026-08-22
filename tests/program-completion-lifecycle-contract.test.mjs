@@ -54,11 +54,71 @@ test("program assignment is hidden without active coachees", async () => {
   );
 });
 
-test("availability is managed from program lists rather than the open program", async () => {
+test("saving a program is separate from making it available", async () => {
   const app = await readFile(appPath, "utf8");
   assert.doesNotMatch(app, /onRemoveAvailable/);
   assert.match(
     app,
-    /title=\{available \? "Remove from available" : "Add to available"\}/,
+    /await repository\.publishProgram\(program\.versionId\);[\s\S]*?Program saved\. Make it available when you are ready to schedule it\./,
+    "saving must not make an Own program available automatically",
   );
+  assert.match(
+    app,
+    /<Save size=\{15\} \/>[\s\S]*?Save program/,
+    "the editor must clearly describe its save action",
+  );
+  assert.match(
+    app,
+    /available[\s\S]*?canEdit=\{false\}[\s\S]*?canDelete=\{false\}[\s\S]*?canCopy=\{false\}[\s\S]*?availabilityAction="remove"[\s\S]*?onSchedule=\{onSchedule\}[\s\S]*?onAvailability=\{\(\) => onAvailability\(item, false\)\}/,
+    "the Available list exposes scheduling before its removal action",
+  );
+  assert.match(
+    app,
+    /availabilityAction === "remove"[\s\S]*?<X size=\{15\} \/>[\s\S]*?: \([\s\S]*?<Check size=\{15\} \/>/,
+    "availability uses a cross to remove and a checkmark to make available",
+  );
+  const libraryPanel =
+    app.match(/\{source === "library" && \([\s\S]*?\n        \)\}/)?.[0] ?? "";
+  assert.ok(libraryPanel, "the Library tab must remain present");
+  assert.doesNotMatch(
+    libraryPanel,
+    /availabilityAction|onAvailability/,
+    "availability controls must not appear in the Library tab",
+  );
+  assert.match(
+    app,
+    /copyToOwn=\{false\}/,
+    "Own programs must opt into the concise Copy tooltip",
+  );
+  assert.match(
+    app,
+    /title=\{copyToOwn \? "Copy to Own" : "Copy"\}/,
+    "the copy control must respect the source-specific tooltip",
+  );
+  assert.match(
+    app,
+    /program\.versionStatus === "published" &&[\s\S]*?availableProgramIds[\s\S]*?\.includes\(program\.id\)[\s\S]*?\? \(\) => openSchedule\(\)/,
+    "a program can be scheduled only after it is made available",
+  );
+  assert.doesNotMatch(app, /This is the stable version used by scheduled workouts\./);
+  assert.match(
+    app,
+    /\{editable && \([\s\S]*?<aside className="exercise-picker panel"/,
+    "the Exercise Library must be hidden outside edit mode",
+  );
+});
+
+test("available programs visualize every workout's scheduling state", async () => {
+  const [app, styles] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(
+    app,
+    /schedule\.status === "skipped"[\s\S]*?"unscheduled"[\s\S]*?schedule\.status === "completed" \? "completed" : "scheduled"/,
+  );
+  assert.match(app, /className="program-card-workout-progress"/);
+  assert.match(styles, /\.program-card-workout-progress i\.scheduled/);
+  assert.match(styles, /\.program-card-workout-progress i\.completed/);
 });

@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
-  CalendarMinus,
   CalendarDays,
   CalendarPlus,
   Check,
@@ -23,9 +22,9 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Settings2,
-  Sparkles,
   Timer,
   Trash2,
   TrendingUp,
@@ -83,11 +82,14 @@ import type {
 } from "../lib/domain";
 import type { AppViewer } from "../lib/auth";
 import type { LiftLogRepository } from "../lib/repository";
-import { selectNextWorkoutFocus } from "../lib/workout-focus";
+import {
+  listUpcomingWorkouts,
+  selectNextWorkoutFocus,
+} from "../lib/workout-focus";
 
 const navItems: Array<{ id: ViewName; label: string; icon: typeof Activity }> =
   [
-    { id: "today", label: "Next workout", icon: LayoutDashboard },
+    { id: "today", label: "Next workouts", icon: LayoutDashboard },
     { id: "program", label: "Programs", icon: Dumbbell },
     { id: "calendar", label: "Calendar", icon: CalendarDays },
     { id: "exercises", label: "Exercises", icon: BookOpen },
@@ -100,6 +102,7 @@ type ModalName =
   | "workout-settings"
   | "prescription"
   | "section"
+  | "delete-section"
   | "invite"
   | "assign-program"
   | "program"
@@ -316,6 +319,8 @@ export default function LiftLogApp({
   const [sectionEditing, setSectionEditing] = useState<WorkoutSection | null>(
     null,
   );
+  const [sectionDeleteTarget, setSectionDeleteTarget] =
+    useState<WorkoutSection | null>(null);
   const [personalExercises, setPersonalExercises] = useState<Exercise[]>(
     initialWorkspace.personalExercises,
   );
@@ -335,6 +340,11 @@ export default function LiftLogApp({
   const [workoutAction, setWorkoutAction] = useState<
     "starting" | "finishing" | null
   >(null);
+  const [scheduleStatusAction, setScheduleStatusAction] = useState<
+    { id: string; status: "planned" | "skipped" } | null
+  >(null);
+  const [workoutPreviewSchedule, setWorkoutPreviewSchedule] =
+    useState<ScheduledWorkout | null>(null);
   const [sessionRpe, setSessionRpe] = useState(
     initialWorkspace.activeSession?.sessionRpe ?? "7",
   );
@@ -369,6 +379,9 @@ export default function LiftLogApp({
   const [scheduleEditingId, setScheduleEditingId] = useState<string | null>(
     null,
   );
+  const [scheduleInitialDate, setScheduleInitialDate] = useState<string | null>(
+    null,
+  );
   const scheduleOpeningRef = useRef(false);
   const [scheduleOpening, setScheduleOpening] = useState(false);
   const [calendarDetail, setCalendarDetail] =
@@ -391,6 +404,10 @@ export default function LiftLogApp({
       (candidate): candidate is Program => Boolean(candidate),
     );
   const outgoingCoachInvites = workspace.outgoingCoachInvites ?? [];
+  const hasCoach = workspace.coachConnections.length > 0;
+  const hasAthleteWorkspace =
+    workspace.coachedAthletes.length > 0 ||
+    workspace.pendingCoachInvites.length > 0;
   const programCatalog = workspace.programCatalog ?? availablePrograms;
   const assignableOwnPrograms = programCatalog.filter(
     (candidate) =>
@@ -405,6 +422,7 @@ export default function LiftLogApp({
     activeSession,
     workspace.scheduledWorkouts,
   );
+  const upcomingWorkouts = listUpcomingWorkouts(workspace.scheduledWorkouts);
   const todaySchedule = workoutFocus?.schedule ?? undefined;
   const todayWorkout = workoutFocus?.workout;
   const todayProgram =
@@ -418,6 +436,14 @@ export default function LiftLogApp({
       candidate.weeks.some((week) =>
         week.workouts.some((workout) => workout.id === todayWorkout?.id),
       ),
+    );
+  const previewProgram =
+    programCatalog.find(
+      (candidate) =>
+        candidate.versionId === workoutPreviewSchedule?.programVersionId,
+    ) ??
+    programCatalog.find(
+      (candidate) => candidate.id === workoutPreviewSchedule?.programId,
     );
   const selectedWorkout =
     currentWeek?.workouts.find((workout) => workout.id === selectedWorkoutId) ??
@@ -441,6 +467,18 @@ export default function LiftLogApp({
     }, 650);
     return () => window.clearTimeout(saveTimer);
   }, [activeSession, repository, resultLogs, setLogs, workoutStarted]);
+
+  useEffect(() => {
+    if (!hasAthleteWorkspace) {
+      setCoachMode("athlete");
+    }
+  }, [hasAthleteWorkspace]);
+
+  useEffect(() => {
+    if (programSource === "coach" && !hasCoach) {
+      setProgramSource("library");
+    }
+  }, [hasCoach, programSource]);
 
   function notify(message: string) {
     setToast(message);
@@ -653,8 +691,9 @@ export default function LiftLogApp({
     }));
   }
 
-  async function startWorkout() {
-    if (!todayWorkout || workoutActionRef.current) return;
+  async function startWorkout(schedule: ScheduledWorkout) {
+    const workout = schedule.workout;
+    if (workoutActionRef.current) return;
     workoutActionRef.current = "starting";
     setWorkoutAction("starting");
     try {
@@ -663,22 +702,23 @@ export default function LiftLogApp({
         return;
       }
       const versionId =
-        todayWorkout.programVersionId ?? activeSession?.programVersionId;
+        workout.programVersionId ?? schedule.programVersionId;
       if (!versionId)
         throw new Error(
           "This scheduled workout is missing its program version.",
         );
       const session = await repository.startOrResumeSession(
-        todayWorkout,
+        workout,
         versionId,
       );
       if (!session) throw new Error("The workout session was not created.");
       setActiveSession(session);
-      setSetLogs(starterSetLogs(todayWorkout, session));
+      setSetLogs(starterSetLogs(workout, session));
       setResultLogs(session.resultLogs);
       setSessionRpe(session.sessionRpe);
       setSessionNote(session.sessionNote);
       setWorkoutStarted(true);
+      setWorkoutPreviewSchedule(null);
       notify("Workout started · changes save automatically");
     } catch (error) {
       notify(
@@ -690,6 +730,15 @@ export default function LiftLogApp({
       workoutActionRef.current = null;
       setWorkoutAction(null);
     }
+  }
+
+  function openWorkoutPreview(schedule: ScheduledWorkout) {
+    setWorkoutPreviewSchedule(schedule);
+    setSetLogs(starterSetLogs(schedule.workout, null));
+    setResultLogs({});
+    setSessionRpe("7");
+    setSessionNote("");
+    setWorkoutComplete(false);
   }
 
   async function finishWorkout() {
@@ -751,9 +800,21 @@ export default function LiftLogApp({
         durationMinutes: 45,
         sections: [
           {
-            id: `section-${Date.now()}`,
+            id: `section-warmup-${Date.now()}`,
+            title: "Warm up",
+            kind: "warmup",
+            items: [],
+          },
+          {
+            id: `section-main-${Date.now()}`,
             title: "Main work",
             kind: "main",
+            items: [],
+          },
+          {
+            id: `section-cooldown-${Date.now()}`,
+            title: "Cooldown",
+            kind: "cooldown",
             items: [],
           },
         ],
@@ -1064,27 +1125,77 @@ export default function LiftLogApp({
     }
   }
 
-  async function deleteSection(sectionId: string) {
-    if (!repository) return;
+  async function deleteSection(sectionId: string, deleteItems: boolean) {
     const section = selectedWorkout?.sections.find(
       (candidate) => candidate.id === sectionId,
     );
-    if (
-      !window.confirm(
-        `Delete “${section?.title ?? "this section"}” and every exercise in it?`,
-      )
-    )
-      return;
+    if (!section || section.kind === "main") {
+      throw new Error("Main work must remain in every workout");
+    }
+    const mainSection = selectedWorkout?.sections.find(
+      (candidate) => candidate.kind === "main",
+    );
+    if (!mainSection) throw new Error("This workout needs a Main work section");
     try {
-      await repository.deleteWorkoutSection(sectionId);
-      await reloadCurrentProgram();
-      notify("Section deleted");
-    } catch (error) {
+      if (repository) {
+        await repository.deleteWorkoutSection(sectionId, deleteItems);
+        await reloadCurrentProgram();
+      } else if (selectedWorkout) {
+        setProgram((previous) =>
+          previous
+            ? {
+                ...previous,
+                weeks: previous.weeks.map((week) => ({
+                  ...week,
+                  workouts: week.workouts.map((workout) =>
+                    workout.id !== selectedWorkout.id
+                      ? workout
+                      : {
+                          ...workout,
+                          sections: workout.sections
+                            .filter((candidate) => candidate.id !== sectionId)
+                            .map((candidate) =>
+                              candidate.id === mainSection.id && !deleteItems
+                                ? {
+                                    ...candidate,
+                                    items: [...candidate.items, ...section.items],
+                                  }
+                                : candidate,
+                            ),
+                        },
+                  ),
+                })),
+              }
+            : previous,
+        );
+      }
+      setSelectedSectionId(mainSection.id);
+      setSectionDeleteTarget(null);
+      setModal(null);
       notify(
-        error instanceof Error
-          ? error.message
-          : "The section could not be deleted",
+        deleteItems
+          ? "Section and its exercises deleted"
+          : "Section deleted · exercises moved to Main work",
       );
+    } catch (error) {
+      if (
+        repository &&
+        program &&
+        error instanceof Error &&
+        error.message.includes("Published program content is immutable")
+      ) {
+        selectProgram(
+          await repository.loadEditableProgram(program.athleteId, program.id),
+          { weekIndex: selectedWeek },
+        );
+        setSectionDeleteTarget(null);
+        setModal(null);
+        notify("Opened the editable program copy. Delete the section there.");
+        return;
+      }
+      throw error instanceof Error
+        ? error
+        : new Error("The section could not be deleted");
     }
   }
 
@@ -1333,21 +1444,19 @@ export default function LiftLogApp({
   async function publishProgram() {
     if (!program || programAction) return;
     if (!repository) {
-      notify("Program published for the local demo");
+      notify("Program saved for the local demo");
       return;
     }
     setProgramAction({ id: program.id, kind: "publish" });
     try {
       await repository.publishProgram(program.versionId);
-      if (program.athleteId === viewer.id && program.sourceType === "self")
-        await repository.setProgramAvailability(program.id, true);
       applyWorkspace(await repository.loadWorkspace());
       setProgram(null);
       setProgramOwnerId(viewer.id);
       notify(
         program.sourceType === "coach"
           ? "Coach program finished · the athlete can add it to scheduling"
-          : "Program is available for scheduling",
+          : "Program saved. Make it available when you are ready to schedule it.",
       );
     } catch (error) {
       notify(
@@ -1651,6 +1760,8 @@ export default function LiftLogApp({
             assignedAt,
             status: "awaiting_schedule" as const,
             totalWorkouts: workoutCount,
+            scheduledWorkouts: 0,
+            scheduledPercent: 0,
             completedWorkouts: 0,
             completionPercent: 0,
           },
@@ -1687,15 +1798,30 @@ export default function LiftLogApp({
     return assignments;
   }
 
-  async function saveProfile(firstName: string, lastName: string) {
+  async function saveProfile(
+    firstName: string,
+    lastName: string,
+    weekStartsOnSunday: boolean,
+    weightUnit: OwnProfile["weightUnit"],
+    distanceUnit: OwnProfile["distanceUnit"],
+  ) {
     try {
       const profile = repository
-        ? await repository.updateOwnProfile(firstName, lastName)
+        ? await repository.updateOwnProfile(
+            firstName,
+            lastName,
+            weekStartsOnSunday,
+            weightUnit,
+            distanceUnit,
+          )
         : {
             ...workspace.profile,
             firstName,
             lastName,
             displayName: `${firstName} ${lastName}`.trim(),
+            weekStartsOnSunday,
+            weightUnit,
+            distanceUnit,
           };
       setWorkspace((previous) => ({ ...previous, profile }));
       setModal(null);
@@ -1770,7 +1896,7 @@ export default function LiftLogApp({
 
   async function handleTemplateAction(
     template: ProgramTemplate,
-    intent: "open" | "copy" | "availability",
+    intent: "open" | "copy",
   ) {
     if (activatingTemplateId) return;
     setActivatingTemplateId(template.id);
@@ -1783,16 +1909,12 @@ export default function LiftLogApp({
           intent === "copy"
             ? await repository.copyProgramToOwn(libraryProgramId)
             : libraryProgramId;
-        if (intent === "availability")
-          await repository.setProgramAvailability(libraryProgramId, true);
         const nextWorkspace = await repository.loadWorkspace();
         applyWorkspace(nextWorkspace);
-        if (intent !== "availability") {
-          const targetProgram = nextWorkspace.programCatalog.find(
-            (candidate) => candidate.id === targetProgramId,
-          );
-          if (targetProgram) selectProgram(targetProgram);
-        }
+        const targetProgram = nextWorkspace.programCatalog.find(
+          (candidate) => candidate.id === targetProgramId,
+        );
+        if (targetProgram) selectProgram(targetProgram);
       }
       setProgramSource(intent === "copy" ? "own" : "library");
       setProgramOwnerId(viewer.id);
@@ -1800,9 +1922,7 @@ export default function LiftLogApp({
       notify(
         intent === "copy"
           ? `${template.title} copied to Own`
-          : intent === "availability"
-            ? `${template.title} added · choose dates when you are ready`
-            : `${template.title} opened`,
+          : `${template.title} opened`,
       );
     } catch (error) {
       notify(
@@ -1917,9 +2037,10 @@ export default function LiftLogApp({
     }
   }
 
-  async function openSchedule(scheduleId?: string) {
+  async function openSchedule(scheduleId?: string, initialDate?: string) {
     if (scheduleOpeningRef.current) return;
     setScheduleEditingId(scheduleId ?? null);
+    setScheduleInitialDate(initialDate ?? null);
     setModal("schedule");
     if (!repository || scheduleId) return;
 
@@ -1989,6 +2110,46 @@ export default function LiftLogApp({
       throw error instanceof Error
         ? error
         : new Error("The workout date could not be updated");
+    }
+  }
+
+  async function setScheduledWorkoutStatus(
+    scheduleId: string,
+    status: "planned" | "skipped",
+  ) {
+    if (scheduleStatusAction) return;
+    setScheduleStatusAction({ id: scheduleId, status });
+    try {
+      if (repository) {
+        await repository.setScheduledWorkoutStatus(scheduleId, status);
+        applyWorkspace(await repository.loadWorkspace());
+      } else {
+        setWorkspace((previous) => ({
+          ...previous,
+          scheduledWorkouts: previous.scheduledWorkouts.map((schedule) =>
+            schedule.id === scheduleId ? { ...schedule, status } : schedule,
+          ),
+        }));
+        if (status === "planned") {
+          setActiveSession(null);
+          setWorkoutStarted(false);
+        }
+      }
+      closeCalendarDetail();
+      setWorkoutPreviewSchedule(null);
+      notify(
+        status === "planned"
+          ? "Workout set back to planned"
+          : "Workout skipped",
+      );
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "The scheduled workout could not be updated",
+      );
+    } finally {
+      setScheduleStatusAction(null);
     }
   }
 
@@ -2135,7 +2296,6 @@ export default function LiftLogApp({
         onSignOut={onSignOut}
         onOpenTestPersonas={onOpenTestPersonas}
         coachingRequestCount={workspace.pendingCoachInvites.length}
-        hasProgram={availablePrograms.length > 0}
       />
 
       <section className="app-content">
@@ -2170,21 +2330,30 @@ export default function LiftLogApp({
           </button>
         </div>
 
-        {activeView === "today" && todayWorkout && workoutFocus && (
+        {activeView === "today" &&
+          ((activeSession && todayWorkout && workoutFocus) ||
+            (!activeSession && workoutPreviewSchedule)) && (
           <TodayView
-            program={todayProgram}
-            workout={todayWorkout}
-            timing={workoutFocus.timing}
-            plannedDate={workoutFocus.plannedDate}
-            completedSessions={workspace.completedSessions}
-            workoutStarted={workoutStarted}
+            program={activeSession ? todayProgram : previewProgram}
+            workout={activeSession ? todayWorkout! : workoutPreviewSchedule!.workout}
+            timing={activeSession ? workoutFocus!.timing : "future"}
+            plannedDate={
+              activeSession
+                ? workoutFocus!.plannedDate
+                : workoutPreviewSchedule!.plannedDate
+            }
+            workoutStarted={Boolean(activeSession) && workoutStarted}
             workoutComplete={workoutComplete}
             workoutAction={workoutAction}
             setLogs={setLogs}
             resultLogs={resultLogs}
             sessionRpe={sessionRpe}
             sessionNote={sessionNote}
-            onStart={startWorkout}
+            onStart={() =>
+              void startWorkout(
+                activeSession ? todaySchedule! : workoutPreviewSchedule!,
+              )
+            }
             onFinish={finishWorkout}
             onReset={() => {
               setWorkoutComplete(false);
@@ -2196,17 +2365,51 @@ export default function LiftLogApp({
             onUpdateResult={updateResult}
             onSessionRpe={setSessionRpe}
             onSessionNote={setSessionNote}
+            onSetPlanned={
+              activeSession && todaySchedule
+                ? () => void setScheduledWorkoutStatus(todaySchedule.id, "planned")
+                : undefined
+            }
+            onSkip={
+              (activeSession ? todaySchedule : workoutPreviewSchedule)
+                ? () =>
+                    void setScheduledWorkoutStatus(
+                      (activeSession ? todaySchedule : workoutPreviewSchedule)!
+                        .id,
+                      "skipped",
+                    )
+                : undefined
+            }
+            statusAction={
+              scheduleStatusAction?.id ===
+              (activeSession ? todaySchedule : workoutPreviewSchedule)?.id
+                ? (scheduleStatusAction?.status ?? null)
+                : null
+            }
+            viewMode={!activeSession}
+            onBack={
+              !activeSession
+                ? () => setWorkoutPreviewSchedule(null)
+                : undefined
+            }
             onNavigate={navigate}
           />
         )}
-        {activeView === "today" && !todayWorkout && (
-          <EmptyTodayView
+        {activeView === "today" && !activeSession && !workoutPreviewSchedule && (
+          <NextWorkoutsView
+            schedules={upcomingWorkouts}
             hasProgram={availablePrograms.length > 0}
             hasPublishedProgram={availablePrograms.some(
               (candidate) => candidate.versionStatus === "published",
             )}
             onNavigate={navigate}
             onSchedule={() => openSchedule()}
+            onStart={(schedule) => void startWorkout(schedule)}
+            onOpen={openWorkoutPreview}
+            onSetStatus={(scheduleId, status) => {
+              void setScheduledWorkoutStatus(scheduleId, status);
+            }}
+            statusAction={scheduleStatusAction}
           />
         )}
         {activeView === "program" && program && currentWeek && (
@@ -2256,7 +2459,10 @@ export default function LiftLogApp({
               setSectionEditing(section);
               setModal("section");
             }}
-            onDeleteSection={deleteSection}
+            onDeleteSection={(section) => {
+              setSectionDeleteTarget(section);
+              setModal("delete-section");
+            }}
             onReorderSections={reorderSections}
             onAddExercise={addExerciseToWorkout}
             onEditItem={(item) => {
@@ -2266,7 +2472,7 @@ export default function LiftLogApp({
             }}
             onRemoveItem={removeWorkoutItem}
             onMoveItem={moveItem}
-            onPublish={publishProgram}
+            onSave={publishProgram}
             onCreateDraft={createEditableDraft}
             onBack={() => {
               setProgram(null);
@@ -2290,7 +2496,8 @@ export default function LiftLogApp({
             onEditWorkout={() => setModal("workout-settings")}
             onSchedule={
               program.athleteId === viewer.id &&
-              program.versionStatus === "published"
+              program.versionStatus === "published" &&
+              (workspace.availableProgramIds ?? []).includes(program.id)
                 ? () => openSchedule()
                 : undefined
             }
@@ -2321,6 +2528,7 @@ export default function LiftLogApp({
               }
               templates={workspace.programTemplates}
               source={programSource}
+              hasCoach={hasCoach}
               activatingTemplateId={activatingTemplateId}
               action={programAction}
               onOpen={selectProgram}
@@ -2342,15 +2550,14 @@ export default function LiftLogApp({
               onCopyTemplate={(template) =>
                 handleTemplateAction(template, "copy")
               }
-              onStartTemplate={(template) =>
-                handleTemplateAction(template, "availability")
-              }
+              onSchedule={() => openSchedule()}
             />
           ))}
         {activeView === "calendar" && (
           <CalendarView
             sessions={workspace.completedSessions}
             schedules={workspace.scheduledWorkouts}
+            weekStartsOnSunday={workspace.profile.weekStartsOnSunday}
             canSchedule={availablePrograms.some(
               (candidate) => candidate.versionStatus === "published",
             )}
@@ -2358,6 +2565,13 @@ export default function LiftLogApp({
             onSchedule={() => openSchedule()}
             onOpenPlan={openCalendarPlan}
             onOpenResults={openCalendarResults}
+            onScheduleDay={(date) => openSchedule(undefined, date)}
+            onMoveSchedule={(scheduleId, date) => {
+              void saveSchedule(scheduleId, date);
+            }}
+            onDeleteSchedule={(scheduleId) => {
+              void saveSchedule(scheduleId, null);
+            }}
           />
         )}
         {activeView === "exercises" && (
@@ -2437,6 +2651,18 @@ export default function LiftLogApp({
           onSave={sectionEditing ? updateSection : addSection}
         />
       )}
+      {modal === "delete-section" && sectionDeleteTarget && (
+        <DeleteSectionModal
+          section={sectionDeleteTarget}
+          onClose={() => {
+            setSectionDeleteTarget(null);
+            setModal(null);
+          }}
+          onDelete={(deleteItems) =>
+            deleteSection(sectionDeleteTarget.id, deleteItems)
+          }
+        />
+      )}
       {modal === "invite" && (
         <InviteModal
           onClose={() => setModal(null)}
@@ -2476,12 +2702,14 @@ export default function LiftLogApp({
       )}
       {modal === "schedule" && (
         <ScheduleModal
-          key={`${scheduleOpening ? "preparing" : "ready"}:${scheduleEditingId ?? "new"}`}
+          key={`${scheduleOpening ? "preparing" : "ready"}:${scheduleEditingId ?? "new"}:${scheduleInitialDate ?? "today"}`}
           schedules={workspace.scheduledWorkouts}
           editingId={scheduleEditingId}
+          initialDate={scheduleInitialDate}
           preparing={scheduleOpening}
           onClose={() => {
             setScheduleEditingId(null);
+            setScheduleInitialDate(null);
             setModal(null);
           }}
           onSave={saveSchedule}
@@ -2504,6 +2732,23 @@ export default function LiftLogApp({
             closeCalendarDetail();
             void openSchedule(scheduleId);
           }}
+          onDelete={(scheduleId) => {
+            closeCalendarDetail();
+            void saveSchedule(scheduleId, null);
+          }}
+          onStart={(schedule) => {
+            closeCalendarDetail();
+            void startWorkout(schedule);
+          }}
+          onSetStatus={(scheduleId, status) => {
+            void setScheduledWorkoutStatus(scheduleId, status);
+          }}
+          statusAction={
+            calendarDetail.kind === "plan" &&
+            scheduleStatusAction?.id === calendarDetail.schedule.id
+              ? (scheduleStatusAction?.status ?? null)
+              : null
+          }
         />
       )}
       {toast && (
@@ -2525,7 +2770,6 @@ function Sidebar({
   onSignOut,
   onOpenTestPersonas,
   coachingRequestCount,
-  hasProgram,
 }: {
   activeView: ViewName;
   onNavigate: (view: ViewName) => void;
@@ -2535,7 +2779,6 @@ function Sidebar({
   onSignOut: () => void;
   onOpenTestPersonas?: () => void;
   coachingRequestCount: number;
-  hasProgram: boolean;
 }) {
   const profileInitials =
     profile.displayName
@@ -2554,91 +2797,64 @@ function Sidebar({
       </button>
       <nav className="main-nav" aria-label="Main navigation">
         {navItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button
-              key={item.id}
-              className={cn("nav-item", activeView === item.id && "active")}
-              onClick={() => onNavigate(item.id)}
-              aria-label={
-                item.id === "coaching" && coachingRequestCount > 0
-                  ? `${item.label}, ${coachingRequestCount} pending ${coachingRequestCount === 1 ? "request" : "requests"}`
-                  : item.label
-              }
-            >
-              <Icon size={18} />
-              <span className="nav-label-desktop">{item.label}</span>
-              <span className="nav-label-mobile">
-                {item.id === "today" ? "Next" : item.label}
-              </span>
-              {item.id === "coaching" && coachingRequestCount > 0 && (
-                <em aria-hidden="true">{coachingRequestCount}</em>
-              )}
-            </button>
-          );
-        })}
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.id}
+                className={cn("nav-item", activeView === item.id && "active")}
+                onClick={() => onNavigate(item.id)}
+                aria-label={
+                  item.id === "coaching" && coachingRequestCount > 0
+                    ? `${item.label}, ${coachingRequestCount} pending ${coachingRequestCount === 1 ? "request" : "requests"}`
+                    : item.label
+                }
+              >
+                <Icon size={18} />
+                <span className="nav-label-desktop">{item.label}</span>
+                <span className="nav-label-mobile">
+                  {item.id === "today" ? "Next" : item.label}
+                </span>
+                {item.id === "coaching" && coachingRequestCount > 0 && (
+                  <em aria-hidden="true">{coachingRequestCount}</em>
+                )}
+              </button>
+            );
+          })}
       </nav>
-      {hasProgram ? (
-        <div className="sidebar-callout">
-          <Sparkles size={17} />
-          <div>
-            <strong>Build your next week</strong>
-            <small>Your program is ready to edit.</small>
-          </div>
+      <div className="sidebar-footer">
+        {onOpenTestPersonas && (
+          <button className="test-persona-open" onClick={onOpenTestPersonas}>
+            <FlaskConical size={15} />
+            Test accounts
+          </button>
+        )}
+        <div className="profile-menu">
           <button
-            onClick={() => onNavigate("program")}
-            aria-label="Open program"
+            className="profile-identity"
+            onClick={onAccount}
+            aria-label="Open my account settings"
           >
-            <ChevronRight size={16} />
+            <span className="avatar">{profileInitials}</span>
+            <span>
+              <strong>{profile.displayName}</strong>
+              <small>
+                {viewer.isDemo
+                  ? "Local demo workspace"
+                  : viewer.isTest
+                    ? "Test population"
+                    : viewer.email}
+              </small>
+            </span>
+          </button>
+          <button
+            className="profile-signout"
+            onClick={onSignOut}
+            aria-label={`Sign out ${profile.displayName}`}
+            title="Sign out"
+          >
+            <LogOut size={17} />
           </button>
         </div>
-      ) : (
-        <div className="sidebar-callout empty">
-          <Sparkles size={17} />
-          <div>
-            <strong>Choose your training</strong>
-            <small>Start from the library or create your own.</small>
-          </div>
-          <button
-            onClick={() => onNavigate("program")}
-            aria-label="Choose a program"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      )}
-      {onOpenTestPersonas && (
-        <button className="test-persona-open" onClick={onOpenTestPersonas}>
-          <FlaskConical size={15} />
-          Test accounts
-        </button>
-      )}
-      <div className="profile-menu">
-        <button
-          className="profile-identity"
-          onClick={onAccount}
-          aria-label="Open my account settings"
-        >
-          <span className="avatar">{profileInitials}</span>
-          <span>
-            <strong>{profile.displayName}</strong>
-            <small>
-              {viewer.isDemo
-                ? "Local demo workspace"
-                : viewer.isTest
-                  ? "Test population"
-                  : viewer.email}
-            </small>
-          </span>
-        </button>
-        <button
-          className="profile-signout"
-          onClick={onSignOut}
-          aria-label={`Sign out ${profile.displayName}`}
-          title="Sign out"
-        >
-          <LogOut size={17} />
-        </button>
       </div>
     </aside>
   );
@@ -2667,22 +2883,112 @@ function PageHeader({
   );
 }
 
-function EmptyTodayView({
+function NextWorkoutsView({
+  schedules,
   hasProgram,
   hasPublishedProgram,
   onNavigate,
   onSchedule,
+  onStart,
+  onOpen,
+  onSetStatus,
+  statusAction,
 }: {
+  schedules: ScheduledWorkout[];
   hasProgram: boolean;
   hasPublishedProgram: boolean;
   onNavigate: (view: ViewName) => void;
   onSchedule: () => void;
+  onStart: (schedule: ScheduledWorkout) => void;
+  onOpen: (schedule: ScheduledWorkout) => void;
+  onSetStatus: (scheduleId: string, status: "planned" | "skipped") => void;
+  statusAction: { id: string; status: "planned" | "skipped" } | null;
 }) {
+  if (schedules.length) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="Your schedule"
+          title="Next workouts"
+          description="Every workout scheduled from today onward. Start any one whenever you are ready."
+        >
+          <button
+            className="button secondary"
+            onClick={() => onNavigate("calendar")}
+          >
+            <CalendarDays size={15} />
+            Open calendar
+          </button>
+        </PageHeader>
+        <section className="next-workouts-list" aria-label="Scheduled workouts">
+          {schedules.map((schedule) => {
+            const date = new Date(`${schedule.plannedDate}T12:00:00`);
+            const dateLabel = date.toLocaleDateString("en", {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+            });
+            return (
+              <article className="panel next-workout-card" key={schedule.id}>
+                <div className="next-workout-date">
+                  <CalendarDays size={17} />
+                  <div>
+                    <small>{dateLabel}</small>
+                    <strong>{schedule.plannedDate}</strong>
+                  </div>
+                </div>
+                <button
+                  className="next-workout-summary"
+                  onClick={() => onOpen(schedule)}
+                >
+                  <ProgramOwnershipTag
+                    sourceType={schedule.sourceType}
+                    createdByName={schedule.createdByName}
+                    compact
+                  />
+                  <p>{schedule.programTitle}</p>
+                  <h2>{schedule.workoutTitle}</h2>
+                  <small>
+                    {schedule.workout.dayLabel} · ~ {schedule.workout.durationMinutes} min
+                  </small>
+                </button>
+                {schedule.status === "skipped" ? (
+                  <button
+                    className="button secondary"
+                    disabled={statusAction?.id === schedule.id}
+                    onClick={() => onSetStatus(schedule.id, "planned")}
+                  >
+                    {statusAction?.id === schedule.id ? (
+                      <>
+                        <LoaderCircle className="button-spinner" size={15} />
+                        Restoring…
+                      </>
+                    ) : (
+                      "Set back to planned"
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    className="button primary"
+                    onClick={() => onStart(schedule)}
+                  >
+                    <Activity size={15} />
+                    Start workout
+                  </button>
+                )}
+              </article>
+            );
+          })}
+        </section>
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
-        eyebrow="Next workout"
-        title="No next workout scheduled"
+        eyebrow="Next workouts"
+        title="No future workouts scheduled"
         description={
           hasProgram
             ? "Your program and calendar are separate—you decide when each workout happens."
@@ -2693,13 +2999,13 @@ function EmptyTodayView({
         <CalendarDays size={28} />
         <h3>
           {hasProgram
-            ? "Choose the next training date"
+            ? "Choose a training date"
             : "No training has been added"}
         </h3>
         <p>
           {hasProgram
             ? hasPublishedProgram
-              ? "Schedule a workout for any date. The earliest unfinished workout will appear here."
+              ? "Schedule workouts for any date. Your upcoming calendar sessions will appear here."
               : "Finish and publish your program before placing workouts on the calendar."
             : "Browse the collapsed program library or build a plan from scratch."}
         </p>
@@ -2728,7 +3034,6 @@ function TodayView({
   workout,
   timing,
   plannedDate,
-  completedSessions,
   workoutStarted,
   workoutComplete,
   workoutAction,
@@ -2745,13 +3050,17 @@ function TodayView({
   onUpdateResult,
   onSessionRpe,
   onSessionNote,
+  onSetPlanned,
+  onSkip,
+  statusAction,
+  viewMode,
+  onBack,
   onNavigate,
 }: {
   program?: Program;
   workout: PlannedWorkout;
   timing: "active" | "overdue" | "today" | "future";
   plannedDate?: string;
-  completedSessions: CompletedSession[];
   workoutStarted: boolean;
   workoutComplete: boolean;
   workoutAction: "starting" | "finishing" | null;
@@ -2773,6 +3082,11 @@ function TodayView({
   onUpdateResult: (itemId: string, field: string, value: string) => void;
   onSessionRpe: (value: string) => void;
   onSessionNote: (value: string) => void;
+  onSetPlanned?: () => void;
+  onSkip?: () => void;
+  statusAction: "planned" | "skipped" | null;
+  viewMode: boolean;
+  onBack?: () => void;
   onNavigate: (view: ViewName) => void;
 }) {
   const workoutDate = plannedDate
@@ -2793,34 +3107,11 @@ function TodayView({
     : undefined;
   const workoutIndex =
     workoutWeek?.workouts.findIndex((item) => item.id === workout.id) ?? -1;
-  const monday = new Date();
-  const weekday = monday.getDay() || 7;
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(monday.getDate() - weekday + 1);
-  const weekWorkoutIds = new Set(
-    workoutWeek?.workouts.map((item) => item.id) ?? [],
-  );
-  const completedWorkoutIds = new Set(
-    completedSessions
-      .filter(
-        (session) =>
-          new Date(`${session.date}T12:00:00`) >= monday &&
-          session.programVersionId === workout.programVersionId &&
-          Boolean(session.workoutId && weekWorkoutIds.has(session.workoutId)),
-      )
-      .flatMap((session) => (session.workoutId ? [session.workoutId] : [])),
-  );
-  const completedThisWeek = completedWorkoutIds.size;
-  const plannedCount = workoutWeek?.workouts.length ?? 0;
-  const progress = plannedCount
-    ? Math.min(100, Math.round((completedThisWeek / plannedCount) * 100))
-    : 0;
   const planDescription = workoutWeek
     ? `Week ${workoutWeek.index} of ${program?.title} · ${program?.phase} phase`
     : workoutBelongsToProgram && program
       ? `${workout.dayLabel} · scheduled workout`
       : `${workout.dayLabel} · scheduled from an earlier plan version`;
-  const lastSession = completedSessions[0];
   const timingLabel =
     timing === "active"
       ? plannedDate
@@ -2834,16 +3125,73 @@ function TodayView({
   return (
     <>
       <PageHeader
-        eyebrow={timingLabel}
+        eyebrow={viewMode ? `Workout preview · ${dateLabel}` : timingLabel}
         title={
           workoutComplete
             ? "Session complete"
             : timing === "active"
               ? "Workout in progress"
-              : "Next workout"
+              : viewMode
+                ? "Workout preview"
+                : "Next workout"
         }
         description={planDescription}
       >
+        {program && <ProgramOwnershipTag program={program} />}
+        {onBack && (
+          <button className="button secondary" onClick={onBack}>
+            <ArrowLeft size={15} />
+            Next workouts
+          </button>
+        )}
+        {workoutStarted && onSetPlanned && onSkip && (
+          <>
+            <button
+              className="button secondary"
+              disabled={statusAction !== null}
+              onClick={onSetPlanned}
+            >
+              {statusAction === "planned" ? (
+                <>
+                  <LoaderCircle className="button-spinner" size={15} />
+                  Restoring…
+                </>
+              ) : (
+                "Set back to planned"
+              )}
+            </button>
+            <button
+              className="button danger"
+              disabled={statusAction !== null}
+              onClick={onSkip}
+            >
+              {statusAction === "skipped" ? (
+                <>
+                  <LoaderCircle className="button-spinner" size={15} />
+                  Skipping…
+                </>
+              ) : (
+                "Skip workout"
+              )}
+            </button>
+          </>
+        )}
+        {viewMode && onSkip && (
+          <button
+            className="button danger"
+            disabled={statusAction !== null}
+            onClick={onSkip}
+          >
+            {statusAction === "skipped" ? (
+              <>
+                <LoaderCircle className="button-spinner" size={15} />
+                Skipping…
+              </>
+            ) : (
+              "Skip workout"
+            )}
+          </button>
+        )}
         <button
           className="button secondary"
           onClick={() => onNavigate("program")}
@@ -2976,81 +3324,6 @@ function TodayView({
             </div>
           )}
         </article>
-        <aside className="today-rail">
-          {workoutWeek && (
-            <div className="panel week-card">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Program week {workoutWeek.index}</p>
-                  <h3>
-                    {completedThisWeek} of {plannedCount} sessions
-                  </h3>
-                </div>
-                <span>{progress}%</span>
-              </div>
-              <div className="progress-track">
-                <i style={{ width: `${progress}%` }} />
-              </div>
-              <div className="week-session-list">
-                {workoutWeek.workouts.map((item, index) => (
-                  <button
-                    key={item.id}
-                    className={cn(
-                      completedWorkoutIds.has(item.id) && "done",
-                      item.id === workout.id && "current",
-                    )}
-                    onClick={() => onNavigate("program")}
-                  >
-                    <span>
-                      {completedWorkoutIds.has(item.id) ? (
-                        <Check size={14} />
-                      ) : (
-                        index + 1
-                      )}
-                    </span>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>
-                        {item.dayLabel} · {item.durationMinutes} min
-                      </small>
-                    </div>
-                    <ChevronRight size={15} />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="stats-grid">
-            <div className="panel stat-card">
-              <small>Last session</small>
-              <strong>
-                {lastSession ? `RPE ${lastSession.rpe || "—"}` : "No logs"}
-              </strong>
-              <span>{lastSession?.workoutTitle ?? "Start when ready"}</span>
-            </div>
-            <div className="panel stat-card">
-              <small>Total sessions</small>
-              <strong>{completedSessions.length}</strong>
-              <span>
-                {completedSessions.length ? "History synced" : "Ready to begin"}
-              </span>
-            </div>
-          </div>
-          <div className="panel coach-note">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Plan guidance</p>
-                <h3>Train the intent</h3>
-              </div>
-              <MessageSquareText size={18} />
-            </div>
-            <p>
-              Use the target RPE as a guide and leave a note after the session
-              when something should change next time.
-            </p>
-            <small>Saved with this program</small>
-          </div>
-        </aside>
       </div>
     </>
   );
@@ -3275,7 +3548,7 @@ function ProgramView({
   onEditItem,
   onRemoveItem,
   onMoveItem,
-  onPublish,
+  onSave,
   onCreateDraft,
   onBack,
   onAssignProgram,
@@ -3303,7 +3576,7 @@ function ProgramView({
   onReorderWorkouts: (ids: string[]) => void;
   onAddSection: () => void;
   onEditSection: (section: WorkoutSection) => void;
-  onDeleteSection: (id: string) => void;
+  onDeleteSection: (section: WorkoutSection) => void;
   onReorderSections: (ids: string[]) => void;
   onAddExercise: (exercise: Exercise, sectionId?: string) => void;
   onEditItem: (item: WorkoutItem) => void;
@@ -3313,7 +3586,7 @@ function ProgramView({
     destinationSectionId: string,
     destinationPosition: number,
   ) => void;
-  onPublish: () => void;
+  onSave: () => void;
   onCreateDraft: () => void;
   onBack: () => void;
   onAssignProgram?: () => void;
@@ -3451,7 +3724,7 @@ function ProgramView({
           <ArrowLeft size={15} />
           All programs
         </button>
-        <span className="program-source-pill">{program.sourceLabel}</span>
+        <ProgramOwnershipTag program={program} />
         <span className="status-pill">
           <i />
           {isDraft
@@ -3482,7 +3755,7 @@ function ProgramView({
           <button
             className="button primary small"
             disabled={Boolean(action)}
-            onClick={onPublish}
+            onClick={onSave}
           >
             {action === "publish" ? (
               <>
@@ -3491,12 +3764,8 @@ function ProgramView({
               </>
             ) : (
               <>
-                <Check size={15} />
-                {isAvailable
-                  ? "Update program"
-                  : program.sourceType === "coach"
-                    ? "Finish program"
-                    : "Make available"}
+                <Save size={15} />
+                Save program
               </>
             )}
           </button>
@@ -3523,13 +3792,6 @@ function ProgramView({
           )
         )}
       </PageHeader>
-      {!isDraft && canEdit && (
-        <div className="editor-readonly-banner">
-          <LockKeyhole size={15} />
-          <span>This is the stable version used by scheduled workouts.</span>
-          <button onClick={onCreateDraft}>Edit program</button>
-        </div>
-      )}
       <div className="program-summary panel">
         <div>
           <span className="program-icon">
@@ -3756,10 +4018,10 @@ function ProgramView({
                         selected={targetSection?.id === section.id}
                         editable={editable}
                         dragEnabled={dragEnabled}
-                        canDelete={selectedWorkout.sections.length > 1}
+                        canDelete={section.kind !== "main"}
                         onSelect={() => onSelectSection(section.id)}
                         onEdit={() => onEditSection(section)}
-                        onDelete={() => onDeleteSection(section.id)}
+                        onDelete={() => onDeleteSection(section)}
                         onEditItem={onEditItem}
                         onRemoveItem={onRemoveItem}
                       />
@@ -3784,18 +4046,17 @@ function ProgramView({
               </div>
             )}
           </section>
-          <aside className="exercise-picker panel" aria-busy={mutationPending}>
+          {editable && (
+            <aside className="exercise-picker panel" aria-busy={mutationPending}>
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Exercise library</p>
                 <h3>
-                  {editable
-                    ? `Add to ${targetSection?.title ?? "section"}`
-                    : "Program items"}
+                  {`Add to ${targetSection?.title ?? "section"}`}
                 </h3>
               </div>
             </div>
-            {editable && selectedWorkout?.sections.length ? (
+            {selectedWorkout?.sections.length ? (
               <>
                 <label className="search-field">
                   <Search size={16} />
@@ -3823,12 +4084,11 @@ function ProgramView({
               </>
             ) : (
               <div className="empty-inline">
-                {editable
-                  ? "Add a workout section first."
-                  : "Choose Edit program to change this version."}
+                Add a workout section first.
               </div>
             )}
-          </aside>
+            </aside>
+          )}
         </DndContext>
       </div>
       {copyWeekModalOpen && (
@@ -4199,11 +4459,16 @@ function ProgramRow({
   completed = false,
   canEdit,
   canDelete,
+  canCopy = true,
+  copyToOwn = true,
+  workoutStates,
   action,
+  availabilityAction,
   onOpen,
   onEdit,
   onCopy,
   onDelete,
+  onSchedule,
   onAvailability,
 }: {
   program: Program;
@@ -4211,12 +4476,17 @@ function ProgramRow({
   completed?: boolean;
   canEdit: boolean;
   canDelete: boolean;
+  canCopy?: boolean;
+  copyToOwn?: boolean;
+  workoutStates?: Array<"unscheduled" | "scheduled" | "completed">;
   action: Exclude<ProgramAction, null>["kind"] | null;
+  availabilityAction?: "make" | "remove";
   onOpen: () => void;
   onEdit: () => void;
   onCopy: () => void;
   onDelete: () => void;
-  onAvailability: () => void;
+  onSchedule?: () => void;
+  onAvailability?: () => void;
 }) {
   return (
     <article className="program-catalog-card panel">
@@ -4231,13 +4501,32 @@ function ProgramRow({
           </span>
           <span>
             <strong>{program.title}</strong>
-            <small>{program.sourceLabel}</small>
+            <ProgramOwnershipTag program={program} compact />
           </span>
-          <ChevronRight size={18} />
         </span>
-        <span className="program-card-description">
-          {program.description || "Open this program to see its workouts."}
-        </span>
+        {workoutStates ? (
+          <span
+            className="program-card-workout-progress"
+            aria-label={`${program.title} workout scheduling progress`}
+          >
+            <small>Workout progress</small>
+            <span>
+              {workoutStates.map((state, index) => (
+                <i
+                  className={state}
+                  key={`${index}-${state}`}
+                  title={`Workout ${index + 1}: ${state}`}
+                />
+              ))}
+            </span>
+          </span>
+        ) : program.description ? (
+          <span className="program-card-description">
+            {program.description}
+          </span>
+        ) : (
+          <span />
+        )}
         <span className="program-card-meta">
           <span>
             {program.weeks.reduce(
@@ -4285,33 +4574,52 @@ function ProgramRow({
               )}
             </button>
           )}
-          <button
-            className="icon-button"
-            disabled={Boolean(action)}
-            onClick={onCopy}
-            aria-label={`Copy ${program.title} to Own`}
-            title="Copy to Own"
-          >
-            {action === "copy" ? (
-              <LoaderCircle className="button-spinner" size={15} />
-            ) : (
-              <Copy size={15} />
-            )}
-          </button>
-          {program.versionStatus === "published" && (
+          {canCopy && (
             <button
-              className={cn("icon-button", !available && "accent")}
+              className="icon-button"
+              disabled={Boolean(action)}
+              onClick={onCopy}
+              aria-label={
+                copyToOwn ? `Copy ${program.title} to Own` : `Copy ${program.title}`
+              }
+              title={copyToOwn ? "Copy to Own" : "Copy"}
+            >
+              {action === "copy" ? (
+                <LoaderCircle className="button-spinner" size={15} />
+              ) : (
+                <Copy size={15} />
+              )}
+            </button>
+          )}
+          {onSchedule && (
+            <button
+              className="icon-button"
+              disabled={Boolean(action)}
+              onClick={onSchedule}
+              aria-label={`Schedule ${program.title}`}
+              title="Schedule program"
+            >
+              <CalendarPlus size={15} />
+            </button>
+          )}
+          {program.versionStatus === "published" && availabilityAction && (
+            <button
+              className="icon-button"
               disabled={Boolean(action)}
               onClick={onAvailability}
-              aria-label={`${available ? "Remove" : "Add"} ${program.title} ${available ? "from" : "to"} available programs`}
-              title={available ? "Remove from available" : "Add to available"}
+              aria-label={`${availabilityAction === "remove" ? "Remove" : "Make"} ${program.title} ${availabilityAction === "remove" ? "from available programs" : "available for scheduling"}`}
+              title={
+                availabilityAction === "remove"
+                  ? "Remove from available"
+                  : "Make available"
+              }
             >
               {action === "availability" ? (
                 <LoaderCircle className="button-spinner" size={15} />
-              ) : available ? (
-                <CalendarMinus size={15} />
+              ) : availabilityAction === "remove" ? (
+                <X size={15} />
               ) : (
-                <CalendarPlus size={15} />
+                <Check size={15} />
               )}
             </button>
           )}
@@ -4336,20 +4644,60 @@ function ProgramRow({
   );
 }
 
+function ProgramOwnershipTag({
+  program,
+  sourceType,
+  createdByName,
+  compact = false,
+}: {
+  program?: Program;
+  sourceType?: Program["sourceType"];
+  createdByName?: string;
+  compact?: boolean;
+}) {
+  const type = program?.sourceType ?? sourceType ?? "library";
+  const creator = program?.createdByName ?? createdByName;
+  const label =
+    type === "library"
+      ? "Library"
+      : type === "self"
+        ? "Own"
+        : `Coach${creator ? ` · ${creator}` : ""}`;
+  const Icon =
+    type === "library"
+      ? BookOpen
+      : type === "self"
+        ? CircleUserRound
+        : Users;
+  return (
+    <span
+      className={cn("ownership-tag", type, compact && "compact")}
+      title={
+        type === "library"
+          ? "Lift Log library plan"
+          : type === "self"
+            ? "Created by you"
+            : `Created by your coach${creator ? `, ${creator}` : ""}`
+      }
+    >
+      <Icon size={compact ? 10 : 12} />
+      {label}
+    </span>
+  );
+}
+
 function LibraryTemplateCard({
   template,
   loading,
   disabled,
   onOpen,
   onCopy,
-  onAvailability,
 }: {
   template: ProgramTemplate;
   loading: boolean;
   disabled: boolean;
   onOpen: () => void;
   onCopy: () => void;
-  onAvailability: () => void;
 }) {
   return (
     <article
@@ -4366,7 +4714,7 @@ function LibraryTemplateCard({
           </span>
           <span>
             <strong>{template.title}</strong>
-            <small>{template.sourceLabel}</small>
+            <ProgramOwnershipTag sourceType="library" compact />
           </span>
           <ChevronRight size={18} />
         </span>
@@ -4402,15 +4750,6 @@ function LibraryTemplateCard({
               >
                 <Copy size={15} />
               </button>
-              <button
-                className="icon-button accent"
-                disabled={disabled}
-                onClick={onAvailability}
-                aria-label={`Add ${template.title} to available programs`}
-                title="Add to available"
-              >
-                <CalendarPlus size={15} />
-              </button>
             </>
           )}
         </div>
@@ -4425,6 +4764,7 @@ function ProgramsHome({
   availableIds,
   templates,
   source,
+  hasCoach,
   activatingTemplateId,
   action,
   onOpen,
@@ -4436,13 +4776,14 @@ function ProgramsHome({
   onCreate,
   onOpenTemplate,
   onCopyTemplate,
-  onStartTemplate,
+  onSchedule,
 }: {
   programs: Program[];
   schedules: ScheduledWorkout[];
   availableIds: string[];
   templates: ProgramTemplate[];
   source: ProgramSourceTab;
+  hasCoach: boolean;
   activatingTemplateId: string | null;
   action: ProgramAction;
   onOpen: (program: Program) => void;
@@ -4454,7 +4795,7 @@ function ProgramsHome({
   onCreate: () => void;
   onOpenTemplate: (template: ProgramTemplate) => void;
   onCopyTemplate: (template: ProgramTemplate) => void;
-  onStartTemplate: (template: ProgramTemplate) => void;
+  onSchedule: () => void;
 }) {
   const available = programs.filter((program) =>
     availableIds.includes(program.id),
@@ -4478,6 +4819,26 @@ function ProgramsHome({
   );
   const own = programs.filter((program) => program.sourceType === "self");
   const coach = programs.filter((program) => program.sourceType === "coach");
+  const scheduleProgress = (program: Program) => {
+    const workouts = program.weeks.flatMap((week) => week.workouts);
+    const latestScheduleByWorkout = new Map<string, ScheduledWorkout>();
+    schedules
+      .filter((schedule) => schedule.programVersionId === program.versionId)
+      .forEach((schedule) => {
+        const current = latestScheduleByWorkout.get(schedule.workoutId);
+        if (!current || schedule.sequenceNumber > current.sequenceNumber)
+          latestScheduleByWorkout.set(schedule.workoutId, schedule);
+      });
+    const workoutStates = workouts.map((workout) => {
+      const schedule = latestScheduleByWorkout.get(workout.id);
+      if (!schedule || !schedule.plannedDate || schedule.status === "skipped")
+        return "unscheduled" as const;
+      return schedule.status === "completed" ? "completed" : "scheduled";
+    });
+    return {
+      workoutStates,
+    };
+  };
   return (
     <>
       <PageHeader
@@ -4507,13 +4868,17 @@ function ProgramsHome({
                 key={item.id}
                 program={item}
                 available
-                canEdit={item.sourceType === "self"}
+                {...scheduleProgress(item)}
+                canEdit={false}
                 canDelete={false}
+                canCopy={false}
                 action={action?.id === item.id ? action.kind : null}
+                availabilityAction="remove"
                 onOpen={() => onOpen(item)}
                 onEdit={() => onEdit(item)}
                 onCopy={() => onCopy(item)}
                 onDelete={() => undefined}
+                onSchedule={onSchedule}
                 onAvailability={() => onAvailability(item, false)}
               />
             ))
@@ -4549,15 +4914,17 @@ function ProgramsHome({
             <CircleUserRound size={15} />
             Own
           </button>
-          <button
-            role="tab"
-            aria-selected={source === "coach"}
-            className={source === "coach" ? "active" : ""}
-            onClick={() => onSource("coach")}
-          >
-            <Users size={15} />
-            Coach
-          </button>
+          {hasCoach && (
+            <button
+              role="tab"
+              aria-selected={source === "coach"}
+              className={source === "coach" ? "active" : ""}
+              onClick={() => onSource("coach")}
+            >
+              <Users size={15} />
+              Coach
+            </button>
+          )}
         </div>
         {source === "library" && (
           <div className="program-compact-list" role="tabpanel">
@@ -4581,12 +4948,6 @@ function ProgramsHome({
                   onEdit={() => undefined}
                   onCopy={() => onCopy(instance)}
                   onDelete={() => undefined}
-                  onAvailability={() =>
-                    onAvailability(
-                      instance,
-                      !availableIds.includes(instance.id),
-                    )
-                  }
                 />
               ) : (
                 <LibraryTemplateCard
@@ -4596,7 +4957,6 @@ function ProgramsHome({
                   disabled={Boolean(activatingTemplateId)}
                   onOpen={() => onOpenTemplate(template)}
                   onCopy={() => onCopyTemplate(template)}
-                  onAvailability={() => onStartTemplate(template)}
                 />
               );
             })}
@@ -4613,14 +4973,16 @@ function ProgramsHome({
                   completed={completedIds.has(item.id)}
                   canEdit
                   canDelete
+                  copyToOwn={false}
                   action={action?.id === item.id ? action.kind : null}
+                  availabilityAction={
+                    availableIds.includes(item.id) ? undefined : "make"
+                  }
                   onOpen={() => onOpen(item)}
                   onEdit={() => onEdit(item)}
                   onCopy={() => onCopy(item)}
                   onDelete={() => onDelete(item)}
-                  onAvailability={() =>
-                    onAvailability(item, !availableIds.includes(item.id))
-                  }
+                  onAvailability={() => onAvailability(item, true)}
                 />
               ))
             ) : (
@@ -4637,7 +4999,7 @@ function ProgramsHome({
             )}
           </div>
         )}
-        {source === "coach" && (
+        {hasCoach && source === "coach" && (
           <div className="program-compact-list" role="tabpanel">
             {coach.length ? (
               coach.map((item) => (
@@ -4649,13 +5011,14 @@ function ProgramsHome({
                   canEdit={false}
                   canDelete={false}
                   action={action?.id === item.id ? action.kind : null}
+                  availabilityAction={
+                    availableIds.includes(item.id) ? undefined : "make"
+                  }
                   onOpen={() => onOpen(item)}
                   onEdit={() => undefined}
                   onCopy={() => onCopy(item)}
                   onDelete={() => undefined}
-                  onAvailability={() =>
-                    onAvailability(item, !availableIds.includes(item.id))
-                  }
+                  onAvailability={() => onAvailability(item, true)}
                 />
               ))
             ) : (
@@ -4685,7 +5048,7 @@ function CoachProgramEmpty({
   return (
     <>
       <PageHeader
-        eyebrow="Coach workspace"
+        eyebrow="My athletes"
         title={`${athlete.name} has no program`}
         description="Create the training content and order. The athlete will decide when each workout appears on their calendar."
       />
@@ -4708,27 +5071,43 @@ function CoachProgramEmpty({
 function CalendarView({
   sessions,
   schedules,
+  weekStartsOnSunday,
   canSchedule,
   onNavigate,
   onSchedule,
+  onScheduleDay,
+  onMoveSchedule,
+  onDeleteSchedule,
   onOpenPlan,
   onOpenResults,
 }: {
   sessions: CompletedSession[];
   schedules: ScheduledWorkout[];
+  weekStartsOnSunday: boolean;
   canSchedule: boolean;
   onNavigate: (view: ViewName) => void;
   onSchedule: () => void;
+  onScheduleDay: (date: string) => void;
+  onMoveSchedule: (scheduleId: string, date: string) => void;
+  onDeleteSchedule: (scheduleId: string) => void;
   onOpenPlan: (schedule: ScheduledWorkout) => void;
   onOpenResults: (session: CompletedSession) => void;
 }) {
   const [monthOffset, setMonthOffset] = useState(0);
+  const [draggingScheduleId, setDraggingScheduleId] = useState<string | null>(
+    null,
+  );
   const now = new Date();
   const baseDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const year = baseDate.getFullYear();
   const month = baseDate.getMonth();
   const days = new Date(year, month + 1, 0).getDate();
-  const firstDay = new Date(year, month, 1).getDay();
+  const firstDay =
+    (new Date(year, month, 1).getDay() - (weekStartsOnSunday ? 0 : 1) + 7) %
+    7;
+  const weekDays = weekStartsOnSunday
+    ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const monthName = baseDate.toLocaleDateString("en", {
     month: "long",
     year: "numeric",
@@ -4771,13 +5150,6 @@ function CalendarView({
             Choose a program
           </button>
         )}
-        <button
-          className="button secondary"
-          onClick={() => onNavigate("today")}
-        >
-          <Activity size={15} />
-          Next workout
-        </button>
       </PageHeader>
       <div className="calendar-stats">
         <div className="panel">
@@ -4833,7 +5205,7 @@ function CalendarView({
             </button>
           </div>
           <div className="calendar-grid">
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+            {weekDays.map((day) => (
               <span className="calendar-dow" key={day}>
                 {day}
               </span>
@@ -4856,12 +5228,43 @@ function CalendarView({
                 <div
                   className={cn(
                     "calendar-day",
-                    daySessions.length > 0 && "trained",
-                    daySchedules.length > 0 && "planned",
-                    isToday && "today",
-                  )}
-                  key={date}
-                >
+                  daySessions.length > 0 && "trained",
+                  daySchedules.length > 0 && "planned",
+                  isToday && "today",
+                  draggingScheduleId && "schedule-target",
+                )}
+                key={date}
+                role={canSchedule ? "button" : undefined}
+                tabIndex={canSchedule ? 0 : undefined}
+                aria-label={
+                  canSchedule
+                    ? `Schedule a workout on ${date}`
+                    : undefined
+                }
+                onClick={() => {
+                  if (canSchedule) onScheduleDay(date);
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    canSchedule &&
+                    (event.key === "Enter" || event.key === " ")
+                  ) {
+                    event.preventDefault();
+                    onScheduleDay(date);
+                  }
+                }}
+                onDragOver={(event) => {
+                  if (draggingScheduleId) event.preventDefault();
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const scheduleId =
+                    draggingScheduleId ??
+                    event.dataTransfer.getData("text/plain");
+                  setDraggingScheduleId(null);
+                  if (scheduleId) onMoveSchedule(scheduleId, date);
+                }}
+              >
                   <span>{day}</span>
                   <div className="calendar-events">
                     {daySessions.map((session) => (
@@ -4869,22 +5272,47 @@ function CalendarView({
                         key={session.id}
                         className="completed"
                         aria-label={`${session.workoutTitle}, completed on ${date}`}
-                        onClick={() => onOpenResults(session)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenResults(session);
+                        }}
                       >
                         <Check size={12} />
                         <span>{session.workoutTitle}</span>
                       </button>
                     ))}
                     {daySchedules.map((schedule) => (
-                      <button
-                        key={schedule.id}
-                        className="planned"
-                        aria-label={`${schedule.workoutTitle}, scheduled on ${date}`}
-                        onClick={() => onOpenPlan(schedule)}
-                      >
-                        <CalendarPlus size={12} />
-                        <span>{schedule.workoutTitle}</span>
-                      </button>
+                      <div className="calendar-planned-event" key={schedule.id}>
+                        <button
+                          className="planned"
+                          draggable
+                          aria-label={`${schedule.workoutTitle}, scheduled on ${date}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onOpenPlan(schedule);
+                          }}
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", schedule.id);
+                            setDraggingScheduleId(schedule.id);
+                          }}
+                          onDragEnd={() => setDraggingScheduleId(null)}
+                        >
+                          <CalendarPlus size={12} />
+                          <span>{schedule.workoutTitle}</span>
+                        </button>
+                        <button
+                          className="calendar-event-delete"
+                          aria-label={`Remove ${schedule.workoutTitle} from the calendar`}
+                          title="Remove from calendar"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onDeleteSchedule(schedule.id);
+                          }}
+                        >
+                          <X size={11} />
+                        </button>
+                      </div>
                     ))}
                   </div>
                   {isToday && !daySessions.length && !daySchedules.length ? (
@@ -4909,27 +5337,6 @@ function CalendarView({
             </span>
           </div>
         </section>
-        <aside className="panel session-detail">
-          <div className="empty-state calendar-open-hint">
-            <CalendarDays size={26} />
-            <h3>Open any workout</h3>
-            <p>
-              Tap a future workout to review its plan, or a completed workout to
-              see the saved results.
-            </p>
-            <button
-              className="button primary"
-              onClick={canSchedule ? onSchedule : () => onNavigate("program")}
-            >
-              {canSchedule ? (
-                <CalendarPlus size={15} />
-              ) : (
-                <Dumbbell size={15} />
-              )}
-              {canSchedule ? "Schedule workout" : "Choose a program"}
-            </button>
-          </div>
-        </aside>
       </div>
     </>
   );
@@ -4954,10 +5361,18 @@ function CalendarWorkoutModal({
   state,
   onClose,
   onReschedule,
+  onDelete,
+  onStart,
+  onSetStatus,
+  statusAction,
 }: {
   state: CalendarDetailState;
   onClose: () => void;
   onReschedule: (scheduleId: string) => void;
+  onDelete: (scheduleId: string) => void;
+  onStart: (schedule: ScheduledWorkout) => void;
+  onSetStatus: (scheduleId: string, status: "planned" | "skipped") => void;
+  statusAction: "planned" | "skipped" | null;
 }) {
   const isPlan = state.kind === "plan";
   const date = isPlan ? state.schedule.plannedDate : state.session.date;
@@ -4985,14 +5400,20 @@ function CalendarWorkoutModal({
           <div className="calendar-detail-summary">
             <div>
               <p className="eyebrow">Scheduled workout</p>
+              <ProgramOwnershipTag
+                sourceType={state.schedule.sourceType}
+                createdByName={state.schedule.createdByName}
+                compact
+              />
               <h3>{state.schedule.workoutTitle}</h3>
               <span>
                 {state.schedule.slotLabel} · ~
                 {state.schedule.workout.durationMinutes} min
               </span>
             </div>
-            <span className="status-pill available">
-              <i /> Planned
+            <span className={cn("status-pill", state.schedule.status)}>
+              <i />
+              {state.schedule.status === "skipped" ? "Skipped" : "Planned"}
             </span>
           </div>
           <div className="calendar-detail-sections">
@@ -5089,18 +5510,70 @@ function CalendarWorkoutModal({
         </div>
       )}
       <div className="modal-actions">
-        <button className="button secondary" onClick={onClose}>
-          Close
-        </button>
-        {isPlan && (
-          <button
-            className="button primary"
-            onClick={() => onReschedule(state.schedule.id)}
-          >
-            <CalendarPlus size={15} />
-            Reschedule
-          </button>
-        )}
+            <button className="button secondary" onClick={onClose}>
+              Close
+            </button>
+            {isPlan && (
+              <>
+                {state.schedule.status === "skipped" ? (
+                  <button
+                    className="button secondary"
+                    disabled={statusAction !== null}
+                    onClick={() => onSetStatus(state.schedule.id, "planned")}
+                  >
+                    {statusAction === "planned" ? (
+                      <>
+                        <LoaderCircle className="button-spinner" size={15} />
+                        Restoring…
+                      </>
+                    ) : (
+                      "Set back to planned"
+                    )}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="button danger"
+                      disabled={statusAction !== null}
+                      onClick={() => onSetStatus(state.schedule.id, "skipped")}
+                    >
+                      {statusAction === "skipped" ? (
+                        <>
+                          <LoaderCircle className="button-spinner" size={15} />
+                          Skipping…
+                        </>
+                      ) : (
+                        <>
+                          <X size={15} />
+                          Skip workout
+                        </>
+                      )}
+                    </button>
+                    <button
+                      className="button primary"
+                      onClick={() => onStart(state.schedule)}
+                    >
+                      <Activity size={15} />
+                      Start workout
+                    </button>
+                  </>
+                )}
+                <button
+                  className="button ghost"
+                  onClick={() => onDelete(state.schedule.id)}
+                >
+                  <Trash2 size={15} />
+                  Remove from calendar
+                </button>
+                <button
+                  className="button secondary"
+                  onClick={() => onReschedule(state.schedule.id)}
+                >
+                  <CalendarPlus size={15} />
+                  Reschedule
+                </button>
+              </>
+            )}
       </div>
     </ModalShell>
   );
@@ -5315,6 +5788,7 @@ function CoachingView({
   ) => void;
   onAssignAthlete: (athlete: AthleteSummary) => void;
 }) {
+  const hasAthleteWorkspace = athletes.length > 0 || pendingInvites.length > 0;
   return (
     <>
       <PageHeader
@@ -5329,31 +5803,33 @@ function CoachingView({
           >
             My coaches
           </button>
-          <button
-            className={mode === "coach" ? "active" : ""}
-            disabled={refreshing}
-            onClick={() => onMode("coach")}
-          >
-            {refreshing ? (
-              <>
-                <LoaderCircle className="button-spinner" size={14} />
-                Refreshing…
-              </>
-            ) : (
-              "Coach workspace"
-            )}
-            {pendingInvites.length > 0 && (
-              <span
-                className="request-count-badge"
-                aria-label={`${pendingInvites.length} pending ${pendingInvites.length === 1 ? "request" : "requests"}`}
-              >
-                {pendingInvites.length}
-              </span>
-            )}
-          </button>
+          {hasAthleteWorkspace && (
+            <button
+              className={mode === "coach" ? "active" : ""}
+              disabled={refreshing}
+              onClick={() => onMode("coach")}
+            >
+              {refreshing ? (
+                <>
+                  <LoaderCircle className="button-spinner" size={14} />
+                  Refreshing…
+                </>
+              ) : (
+                "My athletes"
+              )}
+              {pendingInvites.length > 0 && (
+                <span
+                  className="request-count-badge"
+                  aria-label={`${pendingInvites.length} pending ${pendingInvites.length === 1 ? "request" : "requests"}`}
+                >
+                  {pendingInvites.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
       </PageHeader>
-      {mode === "athlete" ? (
+      {mode === "athlete" || !hasAthleteWorkspace ? (
         <div className="coaching-athlete-layout">
           <section className="panel coach-access-card">
             <div className="panel-heading">
@@ -5483,16 +5959,6 @@ function CoachingView({
               </div>
             )}
           </section>
-          <aside>
-            <div className="panel privacy-card">
-              <LockKeyhole size={20} />
-              <h3>Your data stays yours</h3>
-              <p>
-                Removing one coach never affects your programs, history, or
-                other coach connections.
-              </p>
-            </div>
-          </aside>
         </div>
       ) : (
         <div className="coach-dashboard">
@@ -5767,8 +6233,10 @@ function CoachAthleteOverview({
                     </span>
                     <strong>{assignedProgram.completionPercent}%</strong>
                     <small>
+                      {assignedProgram.scheduledWorkouts}/
+                      {assignedProgram.totalWorkouts} scheduled · {" "}
                       {assignedProgram.completedWorkouts}/
-                      {assignedProgram.totalWorkouts} workouts
+                      {assignedProgram.totalWorkouts} complete
                     </small>
                   </span>
                   <span className="coach-program-next">
@@ -6250,6 +6718,7 @@ function SectionModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const mainLocked = section?.kind === "main";
   async function save() {
     setSaving(true);
     setError("");
@@ -6280,6 +6749,7 @@ function SectionModal({
           <span>Section type</span>
           <select
             value={kind}
+            disabled={mainLocked}
             onChange={(event) => {
               const next = event.target.value as NonNullable<
                 WorkoutSection["kind"]
@@ -6289,7 +6759,7 @@ function SectionModal({
             }}
           >
             <option value="warmup">Warm-up</option>
-            <option value="main">Main work</option>
+            {section && <option value="main">Main work</option>}
             <option value="conditioning">Conditioning</option>
             <option value="cooldown">Cool-down</option>
             <option value="custom">Custom</option>
@@ -6303,6 +6773,12 @@ function SectionModal({
           />
         </label>
       </div>
+      {mainLocked && (
+        <p className="form-info">
+          Main work is required in every workout and cannot be changed to another
+          section type.
+        </p>
+      )}
       {error && (
         <p className="auth-error" role="alert">
           {error}
@@ -6318,6 +6794,79 @@ function SectionModal({
           onClick={save}
         >
           {saving ? "Saving…" : section ? "Save section" : "Add section"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function DeleteSectionModal({
+  section,
+  onClose,
+  onDelete,
+}: {
+  section: WorkoutSection;
+  onClose: () => void;
+  onDelete: (deleteItems: boolean) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState<"move" | "delete" | null>(null);
+  const [error, setError] = useState("");
+  const itemCount = section.items.length;
+
+  async function remove(deleteItems: boolean) {
+    setSaving(deleteItems ? "delete" : "move");
+    setError("");
+    try {
+      await onDelete(deleteItems);
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "The section could not be deleted.",
+      );
+      setSaving(null);
+    }
+  }
+
+  return (
+    <ModalShell
+      title={`Delete ${section.title}?`}
+      description={
+        itemCount
+          ? `This section contains ${itemCount} ${itemCount === 1 ? "exercise" : "exercises"}. Choose what to do with them.`
+          : "This empty section will be removed."
+      }
+      onClose={onClose}
+      dismissible={!saving}
+    >
+      {error && (
+        <p className="auth-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="modal-actions">
+        <button className="button secondary" disabled={Boolean(saving)} onClick={onClose}>
+          Cancel
+        </button>
+        {itemCount > 0 && (
+          <button
+            className="button secondary"
+            disabled={Boolean(saving)}
+            onClick={() => void remove(false)}
+          >
+            {saving === "move" ? "Moving…" : "Move to Main work"}
+          </button>
+        )}
+        <button
+          className="button danger"
+          disabled={Boolean(saving)}
+          onClick={() => void remove(true)}
+        >
+          {saving === "delete"
+            ? "Deleting…"
+            : itemCount > 0
+              ? "Delete section & exercises"
+              : "Delete section"}
         </button>
       </div>
     </ModalShell>
@@ -6756,7 +7305,8 @@ function InviteModal({
             <div>
               <strong>Request sent to {receipt.targetName}</strong>
               <p>
-                It now appears under Coaching requests in their Coach workspace.
+                It now appears under Coaching requests in their My athletes
+                workspace.
                 They can accept or decline it there.
               </p>
             </div>
@@ -7044,7 +7594,7 @@ function AssignProgramModal({
                   <strong>{lockedAthletes ? "Athlete" : "Athletes"}</strong>
                   <small>
                     {lockedAthletes
-                      ? "Assigning from Coach workspace"
+                      ? "Assigning from My athletes"
                       : "Choose one or more people you coach"}
                   </small>
                 </div>
@@ -7347,12 +7897,14 @@ function ProgramModal({
 function ScheduleModal({
   schedules,
   editingId,
+  initialDate,
   preparing,
   onClose,
   onSave,
 }: {
   schedules: ScheduledWorkout[];
   editingId: string | null;
+  initialDate: string | null;
   preparing: boolean;
   onClose: () => void;
   onSave: (scheduleId: string, date: string | null) => Promise<void>;
@@ -7365,7 +7917,9 @@ function ScheduleModal({
     candidates.find((schedule) => !schedule.plannedDate) ??
     candidates[0];
   const [scheduleId, setScheduleId] = useState(initial?.id ?? "");
-  const [date, setDate] = useState(initial?.plannedDate ?? localDateOnly());
+  const [date, setDate] = useState(
+    initial?.plannedDate ?? initialDate ?? localDateOnly(),
+  );
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [savingAction, setSavingAction] = useState<
@@ -7523,11 +8077,22 @@ function AccountModal({
   profile: OwnProfile;
   email: string;
   onClose: () => void;
-  onSave: (firstName: string, lastName: string) => Promise<void>;
+  onSave: (
+    firstName: string,
+    lastName: string,
+    weekStartsOnSunday: boolean,
+    weightUnit: OwnProfile["weightUnit"],
+    distanceUnit: OwnProfile["distanceUnit"],
+  ) => Promise<void>;
   onSignOut: () => void;
 }) {
   const [firstName, setFirstName] = useState(profile.firstName);
   const [lastName, setLastName] = useState(profile.lastName);
+  const [weekStartsOnSunday, setWeekStartsOnSunday] = useState(
+    profile.weekStartsOnSunday,
+  );
+  const [weightUnit, setWeightUnit] = useState(profile.weightUnit);
+  const [distanceUnit, setDistanceUnit] = useState(profile.distanceUnit);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
@@ -7535,7 +8100,13 @@ function AccountModal({
     setSaving(true);
     setError("");
     try {
-      await onSave(firstName.trim(), lastName.trim());
+      await onSave(
+        firstName.trim(),
+        lastName.trim(),
+        weekStartsOnSunday,
+        weightUnit,
+        distanceUnit,
+      );
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -7613,6 +8184,52 @@ function AccountModal({
           </small>
         </label>
       </div>
+      <section className="account-settings" aria-labelledby="user-settings-title">
+        <div className="account-settings-heading">
+          <p>Preferences</p>
+          <h3 id="user-settings-title">User settings</h3>
+        </div>
+        <div className="account-settings-grid">
+          <label className="form-field">
+            <span>Week starts on</span>
+            <select
+              value={weekStartsOnSunday ? "sunday" : "monday"}
+              onChange={(event) =>
+                setWeekStartsOnSunday(event.target.value === "sunday")
+              }
+            >
+              <option value="monday">Monday</option>
+              <option value="sunday">Sunday</option>
+            </select>
+          </label>
+          <label className="form-field">
+            <span>Weight</span>
+            <select
+              value={weightUnit}
+              onChange={(event) =>
+                setWeightUnit(event.target.value as OwnProfile["weightUnit"])
+              }
+            >
+              <option value="kg">Kilograms (kg)</option>
+              <option value="lb">Pounds (lb)</option>
+            </select>
+          </label>
+          <label className="form-field">
+            <span>Distance</span>
+            <select
+              value={distanceUnit}
+              onChange={(event) =>
+                setDistanceUnit(
+                  event.target.value as OwnProfile["distanceUnit"],
+                )
+              }
+            >
+              <option value="km">Kilometres (km)</option>
+              <option value="mi">Miles (mi)</option>
+            </select>
+          </label>
+        </div>
+      </section>
       {error && (
         <p className="auth-error" role="alert">
           {error}

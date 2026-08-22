@@ -7,6 +7,9 @@ export interface OwnProfile {
   lastName: string;
   displayName: string;
   liftlogId: string;
+  weekStartsOnSunday: boolean;
+  weightUnit: "kg" | "lb";
+  distanceUnit: "km" | "mi";
 }
 
 export type ExerciseScope = "global" | "personal";
@@ -78,6 +81,9 @@ export interface ScheduledWorkout {
   plannedDate?: string;
   sequenceNumber: number;
   status: "planned" | "in_progress" | "completed" | "skipped";
+  sourceType?: Program["sourceType"];
+  sourceLabel?: string;
+  createdByName?: string;
   workout: PlannedWorkout;
 }
 
@@ -170,6 +176,8 @@ export interface CoachAssignedProgramSummary {
   assignedAt: string;
   status: CoachAssignedProgramStatus;
   totalWorkouts: number;
+  scheduledWorkouts: number;
+  scheduledPercent: number;
   completedWorkouts: number;
   completionPercent: number;
   nextWorkout?: {

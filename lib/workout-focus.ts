@@ -14,6 +14,31 @@ export interface WorkoutFocus {
   plannedDate?: string;
 }
 
+/**
+ * Calendar workouts that are still ahead of the athlete. The Next workouts
+ * page intentionally shows every dated planned or skipped occurrence from
+ * today onward, not just the earliest one.
+ */
+export function listUpcomingWorkouts(
+  schedules: ScheduledWorkout[],
+  today = localDateOnly(),
+) {
+  return schedules
+    .filter(
+      (schedule) =>
+        (schedule.status === "planned" || schedule.status === "skipped") &&
+        Boolean(schedule.plannedDate) &&
+        String(schedule.plannedDate) >= today,
+    )
+    .slice()
+    .sort(
+      (left, right) =>
+        String(left.plannedDate).localeCompare(String(right.plannedDate)) ||
+        left.sequenceNumber - right.sequenceNumber ||
+        left.id.localeCompare(right.id),
+    );
+}
+
 function localDateOnly(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }

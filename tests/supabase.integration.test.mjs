@@ -957,12 +957,16 @@ test(
         expectData(
           await athleteA
             .from("workout_sessions")
-            .select("status,session_rpe")
+            .select("status,session_rpe,completed_for_date")
             .eq("id", sessionId)
             .single(),
           "load completed workout",
         ),
-        { status: "completed", session_rpe: 7 },
+        {
+          status: "completed",
+          session_rpe: 7,
+          completed_for_date: datePlus(effectiveOn, 2),
+        },
       );
       assert.equal(
         expectData(

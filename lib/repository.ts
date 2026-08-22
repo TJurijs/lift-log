@@ -36,6 +36,9 @@ interface ProfileRow {
   first_name: string;
   last_name: string;
   liftlog_id: string;
+  week_starts_on_sunday?: boolean;
+  weight_unit?: "kg" | "lb";
+  distance_unit?: "km" | "mi";
 }
 
 interface ExerciseRow {
@@ -156,6 +159,7 @@ interface SessionRow {
   workout_title: string;
   started_at: string;
   completed_at: string | null;
+  completed_for_date: string | null;
   session_rpe: NumericValue;
   athlete_note: string;
 }
@@ -290,7 +294,7 @@ function mapCompletedSession(session: SessionRow): CompletedSession {
     programVersionId: session.program_version_id ?? undefined,
     workoutId: session.workout_id ?? undefined,
     workoutTitle: session.workout_title,
-    date: dateOnly(start),
+    date: session.completed_for_date ?? dateOnly(start),
     durationMinutes: Math.max(
       1,
       Math.round((end.getTime() - start.getTime()) / 60_000),
@@ -584,7 +588,9 @@ export class LiftLogRepository {
   private async loadOwnProfile(): Promise<OwnProfile> {
     const result = await this.client
       .from("profiles")
-      .select("id, display_name, first_name, last_name, liftlog_id")
+      .select(
+        "id, display_name, first_name, last_name, liftlog_id, week_starts_on_sunday, weight_unit, distance_unit",
+      )
       .eq("id", this.viewerId)
       .single();
     if (result.error || !result.data)
@@ -596,6 +602,9 @@ export class LiftLogRepository {
       lastName: row.last_name,
       displayName: row.display_name,
       liftlogId: row.liftlog_id,
+      weekStartsOnSunday: row.week_starts_on_sunday ?? false,
+      weightUnit: row.weight_unit ?? "kg",
+      distanceUnit: row.distance_unit ?? "km",
     };
   }
 
@@ -941,7 +950,7 @@ export class LiftLogRepository {
     const programsResult = programIds.length
       ? await this.client
           .from("programs")
-          .select("id, title")
+          .select("id, title, created_by_id, source_type, source_label")
           .in("id", programIds)
       : { data: [], error: null };
     if (programsResult.error)
@@ -949,6 +958,24 @@ export class LiftLogRepository {
     const programs = programsResult.data as Array<{
       id: string;
       title: string;
+      created_by_id: string;
+      source_type: ProgramRow["source_type"];
+      source_label: string;
+    }>;
+    const creatorIds = Array.from(
+      new Set(programs.map((program) => program.created_by_id)),
+    );
+    const creatorsResult = creatorIds.length
+      ? await this.client
+          .from("profiles")
+          .select("id, display_name")
+          .in("id", creatorIds)
+      : { data: [], error: null };
+    if (creatorsResult.error)
+      fail("Could not load scheduled workout creators", creatorsResult.error);
+    const creators = creatorsResult.data as Array<{
+      id: string;
+      display_name: string;
     }>;
     return schedules
       .map((schedule) => {
@@ -1022,6 +1049,13 @@ export class LiftLogRepository {
           plannedDate: schedule.planned_date ?? undefined,
           sequenceNumber: schedule.sequence_number ?? 0,
           status: schedule.status,
+          sourceType: scheduledProgram?.source_type,
+          sourceLabel: scheduledProgram?.source_label,
+          createdByName: scheduledProgram
+            ? creators.find(
+                (profile) => profile.id === scheduledProgram.created_by_id,
+              )?.display_name
+            : undefined,
           workout: mappedWorkout,
         };
       })
@@ -1046,10 +1080,16 @@ export class LiftLogRepository {
   async updateOwnProfile(
     firstName: string,
     lastName: string,
+    weekStartsOnSunday: boolean,
+    weightUnit: OwnProfile["weightUnit"],
+    distanceUnit: OwnProfile["distanceUnit"],
   ): Promise<OwnProfile> {
     const result = await this.client.rpc("update_own_profile", {
       target_first_name: firstName,
       target_last_name: lastName,
+      target_week_starts_on_sunday: weekStartsOnSunday,
+      target_weight_unit: weightUnit,
+      target_distance_unit: distanceUnit,
     });
     if (result.error || !result.data)
       fail("Could not update your account", result.error);
@@ -1168,9 +1208,10 @@ export class LiftLogRepository {
     return String(result.data);
   }
 
-  async deleteWorkoutSection(sectionId: string) {
+  async deleteWorkoutSection(sectionId: string, deleteItems: boolean) {
     const result = await this.client.rpc("delete_workout_section", {
       target_section_id: sectionId,
+      delete_items: deleteItems,
     });
     if (result.error)
       fail("Could not delete the workout section", result.error);
@@ -1245,6 +1286,18 @@ export class LiftLogRepository {
       target_planned_date: plannedDate || null,
     });
     if (result.error) fail("Could not update the workout date", result.error);
+  }
+
+  async setScheduledWorkoutStatus(
+    scheduledWorkoutId: string,
+    status: "planned" | "skipped",
+  ) {
+    const result = await this.client.rpc("set_scheduled_workout_status", {
+      target_scheduled_workout_id: scheduledWorkoutId,
+      target_status: status,
+    });
+    if (result.error)
+      fail("Could not update the scheduled workout", result.error);
   }
 
   async prepareProgramSchedule(programVersionId: string) {
@@ -1330,28 +1383,43 @@ export class LiftLogRepository {
     const workoutId = String(workoutResult.data.id);
     const sectionResult = await this.client
       .from("workout_sections")
-      .insert({
-        workout_id: workoutId,
-        title: "Main work",
-        section_kind: "main",
-        position: 0,
-      })
-      .select("id")
-      .single();
-    if (sectionResult.error || !sectionResult.data)
-      fail("Could not prepare the workout section", sectionResult.error);
+      .insert([
+        {
+          workout_id: workoutId,
+          title: "Warm up",
+          section_kind: "warmup",
+          position: 0,
+        },
+        {
+          workout_id: workoutId,
+          title: "Main work",
+          section_kind: "main",
+          position: 1,
+        },
+        {
+          workout_id: workoutId,
+          title: "Cooldown",
+          section_kind: "cooldown",
+          position: 2,
+        },
+      ])
+      .select("id, title, section_kind, position");
+    if (sectionResult.error || !sectionResult.data || sectionResult.data.length !== 3)
+      fail("Could not prepare the workout sections", sectionResult.error);
     return {
       id: workoutId,
       title,
       dayLabel: `Workout ${week.workouts.length + 1}`,
       durationMinutes: 45,
       sections: [
-        {
-          id: String(sectionResult.data.id),
-          title: "Main work",
-          kind: "main",
-          items: [],
-        },
+        ...sectionResult.data
+          .sort((left, right) => left.position - right.position)
+          .map((section) => ({
+            id: String(section.id),
+            title: String(section.title),
+            kind: section.section_kind as WorkoutSection["kind"],
+            items: [],
+          })),
       ],
     };
   }
@@ -1598,7 +1666,7 @@ export class LiftLogRepository {
     const sessionResult = await this.client
       .from("workout_sessions")
       .select(
-        "id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, session_rpe, athlete_note",
+        "id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, completed_for_date, session_rpe, athlete_note",
       )
       .eq("id", sessionId)
       .eq("athlete_id", athleteId)
@@ -1671,7 +1739,7 @@ export class LiftLogRepository {
     const result = await this.client
       .from("workout_sessions")
       .select(
-        "id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, session_rpe, athlete_note",
+        "id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, completed_for_date, session_rpe, athlete_note",
       )
       .eq("athlete_id", athleteId)
       .eq("status", "completed")
@@ -1686,7 +1754,7 @@ export class LiftLogRepository {
     let query = this.client
       .from("workout_sessions")
       .select(
-        "id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, session_rpe, athlete_note",
+        "id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, completed_for_date, session_rpe, athlete_note",
       )
       .eq("athlete_id", this.viewerId)
       .eq("status", "in_progress")
@@ -1892,7 +1960,7 @@ export class LiftLogRepository {
           ? this.client
               .from("workout_sessions")
               .select(
-                "id, athlete_id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, session_rpe, athlete_note",
+                "id, athlete_id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, completed_for_date, session_rpe, athlete_note",
               )
               .in("athlete_id", athleteIds)
               .in("program_version_id", versionIds)
@@ -1980,6 +2048,9 @@ export class LiftLogRepository {
           const completedWorkouts = cycle.filter(
             (schedule) => schedule.status === "completed",
           ).length;
+          const scheduledWorkouts = cycle.filter(
+            (schedule) => schedule.planned_date !== null,
+          ).length;
           const allTerminal =
             totalWorkouts > 0 &&
             cycle.length >= totalWorkouts &&
@@ -2026,6 +2097,14 @@ export class LiftLogRepository {
               assignedAt: program.created_at.slice(0, 10),
               status,
               totalWorkouts,
+              scheduledWorkouts,
+              scheduledPercent:
+                totalWorkouts > 0
+                  ? Math.min(
+                      100,
+                      Math.round((scheduledWorkouts / totalWorkouts) * 100),
+                    )
+                  : 0,
               completedWorkouts,
               completionPercent:
                 totalWorkouts > 0

@@ -43,6 +43,8 @@ test("coach athlete summaries expose assigned-program progress and a scoped agen
     "assignedAt",
     "status",
     "totalWorkouts",
+    "scheduledWorkouts",
+    "scheduledPercent",
     "completedWorkouts",
     "completionPercent",
     "nextWorkout",

@@ -71,8 +71,8 @@ test("coach requests are confirmed in-app without invitation links", async () =>
   );
   assert.match(
     coachingView,
-    /"Coach workspace"[\s\S]*pendingInvites\.length > 0[\s\S]*request-count-badge[\s\S]*pendingInvites\.length/,
-    "incoming requests should also badge Coach workspace",
+    /"My athletes"[\s\S]*pendingInvites\.length > 0[\s\S]*request-count-badge[\s\S]*pendingInvites\.length/,
+    "incoming requests should also badge My athletes",
   );
   assert.match(
     app,
@@ -89,6 +89,44 @@ test("coach requests are confirmed in-app without invitation links", async () =>
     /respondingInvite\.response === "accepted"[\s\S]*Accepting…/,
     "accepting a request must show action-specific progress",
   );
+});
+
+test("coach-only workspace tabs stay hidden until they have relevant coaching data", async () => {
+  const app = await readFile(appUrl, "utf8");
+  const programsHome = sourceBetween(
+    app,
+    "function ProgramsHome",
+    "function CoachProgramEmpty",
+  );
+  const coachingView = sourceBetween(app, "function CoachingView", "function ModalShell");
+
+  assert.match(
+    coachingView,
+    /const hasAthleteWorkspace\s*=\s*athletes\.length > 0 \|\| pendingInvites\.length > 0/,
+    "My athletes must require an active athlete or a pending coaching request",
+  );
+  assert.match(
+    coachingView,
+    /\{hasAthleteWorkspace && \([\s\S]*"My athletes"/,
+    "the My athletes workspace tab must be hidden otherwise",
+  );
+  assert.match(app, /\{ id: "coaching", label: "Coaching", icon: Users \}/);
+  assert.match(
+    app,
+    /\{navItems\.map\(\(item\) => \{/,
+    "the Coaching navigation destination must remain visible to everyone",
+  );
+  assert.match(
+    programsHome,
+    /\{hasCoach && \([\s\S]*aria-selected=\{source === "coach"\}/,
+    "the Coach program source must be hidden without an active coach",
+  );
+  assert.match(
+    programsHome,
+    /\{hasCoach && source === "coach" && \(/,
+    "a stale Coach source cannot leave an empty source panel behind",
+  );
+  assert.doesNotMatch(app, /Open any workout/);
 });
 
 test("published Own programs can be assigned from either coaching entry point", async () => {

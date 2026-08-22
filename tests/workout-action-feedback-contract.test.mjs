@@ -13,7 +13,7 @@ test("start and finish actions give immediate feedback and reject repeat clicks"
   );
   assert.match(
     app,
-    /async function startWorkout\(\)[\s\S]*workoutActionRef\.current[\s\S]*setWorkoutAction\("starting"\)[\s\S]*finally[\s\S]*setWorkoutAction\(null\)/,
+    /async function startWorkout\(schedule: ScheduledWorkout\)[\s\S]*workoutActionRef\.current[\s\S]*setWorkoutAction\("starting"\)[\s\S]*finally[\s\S]*setWorkoutAction\(null\)/,
   );
   assert.match(
     app,
