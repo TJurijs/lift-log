@@ -21,6 +21,7 @@ if (mode === "production" && environment.VITE_ENABLE_TEST_PERSONAS === "true") {
   process.exit(1);
 }
 
+const parsedUrls = new Map();
 for (const key of ["VITE_SITE_URL", "VITE_SUPABASE_URL"]) {
   let parsed;
   try {
@@ -29,17 +30,32 @@ for (const key of ["VITE_SITE_URL", "VITE_SUPABASE_URL"]) {
     process.stderr.write(`${key} must be a valid absolute URL.\n`);
     process.exit(1);
   }
-  if (parsed.protocol !== "https:") {
-    process.stderr.write(`${key} must use HTTPS for a hosted build.\n`);
-    process.exit(1);
+  parsedUrls.set(key, parsed);
+}
+
+const loopbackHosts = new Set(["localhost", "127.0.0.1"]);
+if (mode === "localdev") {
+  for (const [key, parsed] of parsedUrls) {
+    if (parsed.protocol !== "http:" || !loopbackHosts.has(parsed.hostname)) {
+      process.stderr.write(`${key} must be a loopback HTTP URL in localdev mode.\n`);
+      process.exit(1);
+    }
+  }
+} else {
+  for (const [key, parsed] of parsedUrls) {
+    if (parsed.protocol !== "https:") {
+      process.stderr.write(`${key} must use HTTPS for a hosted build.\n`);
+      process.exit(1);
+    }
   }
 }
 
-
 if (environment.VITE_ENABLE_TEST_PERSONAS === "true") {
-  const supabaseHost = new URL(environment.VITE_SUPABASE_URL).hostname;
-  if (mode !== "nonprod" || supabaseHost !== "ofyeejyfroblunbspgve.supabase.co") {
-    process.stderr.write("Test personas may target only the liftlog-dev Supabase project in nonprod mode.\n");
+  const supabaseUrl = parsedUrls.get("VITE_SUPABASE_URL");
+  const hostedDevelopment = mode === "nonprod" && supabaseUrl.hostname === "ofyeejyfroblunbspgve.supabase.co";
+  const isolatedLocal = mode === "localdev" && supabaseUrl.protocol === "http:" && loopbackHosts.has(supabaseUrl.hostname);
+  if (!hostedDevelopment && !isolatedLocal) {
+    process.stderr.write("Test personas may target only isolated local Supabase or the exact liftlog-dev project.\n");
     process.exit(1);
   }
 }

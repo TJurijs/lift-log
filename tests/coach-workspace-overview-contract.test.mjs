@@ -1,0 +1,118 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const stylesUrl = new URL("../app/globals.css", import.meta.url);
+
+function sourceBetween(source, start, end) {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+
+  assert.notEqual(startIndex, -1, "expected source marker: " + start);
+  assert.notEqual(endIndex, -1, "expected source marker: " + end);
+  return source.slice(startIndex, endIndex);
+}
+
+test("coach athlete overview is scoped to the current coach's assignments", async () => {
+  const app = await readFile(appUrl, "utf8");
+  const coaching = sourceBetween(
+    app,
+    "function CoachingView",
+    "function ModalShell",
+  );
+
+  assert.doesNotMatch(
+    coaching,
+    /athlete\.programTitle|selectedAthlete\.programTitle|Open latest plan|Check in/,
+  );
+  assert.doesNotMatch(
+    coaching,
+    /completedThisWeek|plannedThisWeek|lastTrainingLabel|upcomingSessions/,
+  );
+  assert.match(coaching, /athlete\.assignedPrograms\.map/);
+  assert.match(coaching, /coachProgramStatusLabel\(assignedProgram\.status\)/);
+  assert.match(
+    coaching,
+    /assignedProgram\.completedWorkouts[\s\S]*assignedProgram\.totalWorkouts/,
+  );
+  assert.match(coaching, /assignedProgram\.completionPercent/);
+  assert.match(coaching, /assignedProgram\.nextWorkout/);
+  assert.match(coaching, /onOpenProgram\(assignedProgram\)/);
+  assert.match(coaching, /No programs assigned by you/);
+  assert.match(coaching, /aria-busy=\{openingProgramId === assignedProgram\.id\}/);
+  assert.match(coaching, /LoaderCircle className="button-spinner"/);
+});
+
+test("coach agenda opens the exact historical program version", async () => {
+  const app = await readFile(appUrl, "utf8");
+
+  assert.match(
+    app,
+    /programVersionId\s*\?\s*await repository\.loadProgramVersionForAthleteById\([\s\S]*athlete\.id,[\s\S]*assignedProgram\.id,[\s\S]*programVersionId/,
+  );
+  assert.match(
+    app,
+    /openCoachAgendaEntry[\s\S]*entry\.workoutId,[\s\S]*entry\.programVersionId/,
+  );
+});
+
+test("coach agenda separates future and completed work with readable RPE states", async () => {
+  const [app, styles] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
+  const overview = sourceBetween(
+    app,
+    "function CoachAthleteOverview",
+    "function ModalShell",
+  );
+
+  assert.match(overview, /entry\.kind === "upcoming"/);
+  assert.match(overview, /entry\.kind === "completed"/);
+  assert.match(overview, /title="Scheduled"/);
+  assert.match(overview, /title="Recently completed"/);
+  assert.match(overview, /Read only/);
+  assert.match(overview, /entry\.workoutTitle/);
+  assert.match(overview, /entry\.programTitle/);
+  assert.match(overview, /"RPE " \+ entry\.rpe/);
+  assert.match(overview, /"Completed · RPE —"/);
+  assert.match(overview, /coachAgendaStatusLabel\(entry\.status\)/);
+  assert.match(overview, /\.slice\(0, 6\)/);
+  assert.match(overview, /RPE 1–4 · low/);
+  assert.match(overview, /RPE 5–8 · usual range/);
+  assert.match(overview, /RPE 9–10 · high/);
+  assert.match(styles, /\.coach-rpe\.low[\s\S]*var\(--blue\)/);
+  assert.match(styles, /\.coach-rpe\.balanced[\s\S]*var\(--accent\)/);
+  assert.match(styles, /\.coach-rpe\.high[\s\S]*var\(--orange\)/);
+  assert.match(
+    styles,
+    /\.coach-agenda-state\.overdue[\s\S]*var\(--orange\)/,
+  );
+});
+
+test("coach rows remain keyboard-visible and stack without mobile overflow", async () => {
+  const styles = await readFile(stylesUrl, "utf8");
+  const mobile = sourceBetween(
+    styles,
+    "@media (max-width: 520px)",
+    "@media (prefers-reduced-motion: reduce)",
+  );
+
+  assert.match(
+    styles,
+    /\.coach-assigned-program:hover,\s*\.coach-assigned-program:focus-visible/,
+  );
+  assert.match(
+    styles,
+    /\.coach-agenda-list > button:hover,\s*\.coach-agenda-list > button:focus-visible/,
+  );
+  assert.match(
+    mobile,
+    /\.coach-assigned-program\s*\{[^}]*grid-template-columns:\s*34px minmax\(0, 1fr\) 15px/,
+  );
+  assert.match(
+    mobile,
+    /\.coach-agenda-list > button\s*\{[^}]*min-height:\s*68px[^}]*grid-template-columns:\s*38px minmax\(0, 1fr\) 15px/,
+  );
+});

@@ -55,9 +55,18 @@ This runs entirely in the browser with sample data. It has no authentication, da
 npm run dev:demo
 ```
 
-### Local Supabase
+### Isolated local QA
 
-The local Supabase plumbing remains available for future isolated database work, but it is not part of the normal development workflow and there is intentionally no `dev:local` command.
+Use this mode to test real account switching, invitations, coach access, and scheduling without touching the hosted development database:
+
+```bash
+npm run db:start
+npm run db:reset
+npm run seed:test-population:local
+npm run dev:local
+```
+
+The frontend runs at `http://localhost:3000` and talks only to Supabase on `127.0.0.1`. The shared password still comes from ignored `.env.test-personas`. Local data is disposable; `npm run db:reset` rebuilds it from migrations.
 
 ## Delivery workflow
 
@@ -107,5 +116,15 @@ The database model is defined by:
 - `supabase/migrations/202608200001_initial_schema.sql`
 - `supabase/migrations/202608210001_operational_mvp.sql`
 - `supabase/migrations/202608210002_test_population_and_multi_coach.sql`
+- `supabase/migrations/202608210003_private_profiles_program_library_and_athlete_scheduling.sql`
+- `supabase/migrations/202608210004_program_deactivation.sql`
+- `supabase/migrations/202608210005_multiple_available_programs.sql`
+- `supabase/migrations/202608210006_program_catalog_and_builder_operations.sql`
+- `supabase/migrations/202608210007_atomic_prescription_editing.sql`
+- `supabase/migrations/202608210008_library_instances_are_immutable.sql`
+- `supabase/migrations/202608210009_compact_exercises_after_deletion.sql`
+- `supabase/migrations/202608210010_repeating_cycles_and_section_editing.sql`
+- `supabase/migrations/202608210011_restore_partial_repeating_cycles.sql`
+- `supabase/migrations/202608210012_safe_item_deletion_and_complete_repeating_cycles.sql`
 
 See [docs/MVP_AND_ARCHITECTURE.md](docs/MVP_AND_ARCHITECTURE.md) for the product and authorization model, and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the staged hosting layout.

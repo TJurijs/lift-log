@@ -15,15 +15,28 @@ import { LiftLogRepository } from "../lib/repository";
 
 type AuthStatus = "loading" | "anonymous" | "authenticated" | "demo";
 const localDemoAvailable = import.meta.env.DEV;
-const testPersonaFeatureConfigured = import.meta.env.MODE === "nonprod"
-  && import.meta.env.VITE_ENABLE_TEST_PERSONAS === "true"
-  && (() => {
-    try {
-      return new URL(import.meta.env.VITE_SUPABASE_URL ?? "").hostname === "ofyeejyfroblunbspgve.supabase.co";
-    } catch {
-      return false;
-    }
-  })();
+const jwtClockSkewRetryDelays = [750, 1_500];
+
+function isFutureJwtError(error: unknown) {
+  return error instanceof Error && /jwt issued at future/i.test(error.message);
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+const testPersonaFeatureConfigured = import.meta.env.VITE_ENABLE_TEST_PERSONAS === "true" && (() => {
+  try {
+    const mode = import.meta.env.MODE;
+    const supabaseUrl = new URL(import.meta.env.VITE_SUPABASE_URL ?? "");
+    if (mode === "nonprod") return supabaseUrl.hostname === "ofyeejyfroblunbspgve.supabase.co";
+    return mode === "localdev"
+      && supabaseUrl.protocol === "http:"
+      && ["localhost", "127.0.0.1"].includes(supabaseUrl.hostname);
+  } catch {
+    return false;
+  }
+})();
 
 function testPersonaFeatureAvailable() {
   if (!testPersonaFeatureConfigured || typeof window === "undefined") return false;
@@ -91,22 +104,39 @@ export default function AppEntry() {
     const activeRepository = repository;
     let active = true;
 
+    async function loadWorkspaceAttempt() {
+      const invitationToken = new URLSearchParams(window.location.search).get("coach_invite");
+      if (invitationToken && !processedInvite.current) {
+        processedInvite.current = true;
+        try {
+          await activeRepository.acceptCoachInvite(invitationToken);
+          const cleanUrl = new URL(window.location.href);
+          cleanUrl.searchParams.delete("coach_invite");
+          window.history.replaceState({}, "", cleanUrl);
+        } catch (inviteError) {
+          processedInvite.current = false;
+          throw inviteError;
+        }
+      }
+      return activeRepository.loadWorkspace();
+    }
+
     async function loadWorkspace() {
       try {
-        const invitationToken = new URLSearchParams(window.location.search).get("coach_invite");
-        if (invitationToken && !processedInvite.current) {
-          processedInvite.current = true;
+        let nextWorkspace: WorkspaceData | null = null;
+        let lastError: unknown;
+        for (let attempt = 0; attempt <= jwtClockSkewRetryDelays.length; attempt += 1) {
           try {
-            await activeRepository.acceptCoachInvite(invitationToken);
-            const cleanUrl = new URL(window.location.href);
-            cleanUrl.searchParams.delete("coach_invite");
-            window.history.replaceState({}, "", cleanUrl);
-          } catch (inviteError) {
-            processedInvite.current = false;
-            throw inviteError;
+            nextWorkspace = await loadWorkspaceAttempt();
+            break;
+          } catch (loadError) {
+            lastError = loadError;
+            if (!isFutureJwtError(loadError) || attempt === jwtClockSkewRetryDelays.length) throw loadError;
+            await wait(jwtClockSkewRetryDelays[attempt]);
+            if (!active) return;
           }
         }
-        const nextWorkspace = await activeRepository.loadWorkspace();
+        if (!nextWorkspace) throw lastError;
         if (active) {
           setWorkspaceError("");
           setWorkspace(nextWorkspace);

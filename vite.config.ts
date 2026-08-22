@@ -24,7 +24,7 @@ function testPersonas(mode: string): Plugin {
     },
     load(id) {
       if (id !== resolvedTestPersonasModule) return undefined;
-      const personas = mode === "nonprod" ? manifest.personas : [];
+      const personas = mode === "nonprod" || mode === "localdev" ? manifest.personas : [];
       return `export default ${JSON.stringify(personas)};`;
     },
   };
@@ -42,7 +42,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), testPersonas(mode), siteMetadata(siteUrl)],
     resolve: {
-      alias: mode === "nonprod" ? [] : [{
+      alias: mode === "nonprod" || mode === "localdev" ? [] : [{
         find: "./TestPersonaSwitcher",
         replacement: disabledTestPersonaSwitcher,
       }],

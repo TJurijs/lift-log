@@ -1,58 +1,86 @@
 {
   "namespace": "latvian-presidents-v1",
   "label": "Latvian Presidents",
+  "asOf": "2026-08-21",
   "personas": [
     {
       "key": "janis-cakste",
       "name": "Jānis Čakste",
+      "firstName": "Jānis",
+      "lastName": "Čakste",
+      "liftlogId": "LL-7A3F91C2E8B406D5",
       "email": "janis-cakste@presidents.liftlog.test",
       "scenario": "Self-coached athlete with training history"
     },
     {
       "key": "gustavs-zemgals",
       "name": "Gustavs Zemgals",
+      "firstName": "Gustavs",
+      "lastName": "Zemgals",
+      "liftlogId": "LL-C4D82A719E5F306B",
       "email": "gustavs-zemgals@presidents.liftlog.test",
       "scenario": "Self-coached athlete testing invitations"
     },
     {
       "key": "alberts-kviesis",
       "name": "Alberts Kviesis",
+      "firstName": "Alberts",
+      "lastName": "Kviesis",
+      "liftlogId": "LL-19E6B3D47A8C205F",
       "email": "alberts-kviesis@presidents.liftlog.test",
       "scenario": "Athlete coached by Valdis"
     },
     {
       "key": "guntis-ulmanis",
       "name": "Guntis Ulmanis",
+      "firstName": "Guntis",
+      "lastName": "Ulmanis",
+      "liftlogId": "LL-E2A7409C5D1B8F36",
       "email": "guntis-ulmanis@presidents.liftlog.test",
       "scenario": "Shared athlete coached by Valdis and Raimonds"
     },
     {
       "key": "vaira-vike-freiberga",
       "name": "Vaira Vīķe-Freiberga",
+      "firstName": "Vaira",
+      "lastName": "Vīķe-Freiberga",
+      "liftlogId": "LL-5F8C13A9D702E46B",
       "email": "vaira-vike-freiberga@presidents.liftlog.test",
       "scenario": "Athlete coached by Raimonds"
     },
     {
       "key": "valdis-zatlers",
       "name": "Valdis Zatlers",
+      "firstName": "Valdis",
+      "lastName": "Zatlers",
+      "liftlogId": "LL-B6D029F47C8A351E",
       "email": "valdis-zatlers@presidents.liftlog.test",
       "scenario": "Coach with three athletes and a personal plan"
     },
     {
       "key": "raimonds-vejonis",
       "name": "Raimonds Vējonis",
+      "firstName": "Raimonds",
+      "lastName": "Vējonis",
+      "liftlogId": "LL-83A5E1C690D47F2B",
       "email": "raimonds-vejonis@presidents.liftlog.test",
       "scenario": "Coach who is also coached by Valdis"
     },
     {
       "key": "egils-levits",
       "name": "Egils Levits",
+      "firstName": "Egils",
+      "lastName": "Levits",
+      "liftlogId": "LL-D17C84B205E9A63F",
       "email": "egils-levits@presidents.liftlog.test",
       "scenario": "Brand-new account for onboarding"
     },
     {
       "key": "edgars-rinkevics",
       "name": "Edgars Rinkēvičs",
+      "firstName": "Edgars",
+      "lastName": "Rinkēvičs",
+      "liftlogId": "LL-4B9E2D760A1C85F3",
       "email": "edgars-rinkevics@presidents.liftlog.test",
       "scenario": "Future coach with no active athletes"
     }

@@ -9,7 +9,7 @@ The athlete owns their programs, schedule, and complete workout history. An acti
 ## MVP flows
 
 1. Sign in with Google through Supabase Auth.
-2. Create a repeating weekly or fixed multi-week program.
+2. Create a finite program containing one or more explicit weeks.
 3. Build workouts from sections and reusable exercise-library items.
 4. Log a workout containing any mix of instructions, strength sets, cardio results, and intervals.
 5. Review history in a calendar with session RPE and notes.
@@ -40,12 +40,12 @@ Program
               → Prescribed entries
 ```
 
-MVP planning modes:
-
-- `repeating_week`: one week repeats until a new version is published.
-- `fixed_weeks`: a finite 1–N week program.
-
-Weeks are deliberately the MVP planning unit. A workout can have a weekday or only a sequence position for flexible scheduling. Sections such as Warm-up, Main work, Conditioning, and Cooldown are presentation groups and do not impose logging requirements.
+Every MVP program is finite. Weeks are deliberately the planning unit, and a
+selected week can be copied one or many times to build longer programs quickly.
+Each copy becomes independently editable. A workout can have a weekday or only
+a sequence position for flexible scheduling. Sections such as Warm-up, Main
+work, Conditioning, and Cooldown are presentation groups and do not impose
+logging requirements.
 
 ## Universal workout items
 
@@ -93,6 +93,7 @@ The browser talks directly to Supabase with a publishable key. Row Level Securit
 - `ensure_starter_program`
 - `create_program_draft`
 - `duplicate_program_week`
+- `duplicate_program_week_times`
 - `publish_program_version`
 - `start_or_resume_workout`
 - `complete_workout_session`
