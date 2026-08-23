@@ -27,6 +27,7 @@ import type {
   WorkoutSection,
   WorkspaceData,
 } from "./domain";
+import { recordClientPerformance } from "./performance";
 
 type NumericValue = number | string | null;
 
@@ -39,6 +40,7 @@ interface ProfileRow {
   week_starts_on_sunday?: boolean;
   weight_unit?: "kg" | "lb";
   distance_unit?: "km" | "mi";
+  timezone?: string | null;
 }
 
 interface ExerciseRow {
@@ -223,6 +225,11 @@ interface ProgramPair {
   activeProgram: Program | null;
 }
 
+interface LoadedOwnProfile {
+  profile: OwnProfile;
+  timezone: string | null;
+}
+
 interface PrescriptionInsert {
   workout_item_id: string;
   position: number;
@@ -374,6 +381,8 @@ function mapExercise(row: ExerciseRow, ownerName: string): Exercise {
 }
 
 export class LiftLogRepository {
+  private workspaceLoadPromise: Promise<WorkspaceData> | null = null;
+
   constructor(
     private readonly client: SupabaseClient,
     private readonly viewerId: string,
@@ -381,16 +390,21 @@ export class LiftLogRepository {
   ) {}
 
   async loadWorkspace(): Promise<WorkspaceData> {
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (timezone) {
-      void this.client
-        .from("profiles")
-        .update({ timezone })
-        .eq("id", this.viewerId);
+    if (this.workspaceLoadPromise) return this.workspaceLoadPromise;
+    const startedAt = performance.now();
+    const pending = this.loadWorkspaceData();
+    this.workspaceLoadPromise = pending;
+    try {
+      return await pending;
+    } finally {
+      recordClientPerformance("workspace:repository-load", startedAt);
+      if (this.workspaceLoadPromise === pending) this.workspaceLoadPromise = null;
     }
+  }
 
+  private async loadWorkspaceData(): Promise<WorkspaceData> {
     const [
-      profile,
+      loadedProfile,
       programCatalog,
       availableProgramIds,
       programTemplates,
@@ -417,8 +431,26 @@ export class LiftLogRepository {
       this.loadActiveSession(),
     ]);
 
+    this.syncTimezoneIfChanged(loadedProfile.timezone);
+    const activeSchedule = activeSession
+      ? scheduledWorkouts.find(
+          (schedule) =>
+            schedule.id === activeSession.scheduledWorkoutId ||
+            (schedule.programVersionId === activeSession.programVersionId &&
+              schedule.workoutId === activeSession.workoutId),
+        )
+      : undefined;
+    const activeScheduleDetail = activeSchedule
+      ? await this.loadScheduledWorkoutDetail(activeSchedule.id)
+      : null;
+    const hydratedSchedules = activeScheduleDetail
+      ? scheduledWorkouts.map((schedule) =>
+          schedule.id === activeScheduleDetail.id ? activeScheduleDetail : schedule,
+        )
+      : scheduledWorkouts;
+
     return {
-      profile,
+      profile: loadedProfile.profile,
       programCatalog,
       availableProgramIds,
       availablePrograms: programCatalog.filter((program) =>
@@ -434,7 +466,7 @@ export class LiftLogRepository {
             program.versionStatus === "published",
         ) ?? null,
       programTemplates,
-      scheduledWorkouts,
+      scheduledWorkouts: hydratedSchedules,
       globalExercises: exercises.filter(
         (exercise) => exercise.scope === "global",
       ),
@@ -451,12 +483,16 @@ export class LiftLogRepository {
   }
 
   async loadProgramForAthlete(athleteId: string) {
-    const programs = await this.loadProgramCatalog(athleteId);
-    return (
-      programs.find((program) => program.createdById === this.viewerId) ??
-      programs[0] ??
-      null
-    );
+    const pair = await this.loadProgramPair(athleteId);
+    return pair.activeProgram ?? pair.draftProgram;
+  }
+
+  async loadProgramDetail(
+    athleteId: string,
+    programId: string,
+  ): Promise<Program | null> {
+    const pair = await this.loadProgramPair(athleteId, programId);
+    return pair.activeProgram ?? pair.draftProgram;
   }
 
   async loadProgramForAthleteById(
@@ -535,26 +571,106 @@ export class LiftLogRepository {
   }
 
   private async loadProgramCatalog(athleteId: string): Promise<Program[]> {
-    const result = await this.client
+    const programsResult = await this.client
       .from("programs")
-      .select("id")
+      .select(
+        "id, athlete_id, created_by_id, title, description, source_type, source_label, template_id",
+      )
       .eq("athlete_id", athleteId)
       .eq("is_current", true)
       .is("archived_at", null)
       .order("created_at", { ascending: false });
-    if (result.error) fail("Could not load programs", result.error);
-    const pairs = await Promise.all(
-      (result.data as Array<{ id: string }>).map((row) =>
-        this.loadProgramPair(athleteId, row.id),
-      ),
-    );
-    const programs = pairs.flatMap((pair) =>
-      pair.activeProgram
-        ? [pair.activeProgram]
-        : pair.draftProgram
-          ? [pair.draftProgram]
-          : [],
-    );
+    if (programsResult.error) fail("Could not load programs", programsResult.error);
+    const programRows = programsResult.data as ProgramRow[];
+    if (!programRows.length) return [];
+
+    // Startup only needs card metadata and workout ids for scheduling progress.
+    // Full weeks, exercises, and prescriptions are fetched when a program opens.
+    const programIds = programRows.map((program) => program.id);
+    const versionsResult = await this.client
+      .from("program_versions")
+      .select("id, program_id, version_number, status, effective_from")
+      .in("program_id", programIds)
+      .order("version_number", { ascending: false });
+    if (versionsResult.error) fail("Could not load program versions", versionsResult.error);
+    const versions = versionsResult.data as VersionRow[];
+    const selectedVersions = programRows.flatMap((program) => {
+      const programVersions = versions.filter((version) => version.program_id === program.id);
+      const active = programVersions.find((version) => version.status === "published");
+      const draft = programVersions.find((version) => version.status === "draft");
+      return active ? [active] : draft ? [draft] : [];
+    });
+    if (!selectedVersions.length) return [];
+
+    const selectedVersionIds = selectedVersions.map((version) => version.id);
+    const [profilesResult, weeksResult] = await Promise.all([
+      this.client
+        .from("profiles")
+        .select("id, display_name")
+        .in(
+          "id",
+          Array.from(
+            new Set(
+              programRows.flatMap((program) => [
+                program.athlete_id,
+                program.created_by_id,
+              ]),
+            ),
+          ),
+        ),
+      this.client
+        .from("program_weeks")
+        .select("id, program_version_id, week_index, label")
+        .in("program_version_id", selectedVersionIds)
+        .order("week_index"),
+    ]);
+    if (profilesResult.error) fail("Could not load program people", profilesResult.error);
+    if (weeksResult.error) fail("Could not load program weeks", weeksResult.error);
+    const profiles = profilesResult.data as ProfileRow[];
+    const weeks = weeksResult.data as WeekRow[];
+    const weekIds = weeks.map((week) => week.id);
+    const workoutsResult = weekIds.length
+      ? await this.client
+          .from("workouts")
+          .select("id, program_week_id")
+          .in("program_week_id", weekIds)
+      : { data: [], error: null };
+    if (workoutsResult.error) fail("Could not load workouts", workoutsResult.error);
+    const workouts = workoutsResult.data as Array<Pick<WorkoutRow, "id" | "program_week_id">>;
+
+    const programs = selectedVersions.map((version) => {
+      const row = programRows.find((program) => program.id === version.program_id)!;
+      const versionWeeks = weeks.filter((week) => week.program_version_id === version.id);
+      const workoutIds = workouts
+        .filter((workout) => versionWeeks.some((week) => week.id === workout.program_week_id))
+        .map((workout) => workout.id);
+      const ownerName =
+        profiles.find((profile) => profile.id === row.athlete_id)?.display_name ?? "Athlete";
+      const createdByName =
+        profiles.find((profile) => profile.id === row.created_by_id)?.display_name ?? ownerName;
+      return {
+        id: row.id,
+        athleteId: row.athlete_id,
+        versionId: version.id,
+        versionStatus: version.status,
+        effectiveFrom: version.effective_from ?? undefined,
+        title: row.title,
+        description: row.description,
+        phase: "Plan",
+        activeWeek: activeWeekIndex(version, versionWeeks.length),
+        weeks: [],
+        ownerName,
+        createdById: row.created_by_id,
+        createdByName,
+        sourceType: row.source_type,
+        sourceLabel: row.source_label,
+        templateId: row.template_id ?? undefined,
+        weekCount: versionWeeks.length,
+        workoutCount: workoutIds.length,
+        workoutIds,
+        detailsLoaded: false,
+      } satisfies Program;
+    });
     return athleteId === this.viewerId
       ? programs.filter(
           (program) =>
@@ -585,11 +701,11 @@ export class LiftLogRepository {
     return pair.draftProgram;
   }
 
-  private async loadOwnProfile(): Promise<OwnProfile> {
+  private async loadOwnProfile(): Promise<LoadedOwnProfile> {
     const result = await this.client
       .from("profiles")
       .select(
-        "id, display_name, first_name, last_name, liftlog_id, week_starts_on_sunday, weight_unit, distance_unit",
+        "id, display_name, first_name, last_name, liftlog_id, week_starts_on_sunday, weight_unit, distance_unit, timezone",
       )
       .eq("id", this.viewerId)
       .single();
@@ -597,20 +713,33 @@ export class LiftLogRepository {
       fail("Could not load your account", result.error);
     const row = result.data as ProfileRow;
     return {
-      id: row.id,
-      firstName: row.first_name,
-      lastName: row.last_name,
-      displayName: row.display_name,
-      liftlogId: row.liftlog_id,
-      weekStartsOnSunday: row.week_starts_on_sunday ?? false,
-      weightUnit: row.weight_unit ?? "kg",
-      distanceUnit: row.distance_unit ?? "km",
+      profile: {
+        id: row.id,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        displayName: row.display_name,
+        liftlogId: row.liftlog_id,
+        weekStartsOnSunday: row.week_starts_on_sunday ?? false,
+        weightUnit: row.weight_unit ?? "kg",
+        distanceUnit: row.distance_unit ?? "km",
+      },
+      timezone: row.timezone ?? null,
     };
+  }
+
+  private syncTimezoneIfChanged(savedTimezone: string | null) {
+    const currentTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!currentTimezone || currentTimezone === savedTimezone) return;
+    void this.client
+      .from("profiles")
+      .update({ timezone: currentTimezone })
+      .eq("id", this.viewerId);
   }
 
   private async loadProgramPair(
     athleteId: string,
     programId?: string,
+    options: { includeDraftWhenPublished?: boolean } = {},
   ): Promise<ProgramPair> {
     let programQuery = this.client
       .from("programs")
@@ -661,7 +790,7 @@ export class LiftLogRepository {
       profiles.find((profile) => profile.id === programRow.created_by_id)
         ?.display_name ?? ownerName;
 
-    const draftProgram = draftVersion
+    const draftProgram = draftVersion && (!activeVersion || options.includeDraftWhenPublished !== false)
       ? await this.loadVersionTree(
           programRow,
           draftVersion,
@@ -858,52 +987,22 @@ export class LiftLogRepository {
     }));
   }
 
-  private async listScheduledWorkouts(
-    athleteId: string,
-  ): Promise<ScheduledWorkout[]> {
-    const schedulesResult = await this.client
-      .from("scheduled_workouts")
-      .select(
-        "id, program_version_id, workout_id, planned_date, sequence_number, status",
-      )
-      .eq("athlete_id", athleteId)
-      .order("sequence_number", { ascending: true });
-    if (schedulesResult.error)
-      fail("Could not load scheduled workouts", schedulesResult.error);
-    const schedules = schedulesResult.data as ScheduleRow[];
-    if (!schedules.length) return [];
-    const workoutsResult = await this.client
-      .from("workouts")
-      .select(
-        "id, program_week_id, title, day_of_week, schedule_label, position, estimated_minutes",
-      )
-      .in(
-        "id",
-        schedules.map((schedule) => schedule.workout_id),
-      );
-    if (workoutsResult.error)
-      fail("Could not load scheduled workout names", workoutsResult.error);
-    const workouts = workoutsResult.data as WorkoutRow[];
-    const weekIds = Array.from(
-      new Set(workouts.map((workout) => workout.program_week_id)),
-    );
-    const weeksResult = weekIds.length
-      ? await this.client
-          .from("program_weeks")
-          .select("id, program_version_id, phase_id, week_index, label")
-          .in("id", weekIds)
-      : { data: [], error: null };
-    if (weeksResult.error)
-      fail("Could not load scheduled workout weeks", weeksResult.error);
-    const weeks = weeksResult.data as WeekRow[];
-    const workoutIds = workouts.map((workout) => workout.id);
-    const sectionsResult = workoutIds.length
-      ? await this.client
-          .from("workout_sections")
-          .select("id, workout_id, title, section_kind, notes, position")
-          .in("workout_id", workoutIds)
-          .order("position")
-      : { data: [], error: null };
+  private async listScheduledWorkouts(athleteId: string) {
+    return this.loadScheduledWorkoutSummaries(athleteId);
+  }
+
+  async loadScheduledWorkoutDetail(
+    scheduleId: string,
+    athleteId: string = this.viewerId,
+  ): Promise<ScheduledWorkout | null> {
+    const schedule = (await this.loadScheduledWorkoutSummaries(athleteId, scheduleId))[0];
+    if (!schedule) return null;
+
+    const sectionsResult = await this.client
+      .from("workout_sections")
+      .select("id, workout_id, title, section_kind, notes, position")
+      .eq("workout_id", schedule.workoutId)
+      .order("position");
     if (sectionsResult.error)
       fail("Could not load scheduled workout sections", sectionsResult.error);
     const sections = sectionsResult.data as SectionRow[];
@@ -934,6 +1033,81 @@ export class LiftLogRepository {
         prescriptionsResult.error,
       );
     const prescriptions = prescriptionsResult.data as PrescriptionRow[];
+
+    return {
+      ...schedule,
+      detailsLoaded: true,
+      workout: {
+        ...schedule.workout,
+        sections: sections
+          .sort((left, right) => left.position - right.position)
+          .map((section): WorkoutSection => ({
+            id: section.id,
+            title: section.title,
+            kind: section.section_kind as WorkoutSection["kind"],
+            items: items
+              .filter((item) => item.section_id === section.id)
+              .sort((left, right) => left.position - right.position)
+              .map((item): WorkoutItem => ({
+                id: item.id,
+                exerciseId: item.source_exercise_id ?? undefined,
+                title: item.snapshot_name,
+                cue: item.snapshot_cue,
+                mode: item.entry_mode,
+                fields: item.tracking_fields,
+                prescription: prescriptionFromRows(
+                  item.entry_mode,
+                  prescriptions.filter(
+                    (entry) => entry.workout_item_id === item.id,
+                  ),
+                ),
+              })),
+          })),
+      },
+    };
+  }
+
+  private async loadScheduledWorkoutSummaries(
+    athleteId: string,
+    scheduleId?: string,
+  ): Promise<ScheduledWorkout[]> {
+    let schedulesQuery = this.client
+      .from("scheduled_workouts")
+      .select(
+        "id, program_version_id, workout_id, planned_date, sequence_number, status",
+      )
+      .eq("athlete_id", athleteId)
+      .order("sequence_number", { ascending: true });
+    if (scheduleId) schedulesQuery = schedulesQuery.eq("id", scheduleId);
+    const schedulesResult = await schedulesQuery;
+    if (schedulesResult.error)
+      fail("Could not load scheduled workouts", schedulesResult.error);
+    const schedules = schedulesResult.data as ScheduleRow[];
+    if (!schedules.length) return [];
+    const workoutsResult = await this.client
+      .from("workouts")
+      .select(
+        "id, program_week_id, title, day_of_week, schedule_label, position, estimated_minutes",
+      )
+      .in(
+        "id",
+        schedules.map((schedule) => schedule.workout_id),
+      );
+    if (workoutsResult.error)
+      fail("Could not load scheduled workout names", workoutsResult.error);
+    const workouts = workoutsResult.data as WorkoutRow[];
+    const weekIds = Array.from(
+      new Set(workouts.map((workout) => workout.program_week_id)),
+    );
+    const weeksResult = weekIds.length
+      ? await this.client
+          .from("program_weeks")
+          .select("id, program_version_id, phase_id, week_index, label")
+          .in("id", weekIds)
+      : { data: [], error: null };
+    if (weeksResult.error)
+      fail("Could not load scheduled workout weeks", weeksResult.error);
+    const weeks = weeksResult.data as WeekRow[];
     const versionIds = Array.from(
       new Set(schedules.map((schedule) => schedule.program_version_id)),
     );
@@ -1002,31 +1176,7 @@ export class LiftLogRepository {
                 ? `Week ${week.week_index} · Workout ${workout.position + 1}`
                 : `Session ${schedule.sequence_number ?? 1}`,
               durationMinutes: workout.estimated_minutes ?? 45,
-              sections: sections
-                .filter((section) => section.workout_id === workout.id)
-                .sort((left, right) => left.position - right.position)
-                .map((section): WorkoutSection => ({
-                  id: section.id,
-                  title: section.title,
-                  kind: section.section_kind as WorkoutSection["kind"],
-                  items: items
-                    .filter((item) => item.section_id === section.id)
-                    .sort((left, right) => left.position - right.position)
-                    .map((item): WorkoutItem => ({
-                      id: item.id,
-                      exerciseId: item.source_exercise_id ?? undefined,
-                      title: item.snapshot_name,
-                      cue: item.snapshot_cue,
-                      mode: item.entry_mode,
-                      fields: item.tracking_fields,
-                      prescription: prescriptionFromRows(
-                        item.entry_mode,
-                        prescriptions.filter(
-                          (entry) => entry.workout_item_id === item.id,
-                        ),
-                      ),
-                    })),
-                })),
+              sections: [],
             }
           : {
               id: schedule.workout_id,
@@ -1057,6 +1207,7 @@ export class LiftLogRepository {
               )?.display_name
             : undefined,
           workout: mappedWorkout,
+          detailsLoaded: false,
         };
       })
       .sort((left, right) => {
@@ -1104,6 +1255,15 @@ export class LiftLogRepository {
     if (result.error || !result.data)
       fail("Could not create the program", result.error);
     return String(result.data);
+  }
+
+  async updateProgramDescription(programId: string, description: string) {
+    const result = await this.client
+      .from("programs")
+      .update({ description })
+      .eq("id", programId);
+    if (result.error)
+      fail("Could not save the program description", result.error);
   }
 
   async createProgramFromTemplate(templateId: string) {
@@ -2035,7 +2195,14 @@ export class LiftLogRepository {
               candidate.status === "published",
           );
           if (!version) return [];
-          const versionWorkouts = workoutsForVersion(version.id);
+          const versionWorkouts = workoutsForVersion(version.id).sort(
+            (left, right) =>
+              (weeks.find((week) => week.id === left.program_week_id)
+                ?.week_index ?? 0) -
+                (weeks.find((week) => week.id === right.program_week_id)
+                  ?.week_index ?? 0) ||
+              left.position - right.position,
+          );
           const totalWorkouts = versionWorkouts.length;
           const cycle = latestCycle(
             schedules.filter(
@@ -2088,6 +2255,25 @@ export class LiftLogRepository {
                 String(right.planned_date),
               ),
             )[0];
+          const latestScheduleByWorkout = new Map<string, CoachScheduleRow>();
+          cycle.forEach((schedule) => {
+            const current = latestScheduleByWorkout.get(schedule.workout_id);
+            if (
+              !current ||
+              (schedule.sequence_number ?? 0) >
+                (current.sequence_number ?? 0)
+            ) {
+              latestScheduleByWorkout.set(schedule.workout_id, schedule);
+            }
+          });
+          const workoutProgress = versionWorkouts.map((workout) => {
+            const schedule = latestScheduleByWorkout.get(workout.id);
+            if (!schedule || !schedule.planned_date || schedule.status === "skipped")
+              return "unscheduled" as const;
+            return schedule.status === "completed"
+              ? ("completed" as const)
+              : ("scheduled" as const);
+          });
 
           return [
             {
@@ -2113,6 +2299,7 @@ export class LiftLogRepository {
                       Math.round((completedWorkouts / totalWorkouts) * 100),
                     )
                   : 0,
+              workoutProgress,
               nextWorkout: nextSchedule
                 ? {
                     id: nextSchedule.id,

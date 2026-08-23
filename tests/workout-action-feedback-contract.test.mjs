@@ -3,9 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const primitivesPath = new URL("../app/ui-primitives.tsx", import.meta.url);
 
 test("start and finish actions give immediate feedback and reject repeat clicks", async () => {
-  const app = await readFile(appPath, "utf8");
+  const [app, primitives] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(primitivesPath, "utf8"),
+  ]);
 
   assert.match(
     app,
@@ -21,10 +25,15 @@ test("start and finish actions give immediate feedback and reject repeat clicks"
   );
   assert.match(
     app,
-    /disabled=\{Boolean\(workoutAction\)\}[\s\S]*Starting workout…/,
+    /loading=\{workoutAction === "starting"\}[\s\S]*Starting workout…/,
   );
   assert.match(
     app,
-    /disabled=\{Boolean\(workoutAction\)\}[\s\S]*Finishing session…/,
+    /loading=\{workoutAction === "finishing"\}[\s\S]*Finishing session…/,
+  );
+  assert.match(
+    primitives,
+    /disabled=\{disabled \|\| loading\}/,
+    "shared async buttons must reject repeat clicks while loading",
   );
 });

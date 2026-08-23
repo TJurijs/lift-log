@@ -85,6 +85,8 @@ export interface ScheduledWorkout {
   sourceLabel?: string;
   createdByName?: string;
   workout: PlannedWorkout;
+  /** False for calendar/list rows until the workout is opened or started. */
+  detailsLoaded?: boolean;
 }
 
 export interface ProgramWeek {
@@ -111,6 +113,14 @@ export interface Program {
   sourceType: "self" | "coach" | "library";
   sourceLabel: string;
   templateId?: string;
+  /** Present for catalog rows, which intentionally defer the full workout tree. */
+  weekCount?: number;
+  /** Present for catalog rows, which intentionally defer the full workout tree. */
+  workoutCount?: number;
+  /** Workout ids are enough to render scheduling progress without loading exercises. */
+  workoutIds?: string[];
+  /** False means this is a lightweight catalog row, not an editable program tree. */
+  detailsLoaded?: boolean;
 }
 
 export interface ProgramAssignment {
@@ -168,6 +178,10 @@ export interface CompletedSessionDetail extends CompletedSession {
 
 export type CoachAssignedProgramStatus =
   "awaiting_schedule" | "scheduled" | "in_progress" | "completed";
+export type WorkoutProgressState =
+  | "unscheduled"
+  | "scheduled"
+  | "completed";
 
 export interface CoachAssignedProgramSummary {
   id: string;
@@ -180,6 +194,7 @@ export interface CoachAssignedProgramSummary {
   scheduledPercent: number;
   completedWorkouts: number;
   completionPercent: number;
+  workoutProgress: WorkoutProgressState[];
   nextWorkout?: {
     id: string;
     title: string;

@@ -3,15 +3,17 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const primitivesPath = new URL("../app/ui-primitives.tsx", import.meta.url);
 const migrationPath = new URL(
   "../supabase/migrations/202608220005_complete_fixed_program_cycles.sql",
   import.meta.url,
 );
 
 test("completed fixed programs leave scheduling and can be explicitly repeated", async () => {
-  const [app, migration] = await Promise.all([
+  const [app, migration, primitives] = await Promise.all([
     readFile(appPath, "utf8"),
     readFile(migrationPath, "utf8"),
+    readFile(primitivesPath, "utf8"),
   ]);
 
   assert.match(
@@ -36,9 +38,10 @@ test("completed fixed programs leave scheduling and can be explicitly repeated",
   );
   assert.match(
     app,
-    /completed[\s\S]*\? "Completed"[\s\S]*: "Not available"/,
-    "the source list must distinguish completed from merely unavailable programs",
+    /completed[\s\S]*\? "completed"[\s\S]*: "ready"/,
+    "the source list must distinguish completed from Ready programs",
   );
+  assert.match(primitives, /ready: "Ready"[\s\S]*in_schedule: "In schedule"[\s\S]*completed: "Completed"/);
   assert.match(
     app,
     /Completed[\s\S]*programs can be added again whenever you want to run them another[\s\S]*time/,
@@ -59,7 +62,7 @@ test("saving a program is separate from making it available", async () => {
   assert.doesNotMatch(app, /onRemoveAvailable/);
   assert.match(
     app,
-    /await repository\.publishProgram\(program\.versionId\);[\s\S]*?Program saved\. Make it available when you are ready to schedule it\./,
+    /await repository\.publishProgram\(program\.versionId\);[\s\S]*?Program saved\. Add it to scheduling when you are ready\./,
     "saving must not make an Own program available automatically",
   );
   assert.match(

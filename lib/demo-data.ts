@@ -399,6 +399,10 @@ export const athleteSummaries: AthleteSummary[] = [
         scheduledPercent: 100,
         completedWorkouts: 7,
         completionPercent: 58,
+        workoutProgress: [
+          "completed", "completed", "completed", "completed", "completed", "completed",
+          "completed", "scheduled", "scheduled", "scheduled", "scheduled", "scheduled",
+        ],
         nextWorkout: {
           id: "coach-workout-1",
           title: "Snatch technique",
@@ -450,6 +454,10 @@ export const athleteSummaries: AthleteSummary[] = [
         scheduledPercent: 63,
         completedWorkouts: 3,
         completionPercent: 38,
+        workoutProgress: [
+          "completed", "completed", "completed", "scheduled", "scheduled", "unscheduled",
+          "unscheduled", "unscheduled",
+        ],
         nextWorkout: {
           id: "coach-workout-3",
           title: "Full body B",
@@ -501,6 +509,9 @@ export const athleteSummaries: AthleteSummary[] = [
         scheduledPercent: 100,
         completedWorkouts: 6,
         completionPercent: 100,
+        workoutProgress: [
+          "completed", "completed", "completed", "completed", "completed", "completed",
+        ],
       },
     ],
     agenda: [

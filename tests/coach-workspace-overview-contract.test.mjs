@@ -36,8 +36,10 @@ test("coach athlete overview is scoped to the current coach's assignments", asyn
     coaching,
     /assignedProgram\.completedWorkouts[\s\S]*assignedProgram\.totalWorkouts/,
   );
-  assert.match(coaching, /assignedProgram\.completionPercent/);
-  assert.match(coaching, /assignedProgram\.nextWorkout/);
+  assert.match(coaching, /assignedProgram\.workoutProgress\.map/);
+  assert.match(coaching, /className="program-card-workout-progress"/);
+  assert.match(coaching, /<SourceTag source=\{\{ kind: "coach" \}\} compact \/>/);
+  assert.match(coaching, /coachProgramDisplayStatus\(assignedProgram\.status\)/);
   assert.match(coaching, /onOpenProgram\(assignedProgram\)/);
   assert.match(coaching, /No programs assigned by you/);
   assert.match(coaching, /aria-busy=\{openingProgramId === assignedProgram\.id\}/);
@@ -99,18 +101,12 @@ test("coach rows remain keyboard-visible and stack without mobile overflow", asy
     "@media (prefers-reduced-motion: reduce)",
   );
 
-  assert.match(
-    styles,
-    /\.coach-assigned-program:hover,\s*\.coach-assigned-program:focus-visible/,
-  );
+  assert.match(styles, /\.program-catalog-card:hover/);
   assert.match(
     styles,
     /\.coach-agenda-list > button:hover,\s*\.coach-agenda-list > button:focus-visible/,
   );
-  assert.match(
-    mobile,
-    /\.coach-assigned-program\s*\{[^}]*grid-template-columns:\s*34px minmax\(0, 1fr\) 15px/,
-  );
+  assert.match(mobile, /\.coach-assigned-program\s*\{[^}]*min-height:\s*0/);
   assert.match(
     mobile,
     /\.coach-agenda-list > button\s*\{[^}]*min-height:\s*68px[^}]*grid-template-columns:\s*38px minmax\(0, 1fr\) 15px/,

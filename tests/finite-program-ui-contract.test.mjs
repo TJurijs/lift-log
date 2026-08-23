@@ -26,13 +26,13 @@ test("program creation always starts a finite one-week program", async () => {
   assert.match(programModal, /copy any week as many times as you need/);
 });
 
-test("the week add control offers blank, one-copy, and multi-copy paths", async () => {
+test("the week controls offer direct blank and current-week copy actions", async () => {
   const app = await readFile(appPath, "utf8");
 
-  assert.match(app, /aria-label="Add or copy weeks"/);
-  assert.match(app, /Add blank week/);
-  assert.match(app, /Copy Week \$\{selectedWeek\} once/);
-  assert.match(app, /Copy Week \{selectedWeek\} multiple times/);
+  assert.match(app, /aria-label="Add blank week"/);
+  assert.match(app, /aria-label=\{`Duplicate Week \$\{selectedWeek\}`\}/);
+  assert.doesNotMatch(app, /Extend this program/);
+  assert.doesNotMatch(app, /week-create-menu/);
   assert.match(
     app,
     /repository\.duplicateWeekTimes\(currentWeek\.id, copyCount\)/,
@@ -44,26 +44,12 @@ test("the week add control offers blank, one-copy, and multi-copy paths", async 
   );
 });
 
-test("multi-copy previews its result and visibly guards long-running actions", async () => {
+test("the compact week controls retain progress feedback", async () => {
   const app = await readFile(appPath, "utf8");
-  const css = await readFile(cssPath, "utf8");
-  const copyModal = app.slice(
-    app.indexOf("function CopyWeekModal"),
-    app.indexOf("function ProgramModal"),
-  );
 
-  assert.match(copyModal, /Weeks \$\{nextWeekIndex\}–\$\{finalWeekIndex\}/);
-  assert.match(copyModal, /savingRef\.current/);
-  assert.match(copyModal, /Creating weeks…/);
-  assert.match(copyModal, /disabled=\{!validCount \|\| saving\}/);
+  assert.match(app, /localWeekAction === "blank"/);
+  assert.match(app, /localWeekAction === "copy"/);
+  assert.match(app, /runWeekAction\("copy", \(\) => onCopyWeek\(1\)\)/);
   assert.match(app, /weekMutationRef\.current/);
   assert.match(app, /localWeekActionRef\.current/);
-  assert.match(
-    css,
-    /\.week-create-actions[\s\S]*grid-template-columns: repeat\(3/,
-  );
-  assert.match(
-    css,
-    /@media \(max-width: 700px\)[\s\S]*\.week-create-actions[\s\S]*grid-template-columns: 1fr/,
-  );
 });

@@ -11,14 +11,27 @@ import {
   viewerFromSupabaseUser,
 } from "../lib/auth";
 import type { WorkspaceData } from "../lib/domain";
+import { recordClientPerformance } from "../lib/performance";
 import { LiftLogRepository } from "../lib/repository";
 
 type AuthStatus = "loading" | "anonymous" | "authenticated" | "demo";
 const localDemoAvailable = import.meta.env.DEV;
 const jwtClockSkewRetryDelays = [750, 1_500];
+const transientWorkspaceRetryDelays = [800];
+
+function workspaceLoadMessage(error: unknown) {
+  if (error instanceof Error && /timeout|timed out|statement timeout/i.test(error.message)) {
+    return "Your training data took too long to load. Please try again.";
+  }
+  return "Your training workspace could not be opened. Please try again.";
+}
 
 function isFutureJwtError(error: unknown) {
   return error instanceof Error && /jwt issued at future/i.test(error.message);
+}
+
+function isTransientWorkspaceError(error: unknown) {
+  return error instanceof Error && /timeout|timed out|network|failed to fetch|connection/i.test(error.message);
 }
 
 function wait(milliseconds: number) {
@@ -50,6 +63,8 @@ export default function AppEntry() {
   const [error, setError] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
   const [workspaceError, setWorkspaceError] = useState("");
+  const [workspaceRetryKey, setWorkspaceRetryKey] = useState(0);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [personaPassword, setPersonaPassword] = useState("");
   const [personaBusyKey, setPersonaBusyKey] = useState("");
   const [personaError, setPersonaError] = useState("");
@@ -86,9 +101,14 @@ export default function AppEntry() {
       applySession(data.session);
     });
 
-    const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
+    const { data } = client.auth.onAuthStateChange((event, nextSession) => {
       if (!mounted) return;
-      applySession(nextSession);
+      // The Supabase client already uses the refreshed token. Replacing this
+      // same-user session would rebuild the repository and reload the whole
+      // workspace every time a token refreshes.
+      if (!(event === "TOKEN_REFRESHED" && activeUserId.current === nextSession?.user.id)) {
+        applySession(nextSession);
+      }
       setConnecting(false);
       setPersonaBusyKey("");
     });
@@ -103,6 +123,7 @@ export default function AppEntry() {
     if (status !== "authenticated" || !session || !repository) return;
     const activeRepository = repository;
     let active = true;
+    const loadStartedAt = performance.now();
 
     async function loadWorkspaceAttempt() {
       const invitationToken = new URLSearchParams(window.location.search).get("coach_invite");
@@ -125,14 +146,20 @@ export default function AppEntry() {
       try {
         let nextWorkspace: WorkspaceData | null = null;
         let lastError: unknown;
-        for (let attempt = 0; attempt <= jwtClockSkewRetryDelays.length; attempt += 1) {
+        let jwtRetry = 0;
+        let transientRetry = 0;
+        while (!nextWorkspace) {
           try {
             nextWorkspace = await loadWorkspaceAttempt();
-            break;
           } catch (loadError) {
             lastError = loadError;
-            if (!isFutureJwtError(loadError) || attempt === jwtClockSkewRetryDelays.length) throw loadError;
-            await wait(jwtClockSkewRetryDelays[attempt]);
+            const retryDelay = isFutureJwtError(loadError)
+              ? jwtClockSkewRetryDelays[jwtRetry++]
+              : isTransientWorkspaceError(loadError)
+                ? transientWorkspaceRetryDelays[transientRetry++]
+                : undefined;
+            if (retryDelay === undefined) throw loadError;
+            await wait(retryDelay);
             if (!active) return;
           }
         }
@@ -140,15 +167,31 @@ export default function AppEntry() {
         if (active) {
           setWorkspaceError("");
           setWorkspace(nextWorkspace);
+          recordClientPerformance("workspace:load", loadStartedAt, {
+            outcome: "success",
+            retries: jwtRetry + transientRetry,
+          });
         }
       } catch (loadError) {
-        if (active) setWorkspaceError(loadError instanceof Error ? loadError.message : "Your training workspace could not be opened.");
+        const metric = recordClientPerformance("workspace:load", loadStartedAt, {
+          outcome: "failure",
+        });
+        console.warn("[LiftLog] Workspace load failed", { ...metric, error: loadError });
+        if (active) setWorkspaceError(workspaceLoadMessage(loadError));
+      } finally {
+        if (active) setWorkspaceLoading(false);
       }
     }
 
     void loadWorkspace();
     return () => { active = false; };
-  }, [repository, session, status]);
+  }, [repository, session, status, workspaceRetryKey]);
+
+  function retryWorkspace() {
+    setWorkspaceError("");
+    setWorkspaceLoading(true);
+    setWorkspaceRetryKey((current) => current + 1);
+  }
 
   async function signInWithGoogle() {
     const client = getSupabaseBrowserClient();
@@ -227,7 +270,7 @@ export default function AppEntry() {
   }
 
   if (status === "authenticated" && session && workspaceError) {
-    return <><main className="auth-loading"><span className="auth-logo">LL</span><strong>{workspaceError}</strong><div className="auth-loading-actions"><button className="button secondary" onClick={() => window.location.reload()}>Try again</button>{testPersonasAvailable && <button className="button primary" onClick={() => setPersonaSwitcherOpen(true)}>Switch test account</button>}<button className="text-button" onClick={signOut}>Sign out</button></div></main>{personaDialog}</>;
+    return <><main className="auth-loading"><span className="auth-logo">LL</span><strong>{workspaceError}</strong><div className="auth-loading-actions"><button className="button secondary" disabled={workspaceLoading} onClick={retryWorkspace}>{workspaceLoading ? "Trying again…" : "Try again"}</button>{testPersonasAvailable && <button className="button primary" onClick={() => setPersonaSwitcherOpen(true)}>Switch test account</button>}<button className="text-button" onClick={signOut}>Sign out</button></div></main>{personaDialog}</>;
   }
 
   if (status === "authenticated" && session) {

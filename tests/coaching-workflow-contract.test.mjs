@@ -4,6 +4,7 @@ import test from "node:test";
 
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
+const primitivesUrl = new URL("../app/ui-primitives.tsx", import.meta.url);
 
 function sourceBetween(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -15,7 +16,10 @@ function sourceBetween(source, start, end) {
 }
 
 test("coach requests are confirmed in-app without invitation links", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const [app, primitives] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(primitivesUrl, "utf8"),
+  ]);
   const inviteModal = sourceBetween(
     app,
     "function InviteModal",
@@ -71,8 +75,13 @@ test("coach requests are confirmed in-app without invitation links", async () =>
   );
   assert.match(
     coachingView,
-    /"My athletes"[\s\S]*pendingInvites\.length > 0[\s\S]*request-count-badge[\s\S]*pendingInvites\.length/,
+    /"My athletes"[\s\S]*badge: pendingInvites\.length/,
     "incoming requests should also badge My athletes",
+  );
+  assert.match(
+    primitives,
+    /tab\.badge !== undefined && tab\.badge > 0[\s\S]*request-count-badge/,
+    "the shared tab primitive must render a pending-request badge",
   );
   assert.match(
     app,
@@ -107,10 +116,13 @@ test("coach-only workspace tabs stay hidden until they have relevant coaching da
   );
   assert.match(
     coachingView,
-    /\{hasAthleteWorkspace && \([\s\S]*"My athletes"/,
+    /hasAthleteWorkspace[\s\S]*"My athletes"/,
     "the My athletes workspace tab must be hidden otherwise",
   );
-  assert.match(app, /\{ id: "coaching", label: "Coaching", icon: Users \}/);
+  assert.match(
+    app,
+    /\{ id: "coaching", label: "Coaching", shortLabel: "Coaching", icon: Users \}/,
+  );
   assert.match(
     app,
     /\{navItems\.map\(\(item\) => \{/,
@@ -118,7 +130,7 @@ test("coach-only workspace tabs stay hidden until they have relevant coaching da
   );
   assert.match(
     programsHome,
-    /\{hasCoach && \([\s\S]*aria-selected=\{source === "coach"\}/,
+    /hasCoach \? \[\{ value: "coach" as const, label: "Coach", icon: Users \}\] : \[\]/,
     "the Coach program source must be hidden without an active coach",
   );
   assert.match(

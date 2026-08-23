@@ -17,6 +17,18 @@
   --blue: #73b8ff;
   --orange: #f2a96b;
   --red: #f08383;
+  --green: #6fd6a2;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --control-sm: 36px;
+  --control-md: 44px;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
 }
 
@@ -891,8 +903,7 @@ input:disabled {
 .text-button:hover {
   color: var(--text-soft);
 }
-.status-pill,
-.connected-pill {
+.status-badge {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -903,21 +914,37 @@ input:disabled {
   background: rgba(255, 255, 255, 0.015);
   font-size: 9px;
 }
-.status-pill i,
-.connected-pill i {
+.status-badge i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 3px rgba(197, 243, 107, 0.08);
 }
-.status-pill.completed i {
+.status-badge.completed i {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(111, 214, 162, 0.08);
+}
+.status-badge.skipped i,
+.status-badge.ready i {
+  background: var(--muted-dark);
+  box-shadow: none;
+}
+.status-badge.planned i,
+.status-badge.in_schedule i {
   background: var(--blue);
   box-shadow: 0 0 0 3px rgba(115, 184, 255, 0.08);
 }
-.status-pill.skipped i {
-  background: var(--muted-dark);
-  box-shadow: none;
+.status-badge.draft i,
+.status-badge.pending i {
+  background: var(--orange);
+  box-shadow: 0 0 0 3px rgba(242, 169, 107, 0.08);
+}
+.status-badge.compact {
+  min-height: 17px;
+  padding: 3px 6px;
+  gap: 4px;
+  font-size: 7px;
 }
 .toast {
   position: fixed;
@@ -1454,6 +1481,20 @@ input:disabled {
   justify-content: space-between;
   gap: 18px;
 }
+.program-description-field {
+  margin-top: 8px;
+  display: grid;
+  gap: 4px;
+}
+.program-description-field > span {
+  color: var(--muted);
+  font-size: 8px;
+}
+.program-description-field input {
+  min-height: 30px;
+  padding: 6px 8px;
+  font-size: 9px;
+}
 .program-summary > div:first-child {
   display: flex;
   align-items: center;
@@ -1489,7 +1530,7 @@ input:disabled {
   font-weight: 750;
   white-space: nowrap;
 }
-.ownership-tag {
+.source-tag {
   width: fit-content;
   min-height: 24px;
   padding: 5px 8px;
@@ -1505,30 +1546,25 @@ input:disabled {
   line-height: 1;
   white-space: nowrap;
 }
-.ownership-tag.library {
-  border-color: rgba(143, 153, 159, 0.24);
-  color: var(--muted);
-  background: rgba(143, 153, 159, 0.08);
-}
-.ownership-tag.self {
+.source-tag.self {
   border-color: rgba(115, 184, 255, 0.3);
   color: var(--blue);
 }
-.ownership-tag.coach {
+.source-tag.coach {
   border-color: rgba(115, 184, 255, 0.4);
   color: #8ec7ff;
   background: rgba(115, 184, 255, 0.12);
 }
-.ownership-tag.compact {
+.source-tag.compact {
   min-height: 17px;
   padding: 3px 6px;
   gap: 4px;
   font-size: 7px;
 }
-.next-workout-summary .ownership-tag {
+.next-workout-summary .source-tag {
   margin-bottom: 1px;
 }
-.calendar-detail-summary .ownership-tag {
+.calendar-detail-summary .source-tag {
   margin: 0 0 7px;
 }
 .program-options-mobile {
@@ -1851,6 +1887,37 @@ input:disabled {
   background: rgba(255, 255, 255, 0.012);
   position: relative;
 }
+.builder-exercise-preview {
+  display: block;
+  padding: 8px 12px 8px 42px;
+}
+.builder-exercise-preview > .drag-handle,
+.builder-exercise-preview > .drag-handle-placeholder {
+  position: absolute;
+  top: 12px;
+  left: 6px;
+}
+.builder-exercise-preview-content .log-item,
+.builder-exercise-preview-content .instruction-item {
+  margin: 0;
+}
+.builder-exercise-preview-content .log-item {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.builder-exercise-preview-actions {
+  position: absolute;
+  top: 9px;
+  right: 30px;
+  display: flex;
+  gap: 4px;
+}
+.builder-exercise-preview .item-position {
+  position: absolute;
+  right: 8px;
+  top: 16px;
+}
 .builder-item-list {
   min-height: 34px;
   padding: 2px;
@@ -2041,21 +2108,6 @@ input:disabled {
   font-size: 7px;
   font-weight: 800;
 }
-.exercise-source-tag {
-  max-width: 96px;
-  padding: 5px 7px;
-  border-radius: 6px;
-  color: var(--blue);
-  background: rgba(115, 184, 255, 0.08);
-  font-size: 6.5px;
-  font-weight: 750;
-  line-height: 1.25;
-  text-align: center;
-}
-.exercise-source-tag.personal {
-  color: var(--accent);
-  background: rgba(197, 243, 107, 0.08);
-}
 .picker-result-main > div {
   min-width: 0;
   display: grid;
@@ -2203,11 +2255,11 @@ input:disabled {
 .program-card-main {
   width: 100%;
   min-width: 0;
-  min-height: 66px;
-  padding: 10px 12px;
+  min-height: 82px;
+  padding: 13px 16px;
   border: 0;
   display: grid;
-  grid-template-columns: minmax(210px, 0.9fr) minmax(220px, 1.2fr) auto;
+  grid-template-columns: minmax(235px, 0.9fr) minmax(320px, 1.3fr) auto;
   align-items: center;
   gap: 14px;
   background: transparent;
@@ -2256,13 +2308,11 @@ input:disabled {
 }
 .program-card-description {
   min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 8.5px;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: normal;
 }
 .program-card-workout-progress {
   min-width: 0;
@@ -2306,15 +2356,22 @@ input:disabled {
   white-space: nowrap;
 }
 .program-card-footer {
+  width: 285px;
+  flex: 0 0 285px;
   min-height: 66px;
   padding: 8px 10px;
   border-left: 1px solid var(--line);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.program-card-footer > .status-badge {
+  width: 96px;
+  justify-content: center;
 }
 .program-card-actions {
+  width: auto;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -2809,20 +2866,6 @@ input:disabled {
   align-items: center;
   justify-content: space-between;
 }
-.exercise-badge {
-  padding: 4px 6px;
-  border-radius: 5px;
-  color: var(--blue);
-  background: rgba(115, 184, 255, 0.08);
-  font-size: 6.5px;
-  font-weight: 750;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-.exercise-badge.personal {
-  color: var(--accent);
-  background: rgba(197, 243, 107, 0.08);
-}
 .exercise-category {
   margin-top: 10px;
   color: var(--muted-dark);
@@ -3208,35 +3251,11 @@ input:disabled {
   gap: 7px;
 }
 .coach-assigned-program {
-  width: 100%;
-  min-height: 92px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 18px;
-  gap: 11px;
-  align-items: center;
-  color: var(--muted);
-  background: var(--panel-soft);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    transform 160ms ease;
+  min-width: 0;
 }
-.coach-assigned-program:hover,
-.coach-assigned-program:focus-visible {
-  border-color: rgba(197, 243, 107, 0.42);
-  background: rgba(197, 243, 107, 0.035);
-  outline: none;
-  transform: translateY(-1px);
-}
-.coach-assigned-program:disabled {
-  cursor: wait;
-  opacity: 0.66;
-  transform: none;
+.coach-assigned-program .program-card-footer {
+  width: 180px;
+  flex-basis: 180px;
 }
 .coach-program-icon {
   width: 36px;
@@ -4450,10 +4469,15 @@ input:disabled {
     justify-content: flex-start;
   }
   .program-card-footer {
+    width: auto;
+    flex: 1 1 auto;
     min-height: 0;
     padding: 6px 8px;
     border-top: 1px solid var(--line);
     border-left: 0;
+  }
+  .program-card-actions {
+    width: auto;
   }
   .summary-metrics {
     display: none;
@@ -4541,7 +4565,7 @@ input:disabled {
     padding: 12px;
     gap: 10px;
   }
-  .available-program .status-pill {
+  .available-program .status-badge {
     display: none;
   }
   .workout-card {
@@ -4632,7 +4656,7 @@ input:disabled {
   .access-heading {
     grid-template-columns: 48px 1fr;
   }
-  .connected-pill {
+  .access-heading .status-badge {
     grid-column: 1 / -1;
     justify-self: start;
   }
@@ -4646,7 +4670,7 @@ input:disabled {
     width: 44px;
     height: 44px;
   }
-  .coach-connection-row .connected-pill,
+  .coach-connection-row .status-badge,
   .coach-connection-row .button {
     grid-column: 2;
     justify-self: start;
@@ -4686,10 +4710,12 @@ input:disabled {
     padding: 13px;
   }
   .coach-assigned-program {
-    min-height: 108px;
-    padding: 11px 9px;
-    grid-template-columns: 34px minmax(0, 1fr) 15px;
-    gap: 9px;
+    min-height: 0;
+    padding: 0;
+  }
+  .coach-assigned-program .program-card-footer {
+    width: auto;
+    flex-basis: auto;
   }
   .coach-program-icon {
     width: 34px;

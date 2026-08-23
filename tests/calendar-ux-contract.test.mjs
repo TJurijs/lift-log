@@ -93,8 +93,18 @@ test("calendar event clicks open plans and immutable completed results", async (
   );
   assert.ok(app.includes("repository.loadCompletedSessionDetail("));
   assert.ok(/async loadCompletedSessionDetail\s*\(/.test(repository));
-  assert.ok(app.includes("Workout plan"));
-  assert.ok(app.includes("Completed results"));
+  assert.match(
+    app,
+    /function openCalendarPlan[\s\S]*openWorkoutPreview\(schedule, "calendar"\)[\s\S]*navigate\("today"\)/,
+    "planned calendar events must use the shared full workout preview",
+  );
+  assert.match(
+    app,
+    /function openCalendarResults[\s\S]*setCompletedWorkoutView[\s\S]*navigate\("today"\)/,
+    "completed calendar events must use the shared full workout result screen",
+  );
+  assert.match(app, /function CompletedWorkoutView/);
+  assert.doesNotMatch(app, /function CalendarWorkoutModal/);
 });
 
 test("calendar days schedule on a chosen date and allow quick drag rescheduling", async () => {
@@ -172,20 +182,52 @@ test("scheduled workouts can be removed from plans, calendar hover, or availabil
     "function CalendarView",
     "function ExercisesView",
   );
-  const calendarModal = sourceBetween(
-    app,
-    "function CalendarWorkoutModal",
-    "function InviteModal",
-  );
-
   assert.doesNotMatch(calendarView, /Next workout/);
   assert.match(calendarView, /calendar-event-delete[\s\S]*?onDeleteSchedule\(schedule\.id\)/);
   assert.match(styles, /\.calendar-planned-event:hover \.calendar-event-delete/);
-  assert.match(calendarModal, /onDelete\(state\.schedule\.id\)/);
-  assert.match(calendarModal, /Remove from calendar/);
+  assert.match(
+    app,
+    /onRemoveFromCalendar[\s\S]*?Remove workout from calendar[\s\S]*?Remove from calendar/,
+    "the shared workout preview must retain calendar removal",
+  );
+  assert.match(
+    app,
+    /onReschedule[\s\S]*?Reschedule workout[\s\S]*?Reschedule/,
+    "the shared workout preview must retain calendar rescheduling",
+  );
   assert.match(
     migration,
     /make_available then[\s\S]*?else[\s\S]*?delete from public\.scheduled_workouts[\s\S]*?scheduled\.status = 'planned'[\s\S]*?not exists[\s\S]*?workout_sessions/i,
     "removing availability must clear unstarted scheduled workouts",
+  );
+});
+
+test("Library programs can enter scheduling without an Own copy", async () => {
+  const [app, styles] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
+  const templateAction = sourceBetween(
+    app,
+    "async function handleTemplateAction",
+    "async function scheduleLibraryProgram",
+  );
+  const templateCard = sourceBetween(
+    app,
+    "function LibraryTemplateCard",
+    "function ProgramsHome",
+  );
+
+  assert.match(templateAction, /intent: "open" \| "copy" \| "schedule"/);
+  assert.match(
+    templateAction,
+    /intent === "schedule"[\s\S]*repository\.setProgramAvailability\(targetProgramId, true\)[\s\S]*repository\.prepareProgramSchedule\(targetProgram\.versionId\)[\s\S]*setModal\("schedule"\)/,
+    "a Library program must become available and open its date picker in one flow",
+  );
+  assert.match(templateCard, /onSchedule[\s\S]*Add to scheduling[\s\S]*CalendarPlus/);
+  assert.match(
+    styles,
+    /\.program-card-description\s*\{[^}]*color: var\(--text-soft\)[^}]*font-size: 10px[^}]*white-space: normal/,
+    "program descriptions must remain visible rather than truncate to a faint single line",
   );
 });
