@@ -1,0 +1,182 @@
+-- A deliberately compact shared catalogue: common movements first, with
+-- original Lift Log cues rather than copied third-party descriptions or media.
+-- Existing global exercises are preserved and never duplicated by name.
+
+with curated_exercises (
+  name,
+  category,
+  cue,
+  default_entry_mode,
+  default_tracking_fields
+) as (
+  values
+    -- Olympic weightlifting: competition lifts, derivatives and support work.
+    ('Power snatch', 'Weightlifting', 'Stay close, finish tall, then receive with active shoulders.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Hang snatch', 'Weightlifting', 'Wait for balance over the mid-foot before extending.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('High-hang snatch', 'Weightlifting', 'Start tall and use a sharp vertical extension.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Muscle snatch', 'Weightlifting', 'Keep the bar close and finish with straight arms.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Tall snatch', 'Weightlifting', 'Stay upright and pull under without driving the legs.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Snatch balance', 'Weightlifting', 'Drive evenly, then lock out into a stable squat.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Overhead squat', 'Weightlifting', 'Press up on the bar and keep the whole foot grounded.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Snatch pull', 'Weightlifting', 'Push through the floor and keep the bar sweeping close.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Snatch high pull', 'Weightlifting', 'Extend fully before guiding the elbows high.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Snatch-grip deadlift', 'Weightlifting', 'Set the back, stay over the bar, and stand with control.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Clean', 'Weightlifting', 'Finish the pull, then meet the bar with fast elbows.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Power clean', 'Weightlifting', 'Stay balanced through extension and catch above parallel.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Hang clean', 'Weightlifting', 'Keep the bar close and receive with quick elbows.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('High-hang clean', 'Weightlifting', 'Start tall and use a fast extension under the bar.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Muscle clean', 'Weightlifting', 'Extend smoothly and turn the elbows through without a dip.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Tall clean', 'Weightlifting', 'Stay tall and whip the elbows through to the rack.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Clean pull', 'Weightlifting', 'Drive through the floor and finish with a tall torso.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Clean high pull', 'Weightlifting', 'Keep the bar close and let the elbows rise after extension.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Clean deadlift', 'Weightlifting', 'Maintain start-position pressure and stand without rushing.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Front squat', 'Weightlifting', 'Keep the elbows high, brace, and stand through the mid-foot.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Jerk', 'Weightlifting', 'Dip straight, drive hard, and lock out before recovering.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Split jerk', 'Weightlifting', 'Drive vertically and land in a balanced, stable split.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Power jerk', 'Weightlifting', 'Use a vertical dip and receive with knees tracking out.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Push jerk', 'Weightlifting', 'Dip and drive, then press yourself under the bar.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Jerk balance', 'Weightlifting', 'Keep the front foot planted and punch into the split.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Jerk dip and drive', 'Weightlifting', 'Keep the torso vertical and push evenly through both feet.', 'sets', array['reps', 'load', 'rpe']::text[]),
+
+    -- General strength that supports lifting and broad training plans.
+    ('Deadlift', 'Strength', 'Brace hard, keep the bar close, and push the floor away.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Sumo deadlift', 'Strength', 'Wedge into the bar, spread the floor, and lock out tall.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Pause back squat', 'Strength', 'Own the bottom position, stay braced, then drive evenly.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Box squat', 'Strength', 'Reach back with control, stay tight, and stand without rocking.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Good morning', 'Strength', 'Soften the knees, hinge at the hips, and keep the back long.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Barbell hip thrust', 'Strength', 'Tuck the ribs, drive through the heels, and squeeze at lockout.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Barbell row', 'Strength', 'Hold the torso still and pull the bar toward the lower ribs.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Incline barbell bench press', 'Strength', 'Set the upper back and press smoothly over the shoulders.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Standing barbell press', 'Strength', 'Squeeze the glutes, keep ribs down, and press vertically.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Close-grip bench press', 'Strength', 'Keep the elbows controlled and press from a stable upper back.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Weighted pull-up', 'Strength', 'Start long, pull the chest up, and avoid swinging.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Weighted dip', 'Strength', 'Stay tall between the shoulders and press to a stable finish.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Farmer carry', 'Strength', 'Stand tall, keep the ribs stacked, and take controlled steps.', 'result', array['distance', 'load', 'rpe']::text[]),
+    ('Suitcase carry', 'Strength', 'Resist side-bending and walk with a quiet, level torso.', 'result', array['distance', 'load', 'rpe']::text[]),
+
+    -- Common bodybuilding movements: enough variety without near-duplicate clutter.
+    ('Dumbbell bench press', 'Bodybuilding', 'Lower with control and press with the shoulders set back.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Incline dumbbell bench press', 'Bodybuilding', 'Keep the upper back fixed and press in a smooth arc.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Cable fly', 'Bodybuilding', 'Keep a soft elbow and bring the hands together with control.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Pec deck', 'Bodybuilding', 'Stay tall, keep the chest open, and squeeze without shrugging.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Machine chest press', 'Bodybuilding', 'Set the shoulders down and press through a consistent path.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Seated dumbbell shoulder press', 'Bodybuilding', 'Keep ribs down and press without leaning back.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Dumbbell lateral raise', 'Bodybuilding', 'Lead with the elbows and stop before the shoulders shrug.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Cable lateral raise', 'Bodybuilding', 'Keep tension from the bottom and raise with a soft elbow.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Rear delt fly', 'Bodybuilding', 'Reach wide with the arms and keep the neck relaxed.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Face pull', 'Bodybuilding', 'Pull toward the face and finish with the hands apart.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Rope triceps pressdown', 'Bodybuilding', 'Fix the elbows by the sides and separate the rope at the bottom.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Overhead cable triceps extension', 'Bodybuilding', 'Keep the elbows pointed forward and extend smoothly.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Lying triceps extension', 'Bodybuilding', 'Keep upper arms steady and extend without flaring the elbows.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Lat pulldown', 'Bodybuilding', 'Start with long arms and pull the elbows toward the ribs.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Seated cable row', 'Bodybuilding', 'Stay tall and pull the handle toward the lower ribs.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Chest-supported row', 'Bodybuilding', 'Keep the chest connected to the pad and pull with the elbows.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('One-arm dumbbell row', 'Bodybuilding', 'Keep the torso quiet and pull the elbow toward the hip.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Machine row', 'Bodybuilding', 'Keep the chest tall and pause briefly at the squeeze.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Straight-arm cable pulldown', 'Bodybuilding', 'Keep arms nearly straight and pull from the lats.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Dumbbell curl', 'Bodybuilding', 'Keep the upper arm still and curl through a full range.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Hammer curl', 'Bodybuilding', 'Keep the wrists neutral and control both directions.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Cable curl', 'Bodybuilding', 'Hold the shoulders quiet and squeeze at the top.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Preacher curl', 'Bodybuilding', 'Keep the upper arm on the pad and avoid snapping straight.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Leg press', 'Bodybuilding', 'Keep the lower back supported and drive through the whole foot.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Hack squat', 'Bodybuilding', 'Stay braced into the pad and let the knees travel smoothly.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Bulgarian split squat', 'Bodybuilding', 'Keep pressure through the front foot and descend under control.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Walking lunge', 'Bodybuilding', 'Take a stable step and drive through the front foot.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Reverse lunge', 'Bodybuilding', 'Step back softly and keep the front knee tracking cleanly.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Leg extension', 'Bodybuilding', 'Keep the hips down and squeeze the quad at the top.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Lying leg curl', 'Bodybuilding', 'Keep hips pressed into the pad and curl without rushing.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Seated leg curl', 'Bodybuilding', 'Lock in the hips and finish each curl with control.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Standing calf raise', 'Bodybuilding', 'Pause at the stretch and rise as high as control allows.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Seated calf raise', 'Bodybuilding', 'Move through a full ankle range and avoid bouncing.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Hip abduction machine', 'Bodybuilding', 'Stay tall and control the outward range.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Hip adduction machine', 'Bodybuilding', 'Keep the hips still and close the legs with control.', 'sets', array['reps', 'load', 'rpe']::text[]),
+
+    -- Functional fitness and conditioning staples. The category is deliberately
+    -- generic so movements are useful outside any one branded training style.
+    ('Goblet squat', 'Functional fitness', 'Hold the bell close, sit between the hips, and stand tall.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Kettlebell swing', 'Functional fitness', 'Hinge sharply and let the hips drive the bell forward.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Kettlebell clean', 'Functional fitness', 'Keep the bell close and receive softly at the rack.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Kettlebell snatch', 'Functional fitness', 'Use the hips, keep the bell close, and lock out smoothly.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Dumbbell snatch', 'Functional fitness', 'Drive from the floor and finish directly over the shoulder.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Dumbbell clean and jerk', 'Functional fitness', 'Stand through the clean, then drive the dumbbells overhead.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Dumbbell thruster', 'Functional fitness', 'Stand hard from the squat and finish with locked arms.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Barbell thruster', 'Functional fitness', 'Use the leg drive to send the bar vertically overhead.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Burpee', 'Functional fitness', 'Move smoothly to the floor and finish tall with control.', 'sets', array['reps', 'rpe']::text[]),
+    ('Box jump', 'Functional fitness', 'Jump and land quietly with the knees tracking over the feet.', 'sets', array['reps', 'rpe']::text[]),
+    ('Broad jump', 'Functional fitness', 'Swing the arms, land softly, and reset before the next rep.', 'sets', array['reps', 'rpe']::text[]),
+    ('Wall ball', 'Functional fitness', 'Use a consistent squat and throw to the same target each rep.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Sled push', 'Functional fitness', 'Keep a strong torso angle and drive with short, powerful steps.', 'result', array['distance', 'load', 'rpe']::text[]),
+    ('Sled pull', 'Functional fitness', 'Stay braced, lean back slightly, and take steady steps.', 'result', array['distance', 'load', 'rpe']::text[]),
+    ('Sandbag clean', 'Functional fitness', 'Keep the bag close, extend the hips, then receive at the shoulder.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Battle ropes', 'Functional fitness', 'Keep the ribs down and make each wave crisp and repeatable.', 'intervals', array['rounds', 'duration', 'rpe']::text[]),
+    ('Turkish get-up', 'Functional fitness', 'Keep the loaded arm vertical and move through each position deliberately.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Devil press', 'Functional fitness', 'Keep the dumbbells close and lock out with control overhead.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Step-up', 'Functional fitness', 'Place the full foot on the box and stand without pushing off the trail leg.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Medicine ball clean', 'Functional fitness', 'Hinge, extend through the hips, and receive high at the chest.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Rope climb', 'Functional fitness', 'Use a secure foot lock and pull with calm, efficient steps.', 'sets', array['reps', 'rpe']::text[]),
+    ('Handstand push-up', 'Functional fitness', 'Keep a tight line and press through the shoulders to lockout.', 'sets', array['reps', 'rpe']::text[]),
+
+    -- Gymnastics and trunk work that recur across strength and functional plans.
+    ('Chest-to-bar pull-up', 'Gymnastics', 'Keep the body connected and pull the chest to the bar.', 'sets', array['reps', 'rpe']::text[]),
+    ('Kipping pull-up', 'Gymnastics', 'Create a controlled swing and finish each rep with long arms.', 'sets', array['reps', 'rpe']::text[]),
+    ('Ring row', 'Gymnastics', 'Keep the body rigid and pull the rings toward the ribs.', 'sets', array['reps', 'rpe']::text[]),
+    ('Ring dip', 'Gymnastics', 'Keep the rings close, shoulders stable, and press to support.', 'sets', array['reps', 'rpe']::text[]),
+    ('Handstand hold', 'Gymnastics', 'Press tall through the shoulders and keep the ribs tucked.', 'result', array['duration', 'rpe']::text[]),
+    ('Pike push-up', 'Gymnastics', 'Keep the hips high and lower the crown of the head under control.', 'sets', array['reps', 'rpe']::text[]),
+    ('Toes-to-bar', 'Gymnastics', 'Keep the swing controlled and bring the toes to the bar.', 'sets', array['reps', 'rpe']::text[]),
+    ('Muscle-up', 'Gymnastics', 'Stay close to the rings or bar and finish in a stable support.', 'sets', array['reps', 'rpe']::text[]),
+    ('L-sit', 'Gymnastics', 'Press down through the hands and keep the legs long.', 'result', array['duration', 'rpe']::text[]),
+    ('Side plank', 'Core', 'Stack the ribs and hips, then hold a long, quiet line.', 'result', array['duration', 'rpe']::text[]),
+    ('Hollow hold', 'Core', 'Keep the lower back connected and reach long through the limbs.', 'result', array['duration', 'rpe']::text[]),
+    ('Dead bug', 'Core', 'Keep the ribs down while moving opposite arm and leg slowly.', 'sets', array['reps', 'rpe']::text[]),
+    ('Hanging knee raise', 'Core', 'Avoid swinging and curl the pelvis up at the top.', 'sets', array['reps', 'rpe']::text[]),
+    ('Hanging leg raise', 'Core', 'Stay controlled through the swing and lift with the trunk.', 'sets', array['reps', 'rpe']::text[]),
+    ('Ab wheel rollout', 'Core', 'Keep the ribs down and reach only as far as control allows.', 'sets', array['reps', 'rpe']::text[]),
+    ('Cable crunch', 'Core', 'Curl the ribs toward the hips without pulling on the neck.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Pallof press', 'Core', 'Stay square to the anchor and resist rotation as you press.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('Back extension', 'Core', 'Hinge at the hips and finish with a neutral, strong torso.', 'sets', array['reps', 'load', 'rpe']::text[]),
+    ('GHD sit-up', 'Core', 'Control the descent and use a smooth hip-driven return.', 'sets', array['reps', 'rpe']::text[]),
+
+    -- Conditioning modalities and a small, practical mobility set.
+    ('Easy row', 'Cardio', 'Use a relaxed stroke rate and finish feeling sustainable.', 'result', array['duration', 'distance', 'rpe']::text[]),
+    ('Rowing sprint intervals', 'Cardio', 'Hold a repeatable pace and recover enough to stay sharp.', 'intervals', array['rounds', 'duration', 'distance', 'rpe']::text[]),
+    ('Bike intervals', 'Cardio', 'Build quickly, hold a repeatable effort, and recover fully.', 'intervals', array['rounds', 'duration', 'distance', 'rpe']::text[]),
+    ('Ski erg steady state', 'Cardio', 'Use a smooth pull and keep the pace conversational.', 'result', array['duration', 'distance', 'rpe']::text[]),
+    ('Ski erg intervals', 'Cardio', 'Drive with the trunk and keep each interval consistent.', 'intervals', array['rounds', 'duration', 'distance', 'rpe']::text[]),
+    ('Running intervals', 'Cardio', 'Use a repeatable pace and let the recovery reset your stride.', 'intervals', array['rounds', 'duration', 'distance', 'rpe']::text[]),
+    ('Walking', 'Cardio', 'Keep an easy, steady pace and let the arms swing naturally.', 'result', array['duration', 'distance', 'rpe']::text[]),
+    ('Swimming', 'Cardio', 'Keep the stroke relaxed and breathe on a repeatable rhythm.', 'result', array['duration', 'distance', 'rpe']::text[]),
+    ('Couch stretch', 'Mobility', 'Keep the pelvis tucked and breathe into a comfortable hip stretch.', 'result', array['duration', 'rpe']::text[]),
+    ('Ankle dorsiflexion drill', 'Mobility', 'Keep the heel down and let the knee travel forward smoothly.', 'sets', array['reps', 'rpe']::text[]),
+    ('Thoracic rotation', 'Mobility', 'Move from the upper back while keeping the hips still.', 'sets', array['reps', 'rpe']::text[]),
+    ('Shoulder pass-through', 'Mobility', 'Use a pain-free grip width and move slowly through the range.', 'sets', array['reps', 'rpe']::text[]),
+    ('Cat-cow', 'Mobility', 'Move one segment at a time and keep the breath calm.', 'sets', array['reps', 'rpe']::text[]),
+    ('World stretch', 'Mobility', 'Move deliberately through the lunge and rotation positions.', 'sets', array['reps', 'rpe']::text[]),
+    ('90/90 hip switch', 'Mobility', 'Sit tall and rotate from the hips without forcing the range.', 'sets', array['reps', 'rpe']::text[]),
+    ('Banded shoulder external rotation', 'Mobility', 'Keep the elbow fixed and rotate from the shoulder slowly.', 'sets', array['reps', 'rpe']::text[])
+)
+insert into public.exercises (
+  scope,
+  owner_id,
+  name,
+  category,
+  cue,
+  default_entry_mode,
+  default_tracking_fields
+)
+select
+  'global',
+  null,
+  curated.name,
+  curated.category,
+  curated.cue,
+  curated.default_entry_mode,
+  curated.default_tracking_fields
+from curated_exercises curated
+where not exists (
+  select 1
+  from public.exercises existing
+  where existing.scope = 'global'
+    and existing.owner_id is null
+    and lower(existing.name) = lower(curated.name)
+);

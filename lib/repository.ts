@@ -16,6 +16,7 @@ import type {
   OutgoingCoachInvite,
   PendingCoachInvite,
   PlannedWorkout,
+  PrescriptionEntry,
   Prescription,
   Program,
   ProgramAssignment,
@@ -49,6 +50,8 @@ interface ExerciseRow {
   owner_id: string | null;
   name: string;
   category: string;
+  discipline?: "weightlifting" | "gym" | "functional" | null;
+  tags?: string[] | null;
   cue: string;
   default_entry_mode: EntryMode;
   default_tracking_fields: TrackingField[];
@@ -312,6 +315,32 @@ function mapCompletedSession(session: SessionRow): CompletedSession {
   };
 }
 
+function prescriptionEntryFromRow(row: PrescriptionRow): PrescriptionEntry {
+  const rpeLow = displayNumber(row.target_rpe_min);
+  const rpeHigh = displayNumber(row.target_rpe_max);
+  const repsLow = displayNumber(row.reps_min);
+  const repsHigh = displayNumber(row.reps_max);
+  return {
+    reps:
+      repsLow && repsHigh && repsLow !== repsHigh
+        ? `${repsLow}–${repsHigh}`
+        : repsLow || repsHigh || undefined,
+    loadKg: numberValue(row.load_kg) ?? undefined,
+    durationMinutes: row.duration_seconds ? row.duration_seconds / 60 : undefined,
+    distance: numberValue(row.distance_metres)
+      ? Number(numberValue(row.distance_metres)) / 1000
+      : undefined,
+    distanceUnit: "km",
+    rounds: row.rounds ?? undefined,
+    workSeconds: row.work_seconds ?? undefined,
+    restSeconds: row.rest_seconds ?? undefined,
+    targetRpe:
+      rpeLow && rpeHigh && rpeLow !== rpeHigh
+        ? `${rpeLow}–${rpeHigh}`
+        : rpeLow || rpeHigh || undefined,
+  };
+}
+
 function prescriptionFromRows(
   mode: EntryMode,
   rows: PrescriptionRow[],
@@ -321,6 +350,7 @@ function prescriptionFromRows(
   );
   const first = ordered[0];
   if (!first) return {};
+  const entries = ordered.map(prescriptionEntryFromRow);
   const rpeLow = displayNumber(first.target_rpe_min);
   const rpeHigh = displayNumber(first.target_rpe_max);
   const targetRpe =
@@ -340,6 +370,7 @@ function prescriptionFromRows(
       loadKg: numberValue(first.load_kg) ?? undefined,
       targetRpe,
       targetText: first.target_text ?? undefined,
+      entries,
     };
   }
 
@@ -351,11 +382,15 @@ function prescriptionFromRows(
       ? Number(numberValue(first.distance_metres)) / 1000
       : undefined,
     distanceUnit: "km",
-    rounds: first.rounds ?? undefined,
+    rounds:
+      mode === "intervals" && ordered.length > 1
+        ? ordered.length
+        : first.rounds ?? undefined,
     workSeconds: first.work_seconds ?? undefined,
     restSeconds: first.rest_seconds ?? undefined,
     targetRpe,
     targetText: first.target_text ?? undefined,
+    entries,
   };
 }
 
@@ -373,6 +408,8 @@ function mapExercise(row: ExerciseRow, ownerName: string): Exercise {
     id: row.id,
     name: row.name,
     category: row.category,
+    discipline: row.discipline ?? undefined,
+    tags: row.tags ?? [],
     cue: row.cue,
     scope: row.scope,
     ownerName: row.scope === "personal" ? ownerName : undefined,
@@ -1278,6 +1315,14 @@ export class LiftLogRepository {
       fail("Could not save the program description", result.error);
   }
 
+  async updateProgramTitle(programId: string, title: string) {
+    const result = await this.client
+      .from("programs")
+      .update({ title })
+      .eq("id", programId);
+    if (result.error) fail("Could not save the program name", result.error);
+  }
+
   async createProgramFromTemplate(templateId: string) {
     const result = await this.client.rpc("create_program_from_template", {
       target_template_id: templateId,
@@ -1515,7 +1560,7 @@ export class LiftLogRepository {
     const result = await this.client
       .from("exercises")
       .select(
-        "id, scope, owner_id, name, category, cue, default_entry_mode, default_tracking_fields",
+        "id, scope, owner_id, name, category, discipline, tags, cue, default_entry_mode, default_tracking_fields",
       )
       .is("archived_at", null)
       .order("name");
@@ -1546,12 +1591,25 @@ export class LiftLogRepository {
         default_tracking_fields: fields,
       })
       .select(
-        "id, scope, owner_id, name, category, cue, default_entry_mode, default_tracking_fields",
+        "id, scope, owner_id, name, category, discipline, tags, cue, default_entry_mode, default_tracking_fields",
       )
       .single();
     if (result.error || !result.data)
       fail("Could not save the exercise", result.error);
     return mapExercise(result.data as ExerciseRow, this.viewerName);
+  }
+
+  async archivePersonalExercise(exerciseId: string) {
+    const result = await this.client
+      .from("exercises")
+      .update({ archived_at: new Date().toISOString() })
+      .eq("id", exerciseId)
+      .eq("scope", "personal")
+      .eq("owner_id", this.viewerId)
+      .select("id")
+      .maybeSingle();
+    if (result.error || !result.data)
+      fail("Could not delete the exercise", result.error);
   }
 
   async addWorkout(
@@ -1715,31 +1773,40 @@ export class LiftLogRepository {
   }
 
   async updateWorkoutItemPrescription(item: WorkoutItem) {
-    const reps = numericRange(item.prescription.reps);
-    const rpe = numericRange(item.prescription.targetRpe);
     const count =
-      item.mode === "sets" ? Math.max(1, item.prescription.sets ?? 1) : 1;
+      item.mode === "sets"
+        ? Math.max(1, item.prescription.sets ?? 1)
+        : item.mode === "intervals"
+          ? Math.max(1, item.prescription.rounds ?? 1)
+          : 1;
+    const sourceEntries = item.prescription.entries?.length
+      ? item.prescription.entries
+      : Array.from({ length: count }, () => item.prescription);
     const entries =
       item.mode === "none"
         ? []
-        : Array.from({ length: count }, () => ({
+        : sourceEntries.slice(0, count).map((entry) => {
+            const reps = numericRange(entry.reps ?? item.prescription.reps);
+            const rpe = numericRange(entry.targetRpe ?? item.prescription.targetRpe);
+            return {
             reps_min: reps.minimum,
             reps_max: reps.maximum,
-            load_kg: item.prescription.loadKg ?? null,
-            duration_seconds: item.prescription.durationMinutes
-              ? Math.round(item.prescription.durationMinutes * 60)
+            load_kg: entry.loadKg ?? item.prescription.loadKg ?? null,
+            duration_seconds: (entry.durationMinutes ?? item.prescription.durationMinutes)
+              ? Math.round((entry.durationMinutes ?? item.prescription.durationMinutes ?? 0) * 60)
               : null,
-            distance_metres: item.prescription.distance
-              ? item.prescription.distance *
-                (item.prescription.distanceUnit === "km" ? 1000 : 1)
+            distance_metres: (entry.distance ?? item.prescription.distance)
+              ? (entry.distance ?? item.prescription.distance ?? 0) *
+                ((entry.distanceUnit ?? item.prescription.distanceUnit) === "km" ? 1000 : 1)
               : null,
-            rounds: item.prescription.rounds ?? null,
-            work_seconds: item.prescription.workSeconds ?? null,
-            rest_seconds: item.prescription.restSeconds ?? null,
+            rounds: item.mode === "intervals" ? count : entry.rounds ?? item.prescription.rounds ?? null,
+            work_seconds: entry.workSeconds ?? item.prescription.workSeconds ?? null,
+            rest_seconds: entry.restSeconds ?? item.prescription.restSeconds ?? null,
             target_rpe_min: rpe.minimum,
             target_rpe_max: rpe.maximum,
             target_text: item.prescription.targetText ?? null,
-          }));
+          };
+        });
     const result = await this.client.rpc("save_workout_item_prescription", {
       target_item_id: item.id,
       target_cue: item.cue,

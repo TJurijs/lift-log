@@ -29,6 +29,10 @@ test("start and finish actions give immediate feedback and reject repeat clicks"
   );
   assert.match(
     app,
+    /startingScheduleId=\{startingScheduleId\}[\s\S]*loading=\{startingScheduleId === schedule\.id\}[\s\S]*Starting workout…/,
+  );
+  assert.match(
+    app,
     /loading=\{workoutAction === "finishing"\}[\s\S]*Finishing session…/,
   );
   assert.match(

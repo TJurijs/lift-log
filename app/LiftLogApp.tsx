@@ -6,12 +6,14 @@ import {
   CalendarDays,
   CalendarPlus,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleUserRound,
   Clock3,
   Copy,
   Dumbbell,
   FlaskConical,
+  Gauge,
   LayoutDashboard,
   Layers3,
   ListPlus,
@@ -19,7 +21,6 @@ import {
   LockKeyhole,
   LogOut,
   MessageSquareText,
-  MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
@@ -66,10 +67,12 @@ import type {
   CompletedSessionDetail,
   EntryMode,
   Exercise,
+  ExerciseDiscipline,
   OwnProfile,
   OutgoingCoachInvite,
   PendingCoachInvite,
   PlannedWorkout,
+  PrescriptionEntry,
   Program,
   ProgramAssignment,
   ProgramTemplate,
@@ -125,6 +128,7 @@ type ModalName =
   | "prescription"
   | "section"
   | "delete-section"
+  | "delete-exercise"
   | "invite"
   | "assign-program"
   | "program"
@@ -251,12 +255,58 @@ function moveProgramExercise(
   };
 }
 
-function prescriptionLabel(item: WorkoutItem) {
+const KG_PER_LB = 0.45359237;
+
+function formatWeight(valueKg: number, weightUnit: OwnProfile["weightUnit"]) {
+  const displayValue = weightUnit === "lb" ? valueKg / KG_PER_LB : valueKg;
+  return Number(displayValue.toFixed(weightUnit === "lb" ? 1 : 2)).toString();
+}
+
+function weightInputValue(valueKg: string, weightUnit: OwnProfile["weightUnit"]) {
+  const parsed = Number(valueKg);
+  return valueKg.trim() && Number.isFinite(parsed)
+    ? formatWeight(parsed, weightUnit)
+    : valueKg;
+}
+
+function weightKgValue(value: string, weightUnit: OwnProfile["weightUnit"]) {
+  const parsed = Number(value);
+  if (!value.trim() || !Number.isFinite(parsed)) return value;
+  const kilograms = weightUnit === "lb" ? parsed * KG_PER_LB : parsed;
+  return Number(kilograms.toFixed(3)).toString();
+}
+
+function prescriptionEntries(item: WorkoutItem) {
+  return item.prescription.entries?.length
+    ? item.prescription.entries
+    : [item.prescription];
+}
+
+function prescriptionEntryVaries(
+  item: WorkoutItem,
+  field: keyof PrescriptionEntry,
+) {
+  const values = prescriptionEntries(item).map((entry) => entry[field]);
+  return values.some((value) => value !== values[0]);
+}
+
+function prescriptionLabel(
+  item: WorkoutItem,
+  weightUnit: OwnProfile["weightUnit"] = "kg",
+) {
   const target = item.prescription;
   const parts: string[] = [];
   if (item.mode === "sets") {
-    parts.push(`${target.sets ?? 1} × ${target.reps ?? "open"}`);
-    if (target.loadKg !== undefined) parts.push(`${target.loadKg} kg`);
+    const variedReps = prescriptionEntryVaries(item, "reps");
+    const variedLoad = prescriptionEntryVaries(item, "loadKg");
+    parts.push(
+      variedReps
+        ? `${target.sets ?? 1} sets`
+        : `${target.sets ?? 1} × ${target.reps ?? "open"}`,
+    );
+    if (variedLoad) parts.push("varied load");
+    else if (target.loadKg !== undefined)
+      parts.push(`${formatWeight(target.loadKg, weightUnit)} ${weightUnit}`);
   } else if (item.mode === "intervals") {
     parts.push(`${target.rounds ?? 1} rounds`);
     if (target.workSeconds !== undefined)
@@ -269,7 +319,6 @@ function prescriptionLabel(item: WorkoutItem) {
     if (target.distance !== undefined)
       parts.push(`${target.distance} ${target.distanceUnit ?? "m"}`);
   }
-  if (target.targetRpe) parts.push(`RPE ${target.targetRpe}`);
   return parts.join(" · ") || (item.mode === "none" ? "Instructions" : "Open");
 }
 
@@ -292,14 +341,14 @@ function starterSetLogs(
     .flatMap((section) => section.items)
     .forEach((item) => {
       if (item.mode === "sets") {
-        logs[item.id] = Array.from(
-          { length: item.prescription.sets ?? 1 },
-          () => ({
-            reps: item.prescription.reps?.split("–")[0] ?? "",
+        const entries = item.prescription.entries?.length
+          ? item.prescription.entries
+          : Array.from({ length: item.prescription.sets ?? 1 }, () => item.prescription);
+        logs[item.id] = entries.map((entry) => ({
+            reps: entry.reps?.split("–")[0] ?? item.prescription.reps?.split("–")[0] ?? "",
             load: "",
             rpe: "",
-          }),
-        );
+          }));
       }
     });
   return logs;
@@ -362,6 +411,8 @@ export default function LiftLogApp({
   const [personalExercises, setPersonalExercises] = useState<Exercise[]>(
     initialWorkspace.personalExercises,
   );
+  const [exerciseDeleteTarget, setExerciseDeleteTarget] =
+    useState<Exercise | null>(null);
   const [exerciseScope, setExerciseScope] = useState<"global" | "personal">(
     "global",
   );
@@ -378,6 +429,9 @@ export default function LiftLogApp({
   const [workoutAction, setWorkoutAction] = useState<
     "starting" | "finishing" | null
   >(null);
+  const [startingScheduleId, setStartingScheduleId] = useState<string | null>(
+    null,
+  );
   const [scheduleStatusAction, setScheduleStatusAction] = useState<
     { id: string; status: "planned" | "skipped" } | null
   >(null);
@@ -769,6 +823,7 @@ export default function LiftLogApp({
     if (workoutActionRef.current) return;
     workoutActionRef.current = "starting";
     setWorkoutAction("starting");
+    setStartingScheduleId(schedule.id);
     try {
       const detailedSchedule = await ensureScheduledWorkoutDetails(schedule);
       const workout = detailedSchedule.workout;
@@ -804,6 +859,7 @@ export default function LiftLogApp({
     } finally {
       workoutActionRef.current = null;
       setWorkoutAction(null);
+      setStartingScheduleId(null);
     }
   }
 
@@ -931,16 +987,22 @@ export default function LiftLogApp({
 
   async function updateWorkoutSettings(title: string, durationMinutes: number) {
     if (!selectedWorkout) return;
-    if (repository)
+    const syncQuickWorkoutTitle = program?.contentType === "quick_workout";
+    if (repository) {
       await repository.updateWorkout(
         selectedWorkout.id,
         title,
         durationMinutes,
       );
+      if (syncQuickWorkoutTitle)
+        await repository.updateProgramTitle(program.id, title);
+    }
     setProgram((previous) =>
       previous
         ? {
             ...previous,
+            title:
+              previous.contentType === "quick_workout" ? title : previous.title,
             weeks: previous.weeks.map((week) => ({
               ...week,
               workouts: week.workouts.map((workout) =>
@@ -954,6 +1016,17 @@ export default function LiftLogApp({
     );
     setModal(null);
     notify("Workout details updated");
+  }
+
+  async function updateProgramTitle(title: string) {
+    if (!program) return;
+    const nextTitle = title.trim();
+    if (!nextTitle || nextTitle === program.title) return;
+    if (repository) await repository.updateProgramTitle(program.id, nextTitle);
+    setProgram((previous) =>
+      previous ? { ...previous, title: nextTitle } : previous,
+    );
+    notify("Program name updated");
   }
 
   async function addExerciseToWorkout(
@@ -1530,6 +1603,19 @@ export default function LiftLogApp({
     setExerciseScope("personal");
     setModal(null);
     notify(`${name} saved to your library`);
+  }
+
+  async function deletePersonalExercise(exercise: Exercise) {
+    if (exercise.scope !== "personal") {
+      throw new Error("Only exercises in My exercises can be deleted.");
+    }
+    if (repository) await repository.archivePersonalExercise(exercise.id);
+    setPersonalExercises((previous) =>
+      previous.filter((candidate) => candidate.id !== exercise.id),
+    );
+    setExerciseDeleteTarget(null);
+    setModal(null);
+    notify(`${exercise.name} removed from your library`);
   }
 
   async function publishProgram(description: string) {
@@ -2569,6 +2655,7 @@ export default function LiftLogApp({
         {activeView === "today" && completedWorkoutView && (
           <CompletedWorkoutView
             state={completedWorkoutView}
+            weightUnit={workspace.profile.weightUnit}
             program={
               programCatalog.find(
                 (candidate) =>
@@ -2590,6 +2677,7 @@ export default function LiftLogApp({
           <TodayView
             program={activeSession ? todayProgram : previewProgram}
             workout={activeSession ? todayWorkout! : workoutPreviewSchedule!.workout}
+            weightUnit={workspace.profile.weightUnit}
             timing={activeSession ? workoutFocus!.timing : "future"}
             plannedDate={
               activeSession
@@ -2688,6 +2776,7 @@ export default function LiftLogApp({
             hasPublishedProgram={availablePrograms.some(
               (candidate) => candidate.versionStatus === "published",
             )}
+            startingScheduleId={startingScheduleId}
             onNavigate={navigate}
             onSchedule={() => openSchedule()}
             onStart={(schedule) => void startWorkout(schedule)}
@@ -2707,6 +2796,7 @@ export default function LiftLogApp({
             }
             mutationPending={builderMutationPending}
             viewerId={viewer.id}
+            weightUnit={workspace.profile.weightUnit}
             isAvailable={(workspace.availableProgramIds ?? []).includes(
               program.id,
             )}
@@ -2780,6 +2870,7 @@ export default function LiftLogApp({
                   }
                 : undefined
             }
+            onRenameProgram={updateProgramTitle}
             onEditWorkout={() => setModal("workout-settings")}
             onSchedule={
               program.athleteId === viewer.id &&
@@ -2877,6 +2968,10 @@ export default function LiftLogApp({
             onScope={setExerciseScope}
             onQuery={setExerciseQuery}
             onAdd={() => setModal("exercise")}
+            onDelete={(exercise) => {
+              setExerciseDeleteTarget(exercise);
+              setModal("delete-exercise");
+            }}
           />
         )}
         {activeView === "coaching" && (
@@ -2918,6 +3013,16 @@ export default function LiftLogApp({
           onSave={addPersonalExercise}
         />
       )}
+      {modal === "delete-exercise" && exerciseDeleteTarget && (
+        <DeleteExerciseModal
+          exercise={exerciseDeleteTarget}
+          onClose={() => {
+            setExerciseDeleteTarget(null);
+            setModal(null);
+          }}
+          onDelete={() => deletePersonalExercise(exerciseDeleteTarget)}
+        />
+      )}
       {modal === "workout" && (
         <WorkoutModal onClose={() => setModal(null)} onSave={addWorkout} />
       )}
@@ -2931,6 +3036,7 @@ export default function LiftLogApp({
       {modal === "prescription" && prescriptionItem && (
         <PrescriptionModal
           item={prescriptionItem}
+          weightUnit={workspace.profile.weightUnit}
           onClose={() => void cancelPrescription()}
           onSave={savePrescription}
         />
@@ -3132,20 +3238,25 @@ function Sidebar({
 function PageHeader({
   eyebrow,
   title,
+  titleAction,
   description,
   children,
 }: {
   eyebrow: string;
   title: string;
-  description: string;
+  titleAction?: React.ReactNode;
+  description?: string;
   children?: React.ReactNode;
 }) {
   return (
     <header className="page-header">
       <div>
         <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
-        <p>{description}</p>
+        <div className="page-title-row">
+          <h1>{title}</h1>
+          {titleAction}
+        </div>
+        {description && <p>{description}</p>}
       </div>
       {children && <div className="page-actions">{children}</div>}
     </header>
@@ -3156,6 +3267,7 @@ function NextWorkoutsView({
   schedules,
   hasProgram,
   hasPublishedProgram,
+  startingScheduleId,
   onNavigate,
   onSchedule,
   onStart,
@@ -3166,6 +3278,7 @@ function NextWorkoutsView({
   schedules: ScheduledWorkout[];
   hasProgram: boolean;
   hasPublishedProgram: boolean;
+  startingScheduleId: string | null;
   onNavigate: (view: ViewName) => void;
   onSchedule: () => void;
   onStart: (schedule: ScheduledWorkout) => void;
@@ -3227,13 +3340,15 @@ function NextWorkoutsView({
                     Set back to planned
                   </AsyncButton>
                 ) : (
-                  <button
+                  <AsyncButton
                     className="button primary"
+                    loading={startingScheduleId === schedule.id}
+                    loadingLabel="Starting workout…"
+                    icon={Activity}
                     onClick={() => onStart(schedule)}
                   >
-                    <Activity size={15} />
                     Start workout
-                  </button>
+                  </AsyncButton>
                 )}
               </article>
             );
@@ -3291,6 +3406,7 @@ function NextWorkoutsView({
 function TodayView({
   program,
   workout,
+  weightUnit,
   timing,
   plannedDate,
   workoutStarted,
@@ -3321,6 +3437,7 @@ function TodayView({
 }: {
   program?: Program;
   workout: PlannedWorkout;
+  weightUnit: OwnProfile["weightUnit"];
   timing: "active" | "overdue" | "today" | "future";
   plannedDate?: string;
   workoutStarted: boolean;
@@ -3528,6 +3645,7 @@ function TodayView({
                   key={item.id}
                   item={item}
                   active={workoutStarted}
+                  weightUnit={weightUnit}
                   setLogs={setLogs[item.id] ?? []}
                   resultLog={resultLogs[item.id] ?? {}}
                   onUpdateSet={onUpdateSet}
@@ -3552,19 +3670,11 @@ function TodayView({
           {workoutStarted && (
             <div className="session-finish">
               <label>
-                <span>How did the whole session feel?</span>
-                <div className="rpe-selector">
-                  {[5, 6, 7, 8, 9, 10].map((rpe) => (
-                    <button
-                      key={rpe}
-                      className={sessionRpe === String(rpe) ? "selected" : ""}
-                      onClick={() => onSessionRpe(String(rpe))}
-                    >
-                      {rpe}
-                    </button>
-                  ))}
-                </div>
+                <span>Session RPE</span>
+                <small>How did the whole session feel?</small>
+                <RpeChoiceButtons value={sessionRpe} onChange={onSessionRpe} />
               </label>
+              <RpeLegend />
               <label>
                 <span>
                   Session notes <em>optional</em>
@@ -3592,10 +3702,220 @@ function TodayView({
   );
 }
 
+const rpeOptions = [
+  { value: "5", label: "Light", detail: "5+ reps left" },
+  { value: "6", label: "Easy", detail: "about 4 reps left" },
+  { value: "7", label: "Moderate", detail: "about 3 reps left" },
+  { value: "8", label: "Hard", detail: "about 2 reps left" },
+  { value: "9", label: "Very hard", detail: "about 1 rep left" },
+  { value: "10", label: "Max", detail: "no reps left" },
+] as const;
+
+function rpeOption(value: string) {
+  return rpeOptions.find((option) => option.value === value);
+}
+
+function wholeRpe(value: string) {
+  const values = value
+    .split(/[–-]/)
+    .map((part) => Number(part.trim()))
+    .filter((part) => Number.isFinite(part));
+  const selected = values.at(-1);
+  return selected && selected >= 5 && selected <= 10 ? String(selected) : "";
+}
+
+function rpeTone(value: string) {
+  const rpe = Number(wholeRpe(value));
+  if (rpe <= 6) return "easy";
+  if (rpe === 7) return "moderate";
+  if (rpe === 8) return "hard";
+  return "very-hard";
+}
+
+function RpeLegend() {
+  return (
+    <details className="rpe-legend">
+      <summary><Gauge size={14} /> RPE guide</summary>
+      <div>
+        {rpeOptions.map((option) => (
+          <span key={option.value}>
+            <strong>{option.value}</strong>
+            <b>{option.label}</b>
+            <small>{option.detail}</small>
+          </span>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function RpeChoiceButtons({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="rpe-selector" aria-label="Select session RPE">
+      {rpeOptions.map((option) => (
+        <button
+          type="button"
+          key={option.value}
+          className={cn(value === option.value && "selected", `rpe-${rpeTone(option.value)}`)}
+          onClick={() => onChange(option.value)}
+          aria-label={`RPE ${option.value}: ${option.label}, ${option.detail}`}
+        >
+          <strong>{option.value}</strong>
+          <span>{option.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const plannedRpeOptions = [
+  { value: "", label: "No planned effort", detail: "Athlete chooses effort" },
+  { value: "6", label: "Easy", detail: "about 4 reps left" },
+  { value: "7", label: "Moderate", detail: "about 3 reps left" },
+  { value: "8", label: "Hard", detail: "about 2 reps left" },
+  { value: "9", label: "Very hard", detail: "about 1 rep left" },
+  { value: "10", label: "Max", detail: "no reps left" },
+] as const;
+
+function PlannedRpeSelect({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = plannedRpeOptions.find((option) => option.value === value);
+  return (
+    <div className="planned-rpe-select rpe-select">
+      <button
+        type="button"
+        disabled={disabled}
+        className={cn("rpe-select-trigger", value && "selected", value && `rpe-${rpeTone(value)}`)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((previous) => !previous)}
+      >
+        <Gauge size={13} />
+        <span>
+          {current?.value ? `${current.value} · ${current.label}` : "No planned effort"}
+        </span>
+        <ChevronDown size={12} />
+      </button>
+      {open && !disabled && (
+        <div className="rpe-select-menu" role="listbox" aria-label="Planned effort">
+          {plannedRpeOptions.map((option) => (
+            <button
+              type="button"
+              key={option.value || "none"}
+              role="option"
+              aria-selected={value === option.value}
+              className={cn(value === option.value && "selected", option.value && `rpe-${rpeTone(option.value)}`)}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              <Gauge size={13} />
+              <strong>{option.value || "—"}</strong>
+              <span>
+                <b>{option.label}</b>
+                <small>{option.detail}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RpeSelect({
+  disabled,
+  value,
+  onChange,
+}: {
+  disabled: boolean;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = rpeOption(value);
+  return (
+    <div className="rpe-select">
+      <button
+        type="button"
+        disabled={disabled}
+        className={cn("rpe-select-trigger", value && "selected", value && `rpe-${rpeTone(value)}`)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((previous) => !previous)}
+      >
+        <Gauge size={13} />
+        <span>{current ? current.value : "—"}</span>
+        <ChevronDown size={12} />
+      </button>
+      {open && !disabled && (
+        <div className="rpe-select-menu" role="listbox" aria-label="Actual RPE">
+          {rpeOptions.map((option) => (
+            <button
+              type="button"
+              key={option.value}
+              role="option"
+              aria-selected={value === option.value}
+              className={cn(value === option.value && "selected", `rpe-${rpeTone(option.value)}`)}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              <Gauge size={13} />
+              <strong>{option.value}</strong>
+              <span>
+                <b>{option.label}</b>
+                <small>{option.detail}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TargetRpeBadge({ value }: { value: string }) {
+  const normalizedValue = wholeRpe(value) || value;
+  return (
+    <span className="target-rpe-badge">
+      <Gauge size={13} />
+      <small>Target</small>
+      <strong className={`rpe-${rpeTone(normalizedValue)}`}>RPE {normalizedValue}</strong>
+    </span>
+  );
+}
+
+function workoutLogFields(mode: EntryMode): TrackingField[] {
+  if (mode === "sets") return ["reps", "load", "rpe"];
+  if (mode === "intervals")
+    return ["rounds", "duration", "distance", "heartRate", "rpe"];
+  if (mode === "result") return ["duration", "distance", "heartRate", "rpe"];
+  return [];
+}
+
 function WorkoutLogItem({
   item,
   active,
+  weightUnit = "kg",
   showSetControls = true,
+  builderPreview = false,
   setLogs,
   resultLog,
   onUpdateSet,
@@ -3605,7 +3925,9 @@ function WorkoutLogItem({
 }: {
   item: WorkoutItem;
   active: boolean;
+  weightUnit?: OwnProfile["weightUnit"];
   showSetControls?: boolean;
+  builderPreview?: boolean;
   setLogs: SetLog[];
   resultLog: Record<string, string>;
   onUpdateSet: (
@@ -3619,6 +3941,18 @@ function WorkoutLogItem({
   onUpdateResult: (itemId: string, field: string, value: string) => void;
 }) {
   const note = item.cue || item.prescription.targetText || "";
+  const fields = workoutLogFields(item.mode);
+  const plannedRpeVaries = prescriptionEntryVaries(item, "targetRpe");
+  const prescriptionSummary = (
+    <div className="exercise-prescription">
+      <span>{prescriptionLabel(item, weightUnit)}</span>
+      {plannedRpeVaries ? (
+        <span className="per-entry-rpe">Planned RPE per {item.mode === "intervals" ? "round" : "set"}</span>
+      ) : item.prescription.targetRpe ? (
+        <TargetRpeBadge value={item.prescription.targetRpe} />
+      ) : null}
+    </div>
+  );
   if (item.mode === "none")
     return (
       <div className="instruction-item">
@@ -3630,27 +3964,34 @@ function WorkoutLogItem({
       </div>
     );
   return (
-    <div className="log-item">
-      <div className="exercise-heading">
-        <div>
-          <strong>{item.title}</strong>
+      <div className="log-item">
+      <div className={cn("exercise-heading", builderPreview && "builder-exercise-heading")}>
+        <div className={builderPreview ? "builder-exercise-title" : undefined}>
+          {builderPreview ? (
+            <div className="builder-exercise-title-row">
+              <strong>{item.title}</strong>
+              {prescriptionSummary}
+            </div>
+          ) : (
+            <strong>{item.title}</strong>
+          )}
           <small>{note}</small>
         </div>
-        <span>{prescriptionLabel(item)}</span>
+        {!builderPreview && prescriptionSummary}
       </div>
       {item.mode === "sets" && (
-        <div className={cn("set-table", `tracking-${item.fields.length}`)}>
+        <div className={cn("set-table", `tracking-${fields.length}`)}>
           <div className="set-header">
             <span>Set</span>
-            {item.fields.includes("reps") && <span>Reps</span>}
-            {item.fields.includes("load") && <span>Load kg</span>}
-            {item.fields.includes("rpe") && <span>RPE</span>}
+            {fields.includes("reps") && <span>Reps</span>}
+            {fields.includes("load") && <span>Load {weightUnit}</span>}
+            {fields.includes("rpe") && <span>Actual RPE</span>}
             <span />
           </div>
           {setLogs.map((row, index) => (
             <div className="set-row" key={index}>
               <span>{index + 1}</span>
-              {item.fields.includes("reps") && (
+              {fields.includes("reps") && (
                 <input
                   disabled={!active}
                   inputMode="numeric"
@@ -3661,26 +4002,27 @@ function WorkoutLogItem({
                   placeholder="—"
                 />
               )}
-              {item.fields.includes("load") && (
+              {fields.includes("load") && (
                 <input
                   disabled={!active}
                   inputMode="decimal"
-                  value={row.load}
+                  value={weightInputValue(row.load, weightUnit)}
                   onChange={(event) =>
-                    onUpdateSet(item.id, index, "load", event.target.value)
+                    onUpdateSet(
+                      item.id,
+                      index,
+                      "load",
+                      weightKgValue(event.target.value, weightUnit),
+                    )
                   }
                   placeholder="—"
                 />
               )}
-              {item.fields.includes("rpe") && (
-                <input
+              {fields.includes("rpe") && (
+                <RpeSelect
                   disabled={!active}
-                  inputMode="decimal"
                   value={row.rpe}
-                  onChange={(event) =>
-                    onUpdateSet(item.id, index, "rpe", event.target.value)
-                  }
-                  placeholder="—"
+                  onChange={(value) => onUpdateSet(item.id, index, "rpe", value)}
                 />
               )}
               {showSetControls ? (
@@ -3706,7 +4048,7 @@ function WorkoutLogItem({
       )}
       {(item.mode === "result" || item.mode === "intervals") && (
         <div className="result-fields">
-          {item.mode === "intervals" && item.fields.includes("rounds") && (
+          {item.mode === "intervals" && fields.includes("rounds") && (
             <ResultInput
               label="Rounds"
               unit="rounds"
@@ -3715,7 +4057,7 @@ function WorkoutLogItem({
               onChange={(value) => onUpdateResult(item.id, "rounds", value)}
             />
           )}
-          {item.fields.includes("duration") && (
+          {fields.includes("duration") && (
             <ResultInput
               label="Duration"
               unit="min"
@@ -3724,7 +4066,7 @@ function WorkoutLogItem({
               onChange={(value) => onUpdateResult(item.id, "duration", value)}
             />
           )}
-          {item.fields.includes("distance") && (
+          {fields.includes("distance") && (
             <ResultInput
               label="Distance"
               unit="km"
@@ -3733,7 +4075,7 @@ function WorkoutLogItem({
               onChange={(value) => onUpdateResult(item.id, "distance", value)}
             />
           )}
-          {item.fields.includes("heartRate") && (
+          {fields.includes("heartRate") && (
             <ResultInput
               label="Avg HR"
               unit="bpm"
@@ -3742,18 +4084,38 @@ function WorkoutLogItem({
               onChange={(value) => onUpdateResult(item.id, "heartRate", value)}
             />
           )}
-          {item.fields.includes("rpe") && (
-            <ResultInput
-              label="RPE"
-              unit="/ 10"
+          {fields.includes("rpe") && (
+            <RpeResultInput
+              label="Actual RPE"
               disabled={!active}
               value={resultLog.rpe ?? ""}
-              onChange={(value) => onUpdateResult(item.id, "rpe", value)}
+              onChange={(value) =>
+                onUpdateResult(item.id, "rpe", value)
+              }
             />
           )}
         </div>
       )}
     </div>
+  );
+}
+
+function RpeResultInput({
+  label,
+  disabled,
+  value,
+  onChange,
+}: {
+  label: string;
+  disabled: boolean;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="result-input rpe-result-input">
+      <span>{label}</span>
+      <RpeSelect disabled={disabled} value={value} onChange={onChange} />
+    </label>
   );
 }
 
@@ -3792,6 +4154,7 @@ function ProgramView({
   action,
   mutationPending,
   viewerId,
+  weightUnit,
   isAvailable,
   currentWeek,
   selectedWeek,
@@ -3819,6 +4182,7 @@ function ProgramView({
   onCreateDraft,
   onBack,
   onAssignProgram,
+  onRenameProgram,
   onEditWorkout,
   onSchedule,
 }: {
@@ -3826,6 +4190,7 @@ function ProgramView({
   action: Exclude<ProgramAction, null>["kind"] | null;
   mutationPending: boolean;
   viewerId: string;
+  weightUnit: OwnProfile["weightUnit"];
   isAvailable: boolean;
   currentWeek: Program["weeks"][number];
   selectedWeek: number;
@@ -3857,11 +4222,13 @@ function ProgramView({
   onCreateDraft: () => void;
   onBack: () => void;
   onAssignProgram?: () => void;
+  onRenameProgram: (title: string) => Promise<void>;
   onEditWorkout: () => void;
   onSchedule?: () => void;
 }) {
   const [pickerQuery, setPickerQuery] = useState("");
   const [description, setDescription] = useState(program.description);
+  const [renamingProgram, setRenamingProgram] = useState(false);
   const [localWeekAction, setLocalWeekAction] = useState<
     "blank" | "copy" | null
   >(null);
@@ -3982,7 +4349,23 @@ function ProgramView({
               : "Your program"
             : `Planning for ${program.ownerName}`
         }
-        title={program.title}
+        title={isQuickWorkout ? selectedWorkout?.title ?? program.title : program.title}
+        titleAction={
+          editable ? (
+            <button
+              className="title-edit-button"
+              onClick={
+                isQuickWorkout
+                  ? onEditWorkout
+                  : () => setRenamingProgram(true)
+              }
+              aria-label={`Rename ${isQuickWorkout ? "workout" : "program"}`}
+              title={`Rename ${isQuickWorkout ? "workout" : "program"}`}
+            >
+              <Pencil size={16} />
+            </button>
+          ) : undefined
+        }
         description={
           program.description ||
           (isQuickWorkout
@@ -4210,27 +4593,22 @@ function ProgramView({
               <>
                 <div className="editor-heading">
                   <div>
-                    <p className="eyebrow">
-                      {isQuickWorkout
-                        ? "Workout"
-                        : `Workout ${
-                            currentWeek.workouts.findIndex(
-                              (item) => item.id === selectedWorkout.id,
-                            ) + 1
-                          }`}
-                    </p>
-                    <h2>{selectedWorkout.title}</h2>
+                    <div className="editor-title-row">
+                      <h2>{selectedWorkout.title}</h2>
+                      {editable && (
+                        <button
+                          className="title-edit-button"
+                          onClick={onEditWorkout}
+                          aria-label="Rename workout"
+                          title="Rename workout"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
+                    </div>
                     <p>Estimated {selectedWorkout.durationMinutes} minutes</p>
                   </div>
                   <div className="editor-actions">
-                    <button
-                      className="icon-button"
-                      disabled={!editable}
-                      onClick={onEditWorkout}
-                      aria-label="Edit workout settings"
-                    >
-                      <Settings2 size={18} />
-                    </button>
                     {editable && !isQuickWorkout && (
                       <button
                         className="icon-button danger"
@@ -4257,6 +4635,7 @@ function ProgramView({
                           selected={targetSection?.id === section.id}
                           editable={editable}
                           dragEnabled={dragEnabled}
+                          weightUnit={weightUnit}
                           canDelete={section.kind !== "main"}
                           onSelect={() => onSelectSection(section.id)}
                           onEdit={() => onEditSection(section)}
@@ -4268,7 +4647,10 @@ function ProgramView({
                     </div>
                   </SortableContext>
                 ) : (
-                  <ProgramWorkoutDetails workout={selectedWorkout} />
+                  <ProgramWorkoutDetails
+                    workout={selectedWorkout}
+                    weightUnit={weightUnit}
+                  />
                 )}
                 {editable && (
                   <button
@@ -4333,11 +4715,28 @@ function ProgramView({
           )}
         </DndContext>
       </div>
+      {renamingProgram && !isQuickWorkout && (
+        <RenameProgramModal
+          label="program"
+          title={program.title}
+          onClose={() => setRenamingProgram(false)}
+          onSave={async (title) => {
+            await onRenameProgram(title);
+            setRenamingProgram(false);
+          }}
+        />
+      )}
     </>
   );
 }
 
-function ProgramWorkoutDetails({ workout }: { workout: PlannedWorkout }) {
+function ProgramWorkoutDetails({
+  workout,
+  weightUnit,
+}: {
+  workout: PlannedWorkout;
+  weightUnit: OwnProfile["weightUnit"];
+}) {
   return (
     <div className="program-workout-details">
       {workout.sections.map((section) => (
@@ -4351,6 +4750,7 @@ function ProgramWorkoutDetails({ workout }: { workout: PlannedWorkout }) {
               key={item.id}
               item={item}
               active={false}
+              weightUnit={weightUnit}
               showSetControls={false}
               setLogs={programPreviewSetLogs(item)}
               resultLog={programPreviewResultLog(item)}
@@ -4368,10 +4768,13 @@ function ProgramWorkoutDetails({ workout }: { workout: PlannedWorkout }) {
 
 function programPreviewSetLogs(item: WorkoutItem): SetLog[] {
   if (item.mode !== "sets") return [];
-  return Array.from({ length: item.prescription.sets ?? 1 }, () => ({
-    reps: item.prescription.reps?.split("–")[0] ?? "",
-    load: item.prescription.loadKg?.toString() ?? "",
-    rpe: item.prescription.targetRpe ?? "",
+  const entries = item.prescription.entries?.length
+    ? item.prescription.entries
+    : Array.from({ length: item.prescription.sets ?? 1 }, () => item.prescription);
+  return entries.map((entry) => ({
+    reps: entry.reps?.split("–")[0] ?? item.prescription.reps?.split("–")[0] ?? "",
+    load: (entry.loadKg ?? item.prescription.loadKg)?.toString() ?? "",
+    rpe: "",
   }));
 }
 
@@ -4381,7 +4784,7 @@ function programPreviewResultLog(item: WorkoutItem): Record<string, string> {
     rounds: prescription.rounds?.toString() ?? "",
     duration: prescription.durationMinutes?.toString() ?? "",
     distance: prescription.distance?.toString() ?? "",
-    rpe: prescription.targetRpe ?? "",
+    rpe: "",
   };
 }
 
@@ -4498,6 +4901,7 @@ function SortableBuilderSection({
   selected,
   editable,
   dragEnabled,
+  weightUnit,
   canDelete,
   onSelect,
   onEdit,
@@ -4509,6 +4913,7 @@ function SortableBuilderSection({
   selected: boolean;
   editable: boolean;
   dragEnabled: boolean;
+  weightUnit: OwnProfile["weightUnit"];
   canDelete: boolean;
   onSelect: () => void;
   onEdit: () => void;
@@ -4553,37 +4958,40 @@ function SortableBuilderSection({
         ) : (
           <span className="drag-handle-placeholder" aria-hidden />
         )}
-        <button className="section-title-button" onClick={onSelect}>
-          <span>{section.title}</span>
-          <small>{section.kind ?? "custom"}</small>
-        </button>
-        {editable && (
-          <div className="section-actions">
-            <button
-              className="icon-button"
-              onClick={onEdit}
-              aria-label={`Edit ${section.title}`}
-              title="Edit section"
-            >
-              <Pencil size={14} />
-            </button>
-            {canDelete && (
+        <div className="section-title-group">
+          <button className="section-title-button" onClick={onSelect}>
+            <span>{section.title}</span>
+            <small>{section.kind ?? "custom"}</small>
+          </button>
+          {editable && (
+            <div className="section-actions">
               <button
-                className="icon-button danger"
-                onClick={onDelete}
-                aria-label={`Delete ${section.title}`}
-                title="Delete section"
+                className="section-action"
+                onClick={onEdit}
+                aria-label={`Edit ${section.title}`}
+                title="Edit section"
               >
-                <Trash2 size={14} />
+                <Pencil size={12} />
               </button>
-            )}
-          </div>
-        )}
+              {canDelete && (
+                <button
+                  className="section-action danger"
+                  onClick={onDelete}
+                  aria-label={`Delete ${section.title}`}
+                  title={`Delete ${section.title} section`}
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
       <SortableExerciseList
         section={section}
         editable={editable}
         dragEnabled={dragEnabled}
+        weightUnit={weightUnit}
         onEditItem={onEditItem}
         onRemoveItem={onRemoveItem}
       />
@@ -4595,12 +5003,14 @@ function SortableExerciseList({
   section,
   editable,
   dragEnabled,
+  weightUnit,
   onEditItem,
   onRemoveItem,
 }: {
   section: WorkoutSection;
   editable: boolean;
   dragEnabled: boolean;
+  weightUnit: OwnProfile["weightUnit"];
   onEditItem: (item: WorkoutItem) => void;
   onRemoveItem: (id: string) => void;
 }) {
@@ -4627,6 +5037,7 @@ function SortableExerciseList({
               sectionId={section.id}
               editable={editable}
               dragEnabled={dragEnabled}
+              weightUnit={weightUnit}
               onEdit={() => onEditItem(item)}
               onRemove={() => onRemoveItem(item.id)}
             />
@@ -4649,6 +5060,7 @@ function SortableExerciseItem({
   sectionId,
   editable,
   dragEnabled,
+  weightUnit,
   onEdit,
   onRemove,
 }: {
@@ -4657,6 +5069,7 @@ function SortableExerciseItem({
   sectionId: string;
   editable: boolean;
   dragEnabled: boolean;
+  weightUnit: OwnProfile["weightUnit"];
   onEdit: () => void;
   onRemove: () => void;
 }) {
@@ -4700,7 +5113,9 @@ function SortableExerciseItem({
         <WorkoutLogItem
           item={item}
           active={false}
+          weightUnit={weightUnit}
           showSetControls={false}
+          builderPreview
           setLogs={programPreviewSetLogs(item)}
           resultLog={programPreviewResultLog(item)}
           onUpdateSet={() => undefined}
@@ -5602,10 +6017,12 @@ function CalendarView({
 
 function completedEntryLabel(
   entry: CompletedSessionDetail["items"][number]["entries"][number],
+  weightUnit: OwnProfile["weightUnit"] = "kg",
 ) {
   const parts: string[] = [];
   if (entry.reps !== undefined) parts.push(`${entry.reps} reps`);
-  if (entry.loadKg !== undefined) parts.push(`${entry.loadKg} kg`);
+  if (entry.loadKg !== undefined)
+    parts.push(`${formatWeight(entry.loadKg, weightUnit)} ${weightUnit}`);
   if (entry.durationMinutes !== undefined)
     parts.push(`${entry.durationMinutes} min`);
   if (entry.distanceKm !== undefined) parts.push(`${entry.distanceKm} km`);
@@ -5618,10 +6035,12 @@ function completedEntryLabel(
 function CompletedWorkoutView({
   state,
   program,
+  weightUnit,
   onBack,
 }: {
   state: CompletedWorkoutViewState;
   program?: Program;
+  weightUnit: OwnProfile["weightUnit"];
   onBack: () => void;
 }) {
   const dateLabel = new Date(`${state.session.date}T12:00:00`).toLocaleDateString(
@@ -5699,7 +6118,7 @@ function CompletedWorkoutView({
                               ? `Set ${entry.position + 1}`
                               : "Result"}
                           </small>
-                          <strong>{completedEntryLabel(entry)}</strong>
+                          <strong>{completedEntryLabel(entry, weightUnit)}</strong>
                           {entry.note && <span>{entry.note}</span>}
                         </div>
                       ))}
@@ -5729,6 +6148,19 @@ function CompletedWorkoutView({
   );
 }
 
+function inferredExerciseDiscipline(exercise: Exercise): ExerciseDiscipline {
+  if (exercise.discipline) return exercise.discipline;
+  if (exercise.category === "Weightlifting") return "weightlifting";
+  if (
+    ["Functional fitness", "Gymnastics", "Conditioning", "Cardio"].includes(
+      exercise.category,
+    )
+  ) {
+    return "functional";
+  }
+  return "gym";
+}
+
 function ExercisesView({
   scope,
   query,
@@ -5737,6 +6169,7 @@ function ExercisesView({
   onScope,
   onQuery,
   onAdd,
+  onDelete,
 }: {
   scope: "global" | "personal";
   query: string;
@@ -5745,22 +6178,37 @@ function ExercisesView({
   onScope: (scope: "global" | "personal") => void;
   onQuery: (query: string) => void;
   onAdd: () => void;
+  onDelete: (exercise: Exercise) => void;
 }) {
   const source = scope === "global" ? global : personal;
-  const filtered = source.filter((exercise) =>
-    `${exercise.name} ${exercise.category}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
+  const [disciplineFilter, setDisciplineFilter] = useState<
+    "all" | ExerciseDiscipline
+  >("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+  const filteredByDiscipline = source.filter(
+    (exercise) =>
+      scope !== "global" ||
+      disciplineFilter === "all" ||
+      inferredExerciseDiscipline(exercise) === disciplineFilter,
   );
-  const categories = Array.from(
-    new Set(source.map((exercise) => exercise.category)),
-  ).length;
+  const categoryOptions = Array.from(
+    new Set(filteredByDiscipline.map((exercise) => exercise.category)),
+  ).sort((left, right) => left.localeCompare(right));
+  const activeCategory = categoryOptions.includes(categoryFilter)
+    ? categoryFilter
+    : "all";
+  const filtered = filteredByDiscipline.filter((exercise) =>
+    `${exercise.name} ${exercise.category} ${exercise.tags?.join(" ") ?? ""}`
+      .toLowerCase()
+      .includes(query.toLowerCase()) &&
+    (activeCategory === "all" || exercise.category === activeCategory),
+  );
   return (
     <>
       <PageHeader
         eyebrow="Reusable movements"
         title="Exercise library"
-        description="Start with the shared catalogue, then add exercises that are uniquely yours."
       >
         <button className="button primary" onClick={onAdd}>
           <Plus size={16} />
@@ -5768,48 +6216,89 @@ function ExercisesView({
         </button>
       </PageHeader>
       <div className="library-toolbar panel">
-        <SegmentedTabs
-          label="Exercise sources"
-          value={scope}
-          onChange={onScope}
-          tabs={[
-            { value: "global", label: <>Global library <span>{global.length}</span></>, icon: BookOpen },
-            { value: "personal", label: <>My exercises <span>{personal.length}</span></>, icon: CircleUserRound },
-          ]}
-        />
-        <label className="search-field library-search">
-          <Search size={17} />
-          <input
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
-            placeholder="Search by name or category"
+        <div className="library-filter-tabs">
+          <SegmentedTabs
+            label="Exercise sources"
+            value={scope}
+            onChange={onScope}
+            tabs={[
+              { value: "global", label: <>Global library <span>{global.length}</span></>, icon: BookOpen },
+              { value: "personal", label: <>My exercises <span>{personal.length}</span></>, icon: CircleUserRound },
+            ]}
           />
-        </label>
-      </div>
-      <div className="library-meta">
-        <span>{filtered.length} exercises</span>
-        <span>{categories} categories</span>
-        <button className="text-button">
-          <Settings2 size={14} />
-          Filter
-        </button>
-      </div>
-      <div className="exercise-grid">
-        {filtered.map((exercise) => (
-          <article className="exercise-card panel" key={exercise.id}>
-            <div className="exercise-card-top">
-              <SourceTag source={sourceFromExercise(exercise)} compact />
-              <button
-                className="icon-button"
-                aria-label={`More options for ${exercise.name}`}
-              >
-                <MoreHorizontal size={17} />
-              </button>
+          {scope === "global" && (
+            <SegmentedTabs
+              className="exercise-discipline-tabs"
+              compact
+              label="Exercise discipline"
+              value={disciplineFilter}
+              onChange={(nextDiscipline) => {
+                setDisciplineFilter(nextDiscipline);
+                setCategoryFilter("all");
+              }}
+              tabs={[
+                { value: "all", label: "All" },
+                { value: "weightlifting", label: "Weightlifting" },
+                { value: "gym", label: "Gym" },
+                { value: "functional", label: "Functional" },
+              ]}
+            />
+          )}
+        </div>
+        <div className="library-filter-actions">
+          <label className="search-field library-search">
+            <Search size={17} />
+            <input
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+              placeholder="Search exercises"
+            />
+          </label>
+          <div className="library-category-filter">
+          <button
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded={categoryMenuOpen}
+            onClick={() => setCategoryMenuOpen((open) => !open)}
+          >
+            <Settings2 size={14} />
+            {activeCategory === "all" ? "All categories" : activeCategory}
+            <ChevronDown size={13} />
+          </button>
+          {categoryMenuOpen && (
+            <div className="library-category-menu" role="listbox" aria-label="Filter exercises by category">
+              {["all", ...categoryOptions].map((category) => {
+                const selected = category === activeCategory;
+                return (
+                  <button
+                    type="button"
+                    key={category}
+                    role="option"
+                    aria-selected={selected}
+                    className={selected ? "selected" : undefined}
+                    onClick={() => {
+                      setCategoryFilter(category);
+                      setCategoryMenuOpen(false);
+                    }}
+                  >
+                    {category === "all" ? "All categories" : category}
+                  </button>
+                );
+              })}
             </div>
-            <span className="exercise-category">{exercise.category}</span>
-            <h3>{exercise.name}</h3>
-            <p>{exercise.cue}</p>
-            <div className="exercise-card-footer">
+          )}
+          </div>
+        </div>
+      </div>
+      <div className="library-meta"><span>{filtered.length} exercises</span></div>
+      <div className="exercise-list panel">
+        {filtered.map((exercise) => (
+          <article className="exercise-list-row" key={exercise.id}>
+            <div className="exercise-list-identity">
+              <strong>{exercise.name}</strong>
+              <small>{exercise.category}</small>
+            </div>
+            <div className="exercise-list-tracking">
               <span>
                 <Activity size={14} />
                 {modeLabel(exercise.defaultMode)}
@@ -5819,21 +6308,19 @@ function ExercisesView({
                   ? exercise.defaultFields.join(" · ")
                   : "No tracking"}
               </span>
+              {exercise.scope === "personal" && (
+                <button
+                  className="icon-button danger exercise-list-delete"
+                  aria-label={`Delete ${exercise.name}`}
+                  title="Delete exercise"
+                  onClick={() => onDelete(exercise)}
+                >
+                  <Trash2 size={15} />
+                </button>
+              )}
             </div>
           </article>
         ))}
-        {scope === "personal" && (
-          <button className="add-exercise-card" onClick={onAdd}>
-            <span>
-              <Plus size={21} />
-            </span>
-            <strong>Create a custom exercise</strong>
-            <small>
-              It will be reusable in your own plans and plans you make as a
-              coach.
-            </small>
-          </button>
-        )}
       </div>
     </>
   );
@@ -6727,6 +7214,72 @@ function WorkoutModal({
   );
 }
 
+function RenameProgramModal({
+  label,
+  title,
+  onClose,
+  onSave,
+}: {
+  label: "program" | "workout";
+  title: string;
+  onClose: () => void;
+  onSave: (title: string) => Promise<void>;
+}) {
+  const [nextTitle, setNextTitle] = useState(title);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(nextTitle.trim());
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : `The ${label} name could not be updated.`,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ModalShell
+      title={`Rename ${label}`}
+      description={`Choose the name shown for this ${label} throughout LiftLog.`}
+      onClose={onClose}
+    >
+      <label className="form-field full">
+        <span>{label === "program" ? "Program" : "Workout"} name</span>
+        <input
+          autoFocus
+          value={nextTitle}
+          onChange={(event) => setNextTitle(event.target.value)}
+        />
+      </label>
+      {error && (
+        <p className="auth-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="modal-actions">
+        <button className="button secondary" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          className="button primary"
+          disabled={!nextTitle.trim() || saving}
+          onClick={save}
+        >
+          {saving ? "Saving…" : "Save name"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
 function WorkoutSettingsModal({
   workout,
   onClose,
@@ -6988,70 +7541,205 @@ function DeleteSectionModal({
   );
 }
 
+function DeleteExerciseModal({
+  exercise,
+  onClose,
+  onDelete,
+}: {
+  exercise: Exercise;
+  onClose: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+
+  async function remove() {
+    setDeleting(true);
+    setError("");
+    try {
+      await onDelete();
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "The exercise could not be deleted.",
+      );
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <ModalShell
+      title={`Delete ${exercise.name}?`}
+      description="It will disappear from My exercises. Any existing workouts keep their saved exercise details."
+      onClose={onClose}
+      dismissible={!deleting}
+    >
+      {error && (
+        <p className="auth-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="modal-actions">
+        <button className="button secondary" disabled={deleting} onClick={onClose}>
+          Cancel
+        </button>
+        <button className="button danger" disabled={deleting} onClick={() => void remove()}>
+          {deleting ? (
+            <>
+              <LoaderCircle className="button-spinner" size={15} />
+              Deleting…
+            </>
+          ) : (
+            <>
+              <Trash2 size={15} />
+              Delete exercise
+            </>
+          )}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+type PrescriptionDraftEntry = {
+  reps: string;
+  load: string;
+  rpe: string;
+  duration: string;
+  distance: string;
+  work: string;
+  rest: string;
+};
+
+type PerEntryField = "reps" | "load" | "rpe" | "work" | "rest";
+
+function prescriptionDraftEntry(
+  entry: PrescriptionEntry | undefined,
+  prescription: WorkoutItem["prescription"],
+  weightUnit: OwnProfile["weightUnit"],
+): PrescriptionDraftEntry {
+  return {
+    reps: entry?.reps ?? prescription.reps ?? "",
+    load:
+      entry?.loadKg ?? prescription.loadKg
+        ? formatWeight(entry?.loadKg ?? prescription.loadKg ?? 0, weightUnit)
+        : "",
+    rpe: wholeRpe(entry?.targetRpe ?? prescription.targetRpe ?? ""),
+    duration: String(entry?.durationMinutes ?? prescription.durationMinutes ?? ""),
+    distance: String(entry?.distance ?? prescription.distance ?? ""),
+    work: String(entry?.workSeconds ?? prescription.workSeconds ?? ""),
+    rest: String(entry?.restSeconds ?? prescription.restSeconds ?? ""),
+  };
+}
+
+function prescriptionDraftEntries(
+  mode: EntryMode,
+  prescription: WorkoutItem["prescription"],
+  weightUnit: OwnProfile["weightUnit"],
+) {
+  const count =
+    mode === "sets"
+      ? Math.max(1, prescription.sets ?? 3)
+      : mode === "intervals"
+        ? Math.max(1, prescription.rounds ?? 1)
+        : 1;
+  const source = prescription.entries?.length
+    ? prescription.entries
+    : [undefined];
+  return Array.from({ length: count }, (_, index) =>
+    prescriptionDraftEntry(source[index] ?? source.at(-1), prescription, weightUnit),
+  );
+}
+
 function PrescriptionModal({
   item,
+  weightUnit,
   onClose,
   onSave,
 }: {
   item: WorkoutItem;
+  weightUnit: OwnProfile["weightUnit"];
   onClose: () => void;
   onSave: (item: WorkoutItem) => Promise<void>;
 }) {
   const [mode, setMode] = useState<EntryMode>(item.mode);
-  const [sets, setSets] = useState(String(item.prescription.sets ?? 3));
-  const [reps, setReps] = useState(item.prescription.reps ?? "8");
-  const [load, setLoad] = useState(
-    item.prescription.loadKg ? String(item.prescription.loadKg) : "",
+  const [entries, setEntries] = useState<PrescriptionDraftEntry[]>(() =>
+    prescriptionDraftEntries(item.mode, item.prescription, weightUnit),
   );
-  const [rpe, setRpe] = useState(item.prescription.targetRpe ?? "");
-  const [duration, setDuration] = useState(
-    item.prescription.durationMinutes
-      ? String(item.prescription.durationMinutes)
-      : "",
+  const initialEntries = prescriptionDraftEntries(
+    item.mode,
+    item.prescription,
+    weightUnit,
   );
-  const [distance, setDistance] = useState(
-    item.prescription.distance ? String(item.prescription.distance) : "",
-  );
-  const [rounds, setRounds] = useState(
-    item.prescription.rounds ? String(item.prescription.rounds) : "",
-  );
-  const [work, setWork] = useState(
-    item.prescription.workSeconds ? String(item.prescription.workSeconds) : "",
-  );
-  const [rest, setRest] = useState(
-    item.prescription.restSeconds ? String(item.prescription.restSeconds) : "",
+  const [perEntry, setPerEntry] = useState<Record<PerEntryField, boolean>>(
+    () => ({
+      reps: initialEntries.some((entry) => entry.reps !== initialEntries[0]?.reps),
+      load: initialEntries.some((entry) => entry.load !== initialEntries[0]?.load),
+      rpe: initialEntries.some((entry) => entry.rpe !== initialEntries[0]?.rpe),
+      work: initialEntries.some((entry) => entry.work !== initialEntries[0]?.work),
+      rest: initialEntries.some((entry) => entry.rest !== initialEntries[0]?.rest),
+    }),
   );
   const [note, setNote] = useState(
     [item.cue, item.prescription.targetText].filter(Boolean).join("\n"),
   );
-  const [fields, setFields] = useState<TrackingField[]>(item.fields);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const availableFields: TrackingField[] =
-    mode === "sets"
-      ? ["reps", "load", "rpe"]
-      : mode === "intervals"
-        ? ["rounds", "duration", "distance", "heartRate", "rpe"]
-        : mode === "result"
-          ? ["duration", "distance", "heartRate", "rpe"]
-          : [];
-  function toggleField(field: TrackingField) {
-    setFields((previous) =>
-      previous.includes(field)
-        ? previous.filter((value) => value !== field)
-        : [...previous, field],
-    );
-  }
+  const entryCount = entries.length;
+  const entryLabel = mode === "intervals" ? "Per round" : "Per set";
   function numberOrUndefined(value: string) {
     const parsed = Number(value);
     return value.trim() && Number.isFinite(parsed) ? parsed : undefined;
   }
+  function changeEntryCount(value: string) {
+    const count = Math.min(30, Math.max(1, Math.trunc(Number(value) || 1)));
+    setEntries((previous) =>
+      Array.from({ length: count }, (_, index) =>
+        previous[index] ?? previous.at(-1) ?? prescriptionDraftEntry(undefined, item.prescription, weightUnit),
+      ),
+    );
+  }
+  function updateEntry(
+    index: number,
+    field: keyof PrescriptionDraftEntry,
+    value: string,
+  ) {
+    setEntries((previous) =>
+      previous.map((entry, entryIndex) =>
+        entryIndex === index ? { ...entry, [field]: value } : entry,
+      ),
+    );
+  }
+  function updateShared(field: PerEntryField, value: string) {
+    setPerEntry((previous) => ({ ...previous, [field]: false }));
+    setEntries((previous) =>
+      previous.map((entry) => ({ ...entry, [field]: value })),
+    );
+  }
+  function togglePerEntry(field: PerEntryField, checked: boolean) {
+    setPerEntry((previous) => ({ ...previous, [field]: checked }));
+  }
+  function resetForMode(nextMode: EntryMode) {
+    setMode(nextMode);
+    setEntries(prescriptionDraftEntries(nextMode, item.prescription, weightUnit));
+    setPerEntry({ reps: false, load: false, rpe: false, work: false, rest: false });
+  }
   async function save() {
     setSaving(true);
     setError("");
-    const nextFields = fields.filter((field) =>
-      availableFields.includes(field),
-    );
+    const nextFields = workoutLogFields(mode);
+    const savedEntries: PrescriptionEntry[] = entries.map((entry) => ({
+      reps: entry.reps.trim() || undefined,
+      loadKg: numberOrUndefined(weightKgValue(entry.load, weightUnit)),
+      durationMinutes: numberOrUndefined(entry.duration),
+      distance: numberOrUndefined(entry.distance),
+      distanceUnit: "km",
+      workSeconds: numberOrUndefined(entry.work),
+      restSeconds: numberOrUndefined(entry.rest),
+      targetRpe: wholeRpe(entry.rpe) || undefined,
+    }));
+    const firstEntry = savedEntries[0] ?? {};
     const nextItem: WorkoutItem = {
       ...item,
       cue: note.trim(),
@@ -7060,24 +7748,27 @@ function PrescriptionModal({
       prescription:
         mode === "sets"
           ? {
-              sets: Math.max(1, Number(sets) || 1),
-              reps: reps.trim() || undefined,
-              loadKg: numberOrUndefined(load),
-              targetRpe: rpe.trim() || undefined,
+              sets: entryCount,
+              reps: firstEntry.reps,
+              loadKg: firstEntry.loadKg,
+              targetRpe: firstEntry.targetRpe,
+              entries: savedEntries,
             }
           : mode === "intervals"
             ? {
-                rounds: numberOrUndefined(rounds),
-                workSeconds: numberOrUndefined(work),
-                restSeconds: numberOrUndefined(rest),
-                targetRpe: rpe.trim() || undefined,
+                rounds: entryCount,
+                workSeconds: firstEntry.workSeconds,
+                restSeconds: firstEntry.restSeconds,
+                targetRpe: firstEntry.targetRpe,
+                entries: savedEntries,
               }
             : mode === "result"
               ? {
-                  durationMinutes: numberOrUndefined(duration),
-                  distance: numberOrUndefined(distance),
+                  durationMinutes: firstEntry.durationMinutes,
+                  distance: firstEntry.distance,
                   distanceUnit: "km",
-                  targetRpe: rpe.trim() || undefined,
+                  targetRpe: firstEntry.targetRpe,
+                  entries: savedEntries,
                 }
               : {},
     };
@@ -7104,19 +7795,7 @@ function PrescriptionModal({
           <span>Prescription type</span>
           <select
             value={mode}
-            onChange={(event) => {
-              const next = event.target.value as EntryMode;
-              setMode(next);
-              setFields(
-                next === "sets"
-                  ? ["reps", "load", "rpe"]
-                  : next === "result"
-                    ? ["duration", "distance", "rpe"]
-                    : next === "intervals"
-                      ? ["rounds", "duration", "distance", "heartRate", "rpe"]
-                      : [],
-              );
-            }}
+            onChange={(event) => resetForMode(event.target.value as EntryMode)}
           >
             <option value="sets">Sets and repetitions</option>
             <option value="result">Time, distance or result</option>
@@ -7130,39 +7809,73 @@ function PrescriptionModal({
               <span>Sets</span>
               <input
                 type="number"
-                min="1"
-                max="30"
-                value={sets}
-                onChange={(event) => setSets(event.target.value)}
+              min="1"
+              max="30"
+                value={entryCount}
+                onChange={(event) => changeEntryCount(event.target.value)}
               />
             </label>
             <label className="form-field">
-              <span>Reps or range</span>
-              <input
-                value={reps}
-                onChange={(event) => setReps(event.target.value)}
-                placeholder="5 or 8–10"
+              <FieldLabel
+                label="Reps"
+                perEntryLabel={entryLabel}
+                checked={perEntry.reps}
+                onToggle={(checked) => togglePerEntry("reps", checked)}
               />
+              {perEntry.reps ? (
+                <PerEntryValue label={entryLabel} />
+              ) : (
+                <input
+                  value={entries[0]?.reps ?? ""}
+                  onChange={(event) => updateShared("reps", event.target.value)}
+                  placeholder="5 or 8–10"
+                />
+              )}
             </label>
             <label className="form-field">
-              <span>Prescribed weight (kg)</span>
-              <input
-                type="number"
-                min="0"
-                step="0.5"
-                value={load}
-                onChange={(event) => setLoad(event.target.value)}
-                placeholder="Optional"
+              <FieldLabel
+                label={`Target weight (${weightUnit})`}
+                optional
+                perEntryLabel={entryLabel}
+                checked={perEntry.load}
+                onToggle={(checked) => togglePerEntry("load", checked)}
               />
+              {perEntry.load ? (
+                <PerEntryValue label={entryLabel} />
+              ) : (
+                <input
+                  inputMode="decimal"
+                  value={entries[0]?.load ?? ""}
+                  onChange={(event) => updateShared("load", event.target.value)}
+                  placeholder="Optional"
+                />
+              )}
             </label>
-            <label className="form-field">
-              <span>Target RPE</span>
-              <input
-                value={rpe}
-                onChange={(event) => setRpe(event.target.value)}
-                placeholder="7 or 7–8"
+            <div className="form-field planned-rpe-field">
+              <FieldLabel
+                label="Planned effort"
+                optional
+                perEntryLabel={entryLabel}
+                checked={perEntry.rpe}
+                onToggle={(checked) => togglePerEntry("rpe", checked)}
               />
-            </label>
+              {perEntry.rpe ? (
+                <PerEntryValue label={entryLabel} />
+              ) : (
+                <PlannedRpeSelect
+                  value={entries[0]?.rpe ?? ""}
+                  onChange={(value) => updateShared("rpe", value)}
+                />
+              )}
+            </div>
+            <PrescriptionEntryTable
+              label="Set plan"
+              rows={entries}
+              weightUnit={weightUnit}
+              fields={["reps", "load", "rpe"]}
+              editable={perEntry}
+              onChange={updateEntry}
+            />
           </>
         )}
         {mode === "result" && (
@@ -7172,8 +7885,8 @@ function PrescriptionModal({
               <input
                 type="number"
                 min="0"
-                value={duration}
-                onChange={(event) => setDuration(event.target.value)}
+                value={entries[0]?.duration ?? ""}
+                onChange={(event) => updateEntry(0, "duration", event.target.value)}
               />
             </label>
             <label className="form-field">
@@ -7182,16 +7895,8 @@ function PrescriptionModal({
                 type="number"
                 min="0"
                 step="0.1"
-                value={distance}
-                onChange={(event) => setDistance(event.target.value)}
-              />
-            </label>
-            <label className="form-field">
-              <span>Target RPE</span>
-              <input
-                value={rpe}
-                onChange={(event) => setRpe(event.target.value)}
-                placeholder="7 or 7–8"
+                value={entries[0]?.distance ?? ""}
+                onChange={(event) => updateEntry(0, "distance", event.target.value)}
               />
             </label>
           </>
@@ -7203,36 +7908,83 @@ function PrescriptionModal({
               <input
                 type="number"
                 min="1"
-                value={rounds}
-                onChange={(event) => setRounds(event.target.value)}
+                value={entryCount}
+                onChange={(event) => changeEntryCount(event.target.value)}
               />
             </label>
             <label className="form-field">
-              <span>Work seconds</span>
-              <input
-                type="number"
-                min="0"
-                value={work}
-                onChange={(event) => setWork(event.target.value)}
+              <FieldLabel
+                label="Work"
+                perEntryLabel={entryLabel}
+                checked={perEntry.work}
+                onToggle={(checked) => togglePerEntry("work", checked)}
               />
+              {perEntry.work ? (
+                <PerEntryValue label={entryLabel} />
+              ) : (
+                <input
+                  inputMode="numeric"
+                  value={entries[0]?.work ?? ""}
+                  onChange={(event) => updateShared("work", event.target.value)}
+                />
+              )}
             </label>
             <label className="form-field">
-              <span>Rest seconds</span>
-              <input
-                type="number"
-                min="0"
-                value={rest}
-                onChange={(event) => setRest(event.target.value)}
+              <FieldLabel
+                label="Rest"
+                perEntryLabel={entryLabel}
+                checked={perEntry.rest}
+                onToggle={(checked) => togglePerEntry("rest", checked)}
               />
+              {perEntry.rest ? (
+                <PerEntryValue label={entryLabel} />
+              ) : (
+                <input
+                  inputMode="numeric"
+                  value={entries[0]?.rest ?? ""}
+                  onChange={(event) => updateShared("rest", event.target.value)}
+                />
+              )}
             </label>
-            <label className="form-field">
-              <span>Target RPE</span>
-              <input
-                value={rpe}
-                onChange={(event) => setRpe(event.target.value)}
+            <div className="form-field planned-rpe-field">
+              <FieldLabel
+                label="Planned effort"
+                optional
+                perEntryLabel={entryLabel}
+                checked={perEntry.rpe}
+                onToggle={(checked) => togglePerEntry("rpe", checked)}
               />
-            </label>
+              {perEntry.rpe ? (
+                <PerEntryValue label={entryLabel} />
+              ) : (
+                <PlannedRpeSelect
+                  value={entries[0]?.rpe ?? ""}
+                  onChange={(value) => updateShared("rpe", value)}
+                />
+              )}
+            </div>
+            <PrescriptionEntryTable
+              label="Round plan"
+              rows={entries}
+              weightUnit={weightUnit}
+              fields={["work", "rest", "rpe"]}
+              editable={perEntry}
+              onChange={updateEntry}
+            />
           </>
+        )}
+        {mode === "result" && (
+          <div className="form-field full planned-rpe-field">
+            <span>Planned effort <em>optional</em></span>
+            <small>
+              This guides effort alongside an exact weight target. The athlete
+              records actual RPE while training.
+            </small>
+            <PlannedRpeSelect
+              value={entries[0]?.rpe ?? ""}
+              onChange={(value) => updateEntry(0, "rpe", value)}
+            />
+          </div>
         )}
         <label className="form-field full">
           <span>
@@ -7244,21 +7996,6 @@ function PrescriptionModal({
             placeholder="Technique cues, tempo, substitutions…"
           />
         </label>
-        {availableFields.length > 0 && (
-          <fieldset className="tracking-fields full">
-            <legend>Athlete records</legend>
-            {availableFields.map((field) => (
-              <label key={field}>
-                <input
-                  type="checkbox"
-                  checked={fields.includes(field)}
-                  onChange={() => toggleField(field)}
-                />
-                <span>{field === "heartRate" ? "Heart rate" : field}</span>
-              </label>
-            ))}
-          </fieldset>
-        )}
       </div>
       {error && (
         <p className="auth-error" role="alert">
@@ -7273,8 +8010,7 @@ function PrescriptionModal({
           className="button primary"
           disabled={
             saving ||
-            (mode === "sets" &&
-              (!Number.isInteger(Number(sets)) || Number(sets) < 1))
+            ((mode === "sets" || mode === "intervals") && entryCount < 1)
           }
           onClick={save}
         >
@@ -7282,6 +8018,110 @@ function PrescriptionModal({
         </button>
       </div>
     </ModalShell>
+  );
+}
+
+function FieldLabel({
+  label,
+  optional = false,
+  perEntryLabel,
+  checked,
+  onToggle,
+}: {
+  label: string;
+  optional?: boolean;
+  perEntryLabel: string;
+  checked: boolean;
+  onToggle: (checked: boolean) => void;
+}) {
+  return (
+    <span className="prescription-field-label">
+      <label className="per-entry-toggle">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onToggle(event.target.checked)}
+        />
+        <i aria-hidden />
+        <small>{perEntryLabel}</small>
+      </label>
+      <b>{label}</b>
+      {optional && <em>optional</em>}
+    </span>
+  );
+}
+
+function PerEntryValue({ label }: { label: string }) {
+  return (
+    <div className="per-entry-value">
+      <Settings2 size={13} />
+      {label}
+    </div>
+  );
+}
+
+function PrescriptionEntryTable({
+  label,
+  rows,
+  weightUnit,
+  fields,
+  editable,
+  onChange,
+}: {
+  label: string;
+  rows: PrescriptionDraftEntry[];
+  weightUnit: OwnProfile["weightUnit"];
+  fields: PerEntryField[];
+  editable: Record<PerEntryField, boolean>;
+  onChange: (index: number, field: keyof PrescriptionDraftEntry, value: string) => void;
+}) {
+  return (
+    <div className="prescription-entry-table full">
+      <div className="prescription-entry-heading">
+        <strong>{label}</strong>
+        <small>Choose “Per set” or “Per round” above to edit a column.</small>
+      </div>
+      <div className="prescription-entry-grid">
+        <div
+          className="prescription-entry-row prescription-entry-header"
+          style={{ gridTemplateColumns: `36px repeat(${fields.length}, minmax(0, 1fr))` }}
+        >
+          <span>#</span>
+          {fields.map((field) => (
+            <span key={field}>
+              {field === "load" ? `Weight (${weightUnit})` : field === "rpe" ? "Planned RPE" : field[0].toUpperCase() + field.slice(1)}
+            </span>
+          ))}
+        </div>
+        {rows.map((row, index) => (
+          <div
+            className="prescription-entry-row"
+            key={index}
+            style={{ gridTemplateColumns: `36px repeat(${fields.length}, minmax(0, 1fr))` }}
+          >
+            <span>{index + 1}</span>
+            {fields.map((field) =>
+              field === "rpe" ? (
+                <PlannedRpeSelect
+                  key={field}
+                  disabled={!editable.rpe}
+                  value={row.rpe}
+                  onChange={(value) => onChange(index, "rpe", value)}
+                />
+              ) : (
+                <input
+                  key={field}
+                  disabled={!editable[field]}
+                  inputMode={field === "load" ? "decimal" : field === "reps" ? "text" : "numeric"}
+                  value={row[field]}
+                  onChange={(event) => onChange(index, field, event.target.value)}
+                />
+              ),
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

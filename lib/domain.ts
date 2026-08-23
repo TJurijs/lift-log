@@ -13,6 +13,7 @@ export interface OwnProfile {
 }
 
 export type ExerciseScope = "global" | "personal";
+export type ExerciseDiscipline = "weightlifting" | "gym" | "functional";
 export type EntryMode = "none" | "sets" | "result" | "intervals";
 export type TrackingField =
   "reps" | "load" | "duration" | "distance" | "rounds" | "heartRate" | "rpe";
@@ -21,11 +22,25 @@ export interface Exercise {
   id: string;
   name: string;
   category: string;
+  discipline?: ExerciseDiscipline;
+  tags?: string[];
   cue: string;
   scope: ExerciseScope;
   ownerName?: string;
   defaultMode: EntryMode;
   defaultFields: TrackingField[];
+}
+
+export interface PrescriptionEntry {
+  reps?: string;
+  loadKg?: number;
+  durationMinutes?: number;
+  distance?: number;
+  distanceUnit?: "m" | "km";
+  rounds?: number;
+  workSeconds?: number;
+  restSeconds?: number;
+  targetRpe?: string;
 }
 
 export interface Prescription {
@@ -40,6 +55,7 @@ export interface Prescription {
   restSeconds?: number;
   targetRpe?: string;
   targetText?: string;
+  entries?: PrescriptionEntry[];
 }
 
 export interface WorkoutItem {
