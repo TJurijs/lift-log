@@ -13,6 +13,7 @@ import {
   Dumbbell,
   FlaskConical,
   LayoutDashboard,
+  Layers3,
   ListPlus,
   LoaderCircle,
   LockKeyhole,
@@ -127,6 +128,7 @@ type ModalName =
   | "invite"
   | "assign-program"
   | "program"
+  | "quick-workout"
   | "deactivate-program"
   | "schedule"
   | "account"
@@ -1543,11 +1545,16 @@ export default function LiftLogApp({
         await repository.updateProgramDescription(program.id, nextDescription);
       }
       await repository.publishProgram(program.versionId);
+      if (program.contentType === "quick_workout") {
+        await repository.setProgramAvailability(program.id, true);
+      }
       applyWorkspace(await repository.loadWorkspace());
       setProgram(null);
       setProgramOwnerId(viewer.id);
       notify(
-        program.sourceType === "coach"
+        program.contentType === "quick_workout"
+          ? "Workout saved. It is ready to schedule or assign."
+          : program.sourceType === "coach"
           ? "Coach program finished · the athlete can add it to scheduling"
           : "Program saved. Add it to scheduling when you are ready.",
       );
@@ -1892,6 +1899,37 @@ export default function LiftLogApp({
     return assignments;
   }
 
+  async function assignQuickWorkoutToAthletes(
+    programId: string,
+    athleteIds: string[],
+    plannedDate: string,
+  ): Promise<ProgramAssignment[]> {
+    const workout = assignableOwnPrograms.find(
+      (candidate) => candidate.id === programId,
+    );
+    if (!workout || workout.contentType !== "quick_workout")
+      throw new Error("Choose a finished quick workout.");
+    if (!athleteIds.length) throw new Error("Choose at least one athlete.");
+    const assignments = repository
+      ? await repository.assignQuickWorkoutToAthletes(
+          programId,
+          athleteIds,
+          plannedDate,
+        )
+      : athleteIds.map((athleteId) => ({
+          athleteId,
+          programId: `assigned-${programId}-${athleteId}`,
+          created: true,
+        }));
+    if (repository) applyWorkspace(await repository.loadWorkspace());
+    setAssignmentSeed({});
+    setModal(null);
+    notify(
+      `${workout.title} scheduled for ${athleteIds.length} ${athleteIds.length === 1 ? "athlete" : "athletes"}`,
+    );
+    return assignments;
+  }
+
   async function saveProfile(
     firstName: string,
     lastName: string,
@@ -1985,6 +2023,58 @@ export default function LiftLogApp({
       throw error instanceof Error
         ? error
         : new Error("The program could not be created");
+    }
+  }
+
+  async function createQuickWorkout(title: string) {
+    try {
+      if (repository) {
+        const workoutId = await repository.createBlankQuickWorkout(title);
+        applyWorkspace(await repository.loadWorkspace());
+        selectProgram(await repository.loadEditableProgram(viewer.id, workoutId));
+      } else {
+        const now = Date.now();
+        selectProgram({
+          id: `quick-workout-${now}`,
+          athleteId: viewer.id,
+          versionId: `version-${now}`,
+          versionStatus: "draft",
+          title,
+          description: "",
+          phase: "Workout",
+          activeWeek: 1,
+          weeks: [{
+            id: `week-${now}`,
+            index: 1,
+            label: "Workout",
+            workouts: [{
+              id: `workout-${now}`,
+              title,
+              dayLabel: "Workout",
+              durationMinutes: 45,
+              sections: [
+                { id: `warmup-${now}`, title: "Warm up", kind: "warmup", items: [] },
+                { id: `main-${now}`, title: "Main work", kind: "main", items: [] },
+                { id: `cooldown-${now}`, title: "Cooldown", kind: "cooldown", items: [] },
+              ],
+            }],
+          }],
+          ownerName: workspace.profile.displayName,
+          createdById: viewer.id,
+          createdByName: workspace.profile.displayName,
+          sourceType: "self",
+          sourceLabel: "Created by you",
+          contentType: "quick_workout",
+        });
+      }
+      setModal(null);
+      setActiveView("program");
+      setProgramSource("own");
+      notify("Quick workout created");
+    } catch (error) {
+      throw error instanceof Error
+        ? error
+        : new Error("The workout could not be created");
     }
   }
 
@@ -2741,6 +2831,7 @@ export default function LiftLogApp({
                 });
                 setModal("program");
               }}
+              onCreateWorkout={() => setModal("quick-workout")}
               onOpenTemplate={(template) =>
                 handleTemplateAction(template, "open")
               }
@@ -2884,6 +2975,7 @@ export default function LiftLogApp({
             setModal(null);
           }}
           onAssign={assignProgramToAthletes}
+          onAssignQuickWorkout={assignQuickWorkoutToAthletes}
         />
       )}
       {modal === "program" && (
@@ -2894,6 +2986,14 @@ export default function LiftLogApp({
             setModal(null);
           }}
           onSave={createProgram}
+        />
+      )}
+      {modal === "quick-workout" && (
+        <ProgramModal
+          targetName={workspace.profile.displayName}
+          kind="workout"
+          onClose={() => setModal(null)}
+          onSave={createQuickWorkout}
         />
       )}
       {modal === "deactivate-program" && program && (
@@ -3776,6 +3876,7 @@ function ProgramView({
     }),
   );
   const isDraft = program.versionStatus === "draft";
+  const isQuickWorkout = program.contentType === "quick_workout";
   const canEdit =
     program.createdById === viewerId && program.sourceType !== "library";
   const editable = isDraft && canEdit;
@@ -3876,13 +3977,17 @@ function ProgramView({
       <PageHeader
         eyebrow={
           program.athleteId === viewerId
-            ? "Your program"
+            ? isQuickWorkout
+              ? "Your workout"
+              : "Your program"
             : `Planning for ${program.ownerName}`
         }
         title={program.title}
         description={
           program.description ||
-          "A finite sequence of weeks. The athlete assigns workouts to calendar dates separately."
+          (isQuickWorkout
+            ? "One session you can schedule for yourself or assign to athletes."
+            : "A finite sequence of weeks. The athlete assigns workouts to calendar dates separately.")
         }
       >
         <button className="button secondary small" onClick={onBack}>
@@ -3923,7 +4028,7 @@ function ProgramView({
             ) : (
               <>
                 <Save size={15} />
-                Save program
+                {isQuickWorkout ? "Save workout" : "Save program"}
               </>
             )}
           </button>
@@ -3943,7 +4048,7 @@ function ProgramView({
               ) : (
                 <>
                   <Pencil size={15} />
-                  Edit program
+                  {isQuickWorkout ? "Edit workout" : "Edit program"}
                 </>
               )}
             </button>
@@ -3953,11 +4058,19 @@ function ProgramView({
       <div className="program-summary panel">
         <div>
           <span className="program-icon">
-            <Dumbbell size={21} />
+            {isQuickWorkout ? <Activity size={21} /> : <Layers3 size={21} />}
           </span>
           <div>
-            <strong>{program.weeks.length}-week program</strong>
-            <small>Runs once from first week to last</small>
+            <strong>
+              {isQuickWorkout
+                ? "Quick workout"
+                : `${program.weeks.length}-week program`}
+            </strong>
+            <small>
+              {isQuickWorkout
+                ? "One session you can schedule or assign."
+                : "Runs once from first week to last"}
+            </small>
           </div>
           {editable && (
             <label className="program-description-field">
@@ -3972,14 +4085,14 @@ function ProgramView({
             </label>
           )}
         </div>
-        {editable && program.weeks.length > 1 && (
+        {!isQuickWorkout && editable && program.weeks.length > 1 && (
           <button className="button danger small" onClick={onDeleteWeek}>
             <Trash2 size={14} />
             Delete week {selectedWeek}
           </button>
         )}
       </div>
-      <div className="week-tabs">
+      {!isQuickWorkout && <div className="week-tabs">
         <button
           className="icon-button"
           aria-label="Previous program week"
@@ -4044,13 +4157,15 @@ function ProgramView({
         >
           <ArrowRight size={16} />
         </button>
-      </div>
+      </div>}
       <div className="builder-layout">
         <aside className="workout-list panel">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Week {selectedWeek}</p>
-              <h3>{currentWeek.label}</h3>
+              <p className="eyebrow">
+                {isQuickWorkout ? "Quick workout" : `Week ${selectedWeek}`}
+              </p>
+              <h3>{isQuickWorkout ? "Session" : currentWeek.label}</h3>
             </div>
           </div>
           <DndContext
@@ -4076,14 +4191,14 @@ function ProgramView({
               </div>
             </SortableContext>
           </DndContext>
-          <button
+          {!isQuickWorkout && <button
             className="button secondary full"
             disabled={!editable}
             onClick={onAddWorkout}
           >
             <Plus size={15} />
             Add workout
-          </button>
+          </button>}
         </aside>
         <DndContext
           sensors={dragSensors}
@@ -4096,10 +4211,13 @@ function ProgramView({
                 <div className="editor-heading">
                   <div>
                     <p className="eyebrow">
-                      Workout{" "}
-                      {currentWeek.workouts.findIndex(
-                        (item) => item.id === selectedWorkout.id,
-                      ) + 1}
+                      {isQuickWorkout
+                        ? "Workout"
+                        : `Workout ${
+                            currentWeek.workouts.findIndex(
+                              (item) => item.id === selectedWorkout.id,
+                            ) + 1
+                          }`}
                     </p>
                     <h2>{selectedWorkout.title}</h2>
                     <p>Estimated {selectedWorkout.durationMinutes} minutes</p>
@@ -4113,7 +4231,7 @@ function ProgramView({
                     >
                       <Settings2 size={18} />
                     </button>
-                    {editable && (
+                    {editable && !isQuickWorkout && (
                       <button
                         className="icon-button danger"
                         onClick={onDeleteWorkout}
@@ -4616,6 +4734,15 @@ function SortableExerciseItem({
   );
 }
 
+function ObjectTypeTag({ quickWorkout }: { quickWorkout: boolean }) {
+  return (
+    <span className="object-type-tag">
+      {quickWorkout ? <Activity size={10} /> : <Layers3 size={10} />}
+      {quickWorkout ? "Workout" : "Program"}
+    </span>
+  );
+}
+
 function ProgramRow({
   program,
   available,
@@ -4651,6 +4778,8 @@ function ProgramRow({
   onSchedule?: () => void;
   onAvailability?: () => void;
 }) {
+  const isQuickWorkout = program.contentType === "quick_workout";
+  const objectLabel = isQuickWorkout ? "Workout" : "Program";
   return (
     <article className="program-catalog-card panel">
       <button
@@ -4660,10 +4789,11 @@ function ProgramRow({
       >
         <span className="program-card-heading">
           <span className="program-icon">
-            <Dumbbell size={18} />
+            {isQuickWorkout ? <Activity size={18} /> : <Layers3 size={18} />}
           </span>
           <span>
             <strong>{program.title}</strong>
+            <ObjectTypeTag quickWorkout={isQuickWorkout} />
             <SourceTag source={sourceFromProgram(program)} compact />
           </span>
         </span>
@@ -4697,12 +4827,14 @@ function ProgramRow({
         )}
         <span className="program-card-meta">
           <span>
-            {formatWorkoutCount(programWorkoutCount(program))}
+            {isQuickWorkout
+              ? `~${program.weeks[0]?.workouts[0]?.durationMinutes ?? 45} min · One workout`
+              : formatWorkoutCount(programWorkoutCount(program))}
           </span>
-          <span>
+          {!isQuickWorkout && <span>
             {programWeekCount(program)}{" "}
             {programWeekCount(program) === 1 ? "week" : "weeks"}
-          </span>
+          </span>}
         </span>
       </button>
       <div className="program-card-footer">
@@ -4723,8 +4855,8 @@ function ProgramRow({
               className="icon-button"
               disabled={Boolean(action)}
               onClick={onEdit}
-              aria-label={`Edit ${program.title}`}
-              title="Edit program"
+              aria-label={`Edit ${program.title} ${objectLabel.toLowerCase()}`}
+              title={`Edit ${objectLabel.toLowerCase()}`}
             >
               {action === "edit" ? (
                 <LoaderCircle className="button-spinner" size={15} />
@@ -4756,7 +4888,7 @@ function ProgramRow({
               disabled={Boolean(action)}
               onClick={onSchedule}
               aria-label={`Schedule ${program.title}`}
-              title="Schedule program"
+              title={`Schedule ${objectLabel.toLowerCase()}`}
             >
               <CalendarPlus size={15} />
             </button>
@@ -4787,8 +4919,8 @@ function ProgramRow({
               className="icon-button danger"
               disabled={Boolean(action)}
               onClick={onDelete}
-              aria-label={`Delete ${program.title}`}
-              title="Delete program"
+              aria-label={`Delete ${program.title} ${objectLabel.toLowerCase()}`}
+              title={`Delete ${objectLabel.toLowerCase()}`}
             >
               {action === "delete" ? (
                 <LoaderCircle className="button-spinner" size={15} />
@@ -4829,10 +4961,11 @@ function LibraryTemplateCard({
       >
         <span className="program-card-heading">
           <span className="program-icon">
-            <BookOpen size={18} />
+            <Layers3 size={18} />
           </span>
           <span>
             <strong>{template.title}</strong>
+            <ObjectTypeTag quickWorkout={false} />
             <SourceTag source={{ kind: "library" }} compact />
           </span>
         </span>
@@ -4898,6 +5031,7 @@ function ProgramsHome({
   onAvailability,
   onSource,
   onCreate,
+  onCreateWorkout,
   onOpenTemplate,
   onCopyTemplate,
   onScheduleTemplate,
@@ -4919,6 +5053,7 @@ function ProgramsHome({
   onAvailability: (program: Program, available: boolean) => void;
   onSource: (source: ProgramSourceTab) => void;
   onCreate: () => void;
+  onCreateWorkout: () => void;
   onOpenTemplate: (template: ProgramTemplate) => void;
   onCopyTemplate: (template: ProgramTemplate) => void;
   onScheduleTemplate: (template: ProgramTemplate) => void;
@@ -4928,6 +5063,16 @@ function ProgramsHome({
   const available = programs.filter((program) =>
     availableIds.includes(program.id),
   );
+  const availablePrograms = available.filter(
+    (program) => program.contentType !== "quick_workout",
+  ).length;
+  const availableWorkouts = available.length - availablePrograms;
+  const scheduleCountLabel = [
+    availablePrograms && `${availablePrograms} ${availablePrograms === 1 ? "program" : "programs"}`,
+    availableWorkouts && `${availableWorkouts} ${availableWorkouts === 1 ? "workout" : "workouts"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const completedIds = new Set(
     programs
       .filter((program) => {
@@ -4972,11 +5117,15 @@ function ProgramsHome({
       <PageHeader
         eyebrow="Your training"
         title="Programs"
-        description="Programs stay in their source collection. Add any finished program to your scheduling choices."
+        description="Programs and workouts stay in their source collection. Add finished items to your scheduling choices."
       >
+        <button className="button primary small" onClick={onCreateWorkout}>
+          <Activity size={15} />
+          Create workout
+        </button>
         <button className="button primary small" onClick={onCreate}>
-          <Plus size={15} />
-          Create own program
+          <Layers3 size={15} />
+          Create program
         </button>
       </PageHeader>
       <section className="program-source-section">
@@ -4984,8 +5133,7 @@ function ProgramsHome({
           <div>
             <p className="eyebrow">In schedule</p>
             <h2>
-              {available.length}{" "}
-              {available.length === 1 ? "program" : "programs"}
+              {scheduleCountLabel || "No items"}
             </h2>
           </div>
         </div>
@@ -5099,7 +5247,11 @@ function ProgramsHome({
                   Create one from scratch or copy a Library or Coach program.
                 </p>
                 <button className="button primary" onClick={onCreate}>
+                  <Layers3 size={15} />
                   Create program
+                </button>
+                <button className="button secondary" onClick={onCreateWorkout}>
+                  Create workout
                 </button>
               </div>
             )}
@@ -5166,7 +5318,7 @@ function CoachProgramEmpty({
           you are ready to assign one.
         </p>
         <button className="button primary" onClick={onCreate}>
-          <Plus size={15} />
+          <Layers3 size={15} />
           Create program for {athlete.name.split(" ")[0]}
         </button>
       </section>
@@ -7402,6 +7554,7 @@ function AssignProgramModal({
   initialAthleteIds = [],
   onClose,
   onAssign,
+  onAssignQuickWorkout,
 }: {
   programs: Program[];
   athletes: AthleteSummary[];
@@ -7411,6 +7564,11 @@ function AssignProgramModal({
   onAssign: (
     programId: string,
     athleteIds: string[],
+  ) => Promise<ProgramAssignment[]>;
+  onAssignQuickWorkout: (
+    programId: string,
+    athleteIds: string[],
+    plannedDate: string,
   ) => Promise<ProgramAssignment[]>;
 }) {
   const lockedProgram = Boolean(initialProgramId);
@@ -7422,6 +7580,11 @@ function AssignProgramModal({
     () => new Set(initialAthleteIds),
   );
   const [saving, setSaving] = useState(false);
+  const [plannedDate, setPlannedDate] = useState(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return localDateOnly(tomorrow);
+  });
   const savingRef = useRef(false);
   const [error, setError] = useState("");
   const selectedProgram = programs.find(
@@ -7430,6 +7593,7 @@ function AssignProgramModal({
   const selectedAthletes = athletes.filter((athlete) =>
     athleteIds.has(athlete.id),
   );
+  const quickWorkout = selectedProgram?.contentType === "quick_workout";
 
   function toggleAthlete(athleteId: string) {
     setAthleteIds((previous) => {
@@ -7446,7 +7610,11 @@ function AssignProgramModal({
     setSaving(true);
     setError("");
     try {
-      await onAssign(programId, [...athleteIds]);
+      if (quickWorkout) {
+        await onAssignQuickWorkout(programId, [...athleteIds], plannedDate);
+      } else {
+        await onAssign(programId, [...athleteIds]);
+      }
     } catch (assignmentError) {
       setError(
         assignmentError instanceof Error
@@ -7461,8 +7629,12 @@ function AssignProgramModal({
 
   return (
     <ModalShell
-      title="Assign a program"
-      description="Each athlete receives an independent copy. Their calendar stays unchanged until they schedule workouts."
+      title={quickWorkout ? "Assign and schedule workout" : "Assign a program"}
+      description={
+        quickWorkout
+          ? "Each athlete receives an independent copy and the session is placed on the date you choose."
+          : "Each athlete receives an independent copy. Their calendar stays unchanged until they schedule workouts."
+      }
       onClose={onClose}
       dismissible={!saving}
       wide
@@ -7492,8 +7664,12 @@ function AssignProgramModal({
               <div className="assignment-step-heading">
                 <span>1</span>
                 <div>
-                  <strong>Own program</strong>
-                  <small>Only finished programs can be assigned</small>
+                  <strong>{quickWorkout ? "Quick workout" : "Own program"}</strong>
+                  <small>
+                    {quickWorkout
+                      ? "This one session will be scheduled for every athlete"
+                      : "Only finished programs can be assigned"}
+                  </small>
                 </div>
               </div>
               {lockedProgram && selectedProgram ? (
@@ -7529,6 +7705,26 @@ function AssignProgramModal({
                 </label>
               )}
             </div>
+            {quickWorkout && (
+              <div className="assignment-step">
+                <div className="assignment-step-heading">
+                  <span>3</span>
+                  <div>
+                    <strong>Schedule date</strong>
+                    <small>All selected athletes get this session on this day</small>
+                  </div>
+                </div>
+                <label className="form-field full">
+                  <span>Date</span>
+                  <input
+                    type="date"
+                    value={plannedDate}
+                    disabled={saving}
+                    onChange={(event) => setPlannedDate(event.target.value)}
+                  />
+                </label>
+              </div>
+            )}
             <div className="assignment-step">
               <div className="assignment-step-heading">
                 <span>2</span>
@@ -7591,7 +7787,9 @@ function AssignProgramModal({
             <div className="assignment-progress" role="status">
               <LoaderCircle className="button-spinner" size={17} />
               <span>
-                Creating independent program{" "}
+                {quickWorkout
+                  ? "Scheduling workout for selected athletes"
+                  : "Creating independent program"}{" "}
                 {athleteIds.size === 1 ? "copy" : "copies"}…
               </span>
             </div>
@@ -7611,18 +7809,19 @@ function AssignProgramModal({
             </button>
             <button
               className="button primary"
-              disabled={!programId || !athleteIds.size || saving}
+              disabled={!programId || !athleteIds.size || !plannedDate || saving}
               onClick={assign}
             >
               {saving ? (
                 <>
                   <LoaderCircle className="button-spinner" size={15} />
-                  Assigning…
+                  {quickWorkout ? "Scheduling…" : "Assigning…"}
                 </>
               ) : (
                 <>
                   <UserPlus size={15} />
-                  Assign to {athleteIds.size || 0}{" "}
+                  {quickWorkout ? "Assign & schedule" : "Assign to"}{" "}
+                  {athleteIds.size || 0}{" "}
                   {athleteIds.size === 1 ? "athlete" : "athletes"}
                 </>
               )}
@@ -7763,10 +7962,12 @@ function CopyWeekModal({
 
 function ProgramModal({
   targetName,
+  kind = "program",
   onClose,
   onSave,
 }: {
   targetName: string;
+  kind?: "program" | "workout";
   onClose: () => void;
   onSave: (title: string) => Promise<void>;
 }) {
@@ -7794,26 +7995,38 @@ function ProgramModal({
   }
   return (
     <ModalShell
-      title={`Create a program for ${targetName}`}
-      description="Start with one empty week. Workouts are ordered here and scheduled later by the athlete."
+      title={
+        kind === "workout"
+          ? "Create a quick workout"
+          : `Create a program for ${targetName}`
+      }
+      description={
+        kind === "workout"
+          ? "Create one session, then schedule it for yourself or assign it to athletes."
+          : "Start with one empty week. Workouts are ordered here and scheduled later by the athlete."
+      }
       onClose={onClose}
     >
       <div className="form-grid">
         <label className="form-field full">
-          <span>Program name</span>
+          <span>{kind === "workout" ? "Workout name" : "Program name"}</span>
           <input
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="e.g. Two-day general fitness"
+            placeholder={
+              kind === "workout"
+                ? "e.g. Friday conditioning"
+                : "e.g. Two-day general fitness"
+            }
           />
         </label>
-        <div className="form-info full">
+        {kind === "program" && <div className="form-info full">
           <CalendarDays size={16} />
           <span>
             Start with Week 1, then use the + week tab to add a blank week or
             copy any week as many times as you need.
           </span>
-        </div>
+        </div>}
       </div>
       {error && (
         <p className="auth-error" role="alert">
@@ -7829,7 +8042,7 @@ function ProgramModal({
           disabled={!title.trim() || saving}
           onClick={save}
         >
-          {saving ? "Creating…" : "Create program"}
+          {saving ? "Creating…" : kind === "workout" ? "Create workout" : "Create program"}
         </button>
       </div>
     </ModalShell>

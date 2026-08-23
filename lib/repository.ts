@@ -63,6 +63,7 @@ interface ProgramRow {
   source_type: "self" | "coach" | "library";
   source_label: string;
   template_id: string | null;
+  content_type?: "program" | "quick_workout";
 }
 
 interface VersionRow {
@@ -526,7 +527,7 @@ export class LiftLogRepository {
     const programResult = await this.client
       .from("programs")
       .select(
-        "id, athlete_id, created_by_id, title, description, source_type, source_label, template_id",
+        "id, athlete_id, created_by_id, title, description, source_type, source_label, template_id, content_type",
       )
       .eq("id", programId)
       .eq("athlete_id", athleteId)
@@ -574,7 +575,7 @@ export class LiftLogRepository {
     const programsResult = await this.client
       .from("programs")
       .select(
-        "id, athlete_id, created_by_id, title, description, source_type, source_label, template_id",
+        "id, athlete_id, created_by_id, title, description, source_type, source_label, template_id, content_type",
       )
       .eq("athlete_id", athleteId)
       .eq("is_current", true)
@@ -665,6 +666,7 @@ export class LiftLogRepository {
         sourceType: row.source_type,
         sourceLabel: row.source_label,
         templateId: row.template_id ?? undefined,
+        contentType: row.content_type ?? "program",
         weekCount: versionWeeks.length,
         workoutCount: workoutIds.length,
         workoutIds,
@@ -744,7 +746,7 @@ export class LiftLogRepository {
     let programQuery = this.client
       .from("programs")
       .select(
-        "id, athlete_id, created_by_id, title, description, source_type, source_label, template_id",
+        "id, athlete_id, created_by_id, title, description, source_type, source_label, template_id, content_type",
       )
       .eq("athlete_id", athleteId)
       .eq("is_current", true)
@@ -961,6 +963,7 @@ export class LiftLogRepository {
       createdByName,
       sourceType: programRow.source_type,
       templateId: programRow.template_id ?? undefined,
+      contentType: programRow.content_type ?? "program",
       sourceLabel:
         programRow.created_by_id === this.viewerId
           ? "Created by you"
@@ -1257,6 +1260,15 @@ export class LiftLogRepository {
     return String(result.data);
   }
 
+  async createBlankQuickWorkout(title: string) {
+    const result = await this.client.rpc("create_blank_quick_workout", {
+      target_title: title,
+    });
+    if (result.error || !result.data)
+      fail("Could not create the workout", result.error);
+    return String(result.data);
+  }
+
   async updateProgramDescription(programId: string, description: string) {
     const result = await this.client
       .from("programs")
@@ -1328,6 +1340,29 @@ export class LiftLogRepository {
         created: boolean;
       }>
     ).map((assignment) => ({
+      athleteId: assignment.athlete_id,
+      programId: assignment.assigned_program_id,
+      created: assignment.created,
+    }));
+  }
+
+  async assignQuickWorkoutToAthletes(
+    programId: string,
+    athleteIds: string[],
+    plannedDate: string,
+  ): Promise<ProgramAssignment[]> {
+    const result = await this.client.rpc("assign_quick_workout_to_athletes", {
+      target_program_id: programId,
+      target_athlete_ids: Array.from(new Set(athleteIds)),
+      target_planned_date: plannedDate,
+    });
+    if (result.error)
+      fail("Could not assign and schedule the workout", result.error);
+    return (result.data as Array<{
+      athlete_id: string;
+      assigned_program_id: string;
+      created: boolean;
+    }>).map((assignment) => ({
       athleteId: assignment.athlete_id,
       programId: assignment.assigned_program_id,
       created: assignment.created,

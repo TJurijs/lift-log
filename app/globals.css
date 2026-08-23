@@ -1561,6 +1561,23 @@ input:disabled {
   gap: 4px;
   font-size: 7px;
 }
+.object-type-tag {
+  width: fit-content;
+  min-height: 17px;
+  margin: 3px 0 0;
+  padding: 3px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 7px;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+}
 .next-workout-summary .source-tag {
   margin-bottom: 1px;
 }

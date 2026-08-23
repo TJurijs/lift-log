@@ -113,6 +113,8 @@ export interface Program {
   sourceType: "self" | "coach" | "library";
   sourceLabel: string;
   templateId?: string;
+  /** A quick workout uses the same editable workout tree without week planning. */
+  contentType?: "program" | "quick_workout";
   /** Present for catalog rows, which intentionally defer the full workout tree. */
   weekCount?: number;
   /** Present for catalog rows, which intentionally defer the full workout tree. */
