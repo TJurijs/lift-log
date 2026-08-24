@@ -41,7 +41,6 @@ function expectNoContentCapabilities(
     copyToOwn: false,
     edit: false,
     publish: false,
-    manageAvailability: false,
     schedule: false,
     assign: false,
     provideInitialAssignmentDate: false,
@@ -74,7 +73,6 @@ describe("deriveTrainingContentCapabilities", () => {
           copyToOwn,
           edit: false,
           publish: false,
-          manageAvailability: false,
           schedule: false,
           assign: false,
           deleteOwn: false,
@@ -83,13 +81,12 @@ describe("deriveTrainingContentCapabilities", () => {
       },
     );
 
-    it("lets the athlete manage, schedule, and archive their published library instance", () => {
+    it("keeps published Library content copy-only", () => {
       expect(
         deriveTrainingContentCapabilities(
           contentInput({
             source: "library",
             authorId: undefined,
-            available: true,
           }),
         ),
       ).toEqual({
@@ -97,8 +94,7 @@ describe("deriveTrainingContentCapabilities", () => {
         copyToOwn: true,
         edit: false,
         publish: false,
-        manageAvailability: true,
-        schedule: true,
+        schedule: false,
         assign: false,
         provideInitialAssignmentDate: false,
         deleteOwn: false,
@@ -114,7 +110,6 @@ describe("deriveTrainingContentCapabilities", () => {
         {
           edit: true,
           publish: true,
-          manageAvailability: false,
           schedule: false,
           assign: false,
         },
@@ -124,7 +119,6 @@ describe("deriveTrainingContentCapabilities", () => {
         {
           edit: true,
           publish: false,
-          manageAvailability: true,
           schedule: true,
           assign: true,
         },
@@ -134,7 +128,6 @@ describe("deriveTrainingContentCapabilities", () => {
         {
           edit: false,
           publish: false,
-          manageAvailability: false,
           schedule: false,
           assign: false,
         },
@@ -166,7 +159,6 @@ describe("deriveTrainingContentCapabilities", () => {
         view: true,
         edit: false,
         publish: false,
-        manageAvailability: true,
         schedule: true,
         assign: false,
         deleteOwn: false,
@@ -234,7 +226,6 @@ describe("deriveTrainingContentCapabilities", () => {
           copyToOwn: published,
           edit: false,
           publish: false,
-          manageAvailability: published,
           schedule: published,
           assign: false,
           provideInitialAssignmentDate: false,
@@ -267,7 +258,6 @@ describe("deriveTrainingContentCapabilities", () => {
           copyToOwn: false,
           edit,
           publish,
-          manageAvailability: false,
           schedule: false,
           assign: false,
           deleteOwn: false,

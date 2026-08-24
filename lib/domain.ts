@@ -316,11 +316,10 @@ export interface ActiveSession {
 export interface WorkspaceData {
   profile: OwnProfile;
   programCatalog: Program[];
-  availableProgramIds: string[];
-  availablePrograms: Program[];
+  schedulableProgramIds: string[];
+  schedulablePrograms: Program[];
   draftProgram: Program | null;
   activeProgram: Program | null;
-  programTemplates: ProgramTemplate[];
   scheduledWorkouts: ScheduledWorkout[];
   globalExercises: Exercise[];
   personalExercises: Exercise[];

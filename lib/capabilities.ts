@@ -9,7 +9,8 @@ export interface TrainingContentPolicyInput {
   source: Program["sourceType"];
   contentType: NonNullable<Program["contentType"]>;
   lifecycle: Program["versionStatus"];
-  available: boolean;
+  /** Retained only for callers compiled against the pre-simplification policy. */
+  available?: boolean;
   archived?: boolean;
   activeCoachOfOwner: boolean;
   hasAssignableAthletes?: boolean;
@@ -21,7 +22,6 @@ export interface TrainingContentCapabilities {
   copyToOwn: boolean;
   edit: boolean;
   publish: boolean;
-  manageAvailability: boolean;
   schedule: boolean;
   assign: boolean;
   provideInitialAssignmentDate: boolean;
@@ -80,13 +80,12 @@ export function deriveTrainingContentCapabilities(
       !archived &&
       viewerCanAuthor &&
       input.lifecycle === "draft",
-    manageAvailability: view && !archived && published && viewerIsOwner,
     schedule:
       view &&
       !archived &&
       published &&
       viewerIsOwner &&
-      input.available,
+      input.source !== "library",
     assign,
     provideInitialAssignmentDate:
       assign && input.contentType === "quick_workout",

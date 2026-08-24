@@ -23,5 +23,14 @@ test("exercise browsing uses three primary disciplines with compact rows and tag
   assert.match(app, /Weightlifting[\s\S]*Gym[\s\S]*Functional/);
   assert.match(app, /className="exercise-list panel"/);
   assert.match(app, /className="exercise-list-row"/);
+  assert.match(app, /label="Exercise sources"[\s\S]*Library \(\$\{global\.length\}\)[\s\S]*My exercises/);
+  assert.match(app, /Copy \$\{exercise\.name\} to My exercises/);
+  assert.match(app, /function ExerciseDetailsModal/);
+  assert.match(app, /Edit \$\{exercise\.name\}[\s\S]*?onClick=\{\(\) => onEdit\(exercise\)\}/);
+  assert.match(app, /Training style[\s\S]*Category[\s\S]*Logging[\s\S]*Tracking/);
+  assert.match(app, /className=\{cn\("exercise-style-icon", style\)\}/);
+  assert.match(app, /function DraggableExercisePickerRow[\s\S]*?<StyleIcon size=\{15\} \/>/);
+  assert.doesNotMatch(app, /function DraggableExercisePickerRow[\s\S]*?<SourceTag source=\{sourceFromExercise\(exercise\)\} compact \/>/);
+  assert.doesNotMatch(app, /Filter exercises by category/);
   assert.doesNotMatch(app, /className="exercise-grid"/);
 });

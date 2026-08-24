@@ -92,7 +92,7 @@ describe("mobile and accessible interactions", () => {
     const date = localDateOnly();
     const { schedule, session } = calendarFixtures(date);
     const onScheduleDay = vi.fn();
-    const onDeleteSchedule = vi.fn();
+    const onRemoveSchedule = vi.fn();
     const onOpenPlan = vi.fn();
     const onOpenResults = vi.fn();
     const { container } = render(
@@ -105,7 +105,7 @@ describe("mobile and accessible interactions", () => {
         onSchedule={vi.fn()}
         onScheduleDay={onScheduleDay}
         onMoveSchedule={vi.fn()}
-        onDeleteSchedule={onDeleteSchedule}
+        onRemoveSchedule={onRemoveSchedule}
         onOpenPlan={onOpenPlan}
         onOpenResults={onOpenResults}
       />,
@@ -146,7 +146,7 @@ describe("mobile and accessible interactions", () => {
         name: "Remove Fixture workout from the calendar",
       }),
     );
-    expect(onDeleteSchedule).toHaveBeenCalledWith(schedule.id);
+    expect(onRemoveSchedule).toHaveBeenCalledWith(schedule.id);
   });
 
   it("exposes the selected session RPE as a pressed button", () => {

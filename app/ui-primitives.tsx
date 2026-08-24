@@ -45,7 +45,7 @@ const sourceMetadata = {
 
 const statusLabels: Record<DisplayStatus, string> = {
   draft: "Draft",
-  ready: "Ready",
+  ready: "Final",
   in_schedule: "In schedule",
   planned: "Planned",
   in_progress: "In progress",

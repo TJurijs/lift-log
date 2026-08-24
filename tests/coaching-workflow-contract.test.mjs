@@ -134,13 +134,13 @@ test("coach-only workspace tabs stay hidden until they have relevant coaching da
   );
   assert.match(
     programsHome,
-    /hasCoach \? \[\{ value: "coach" as const, label: "Coach", icon: Users \}\] : \[\]/,
+    /\.\.\.\(hasCoach \? \[\{ value: "coach" as const, label: "Coach", icon: Users \}\] : \[\]\)/,
     "the Coach program source must be hidden without an active coach",
   );
   assert.match(
     programsHome,
-    /\{hasCoach && source === "coach" && \(/,
-    "a stale Coach source cannot leave an empty source panel behind",
+    /const content = source === "own" \? own : coach/,
+    "the selected source must resolve to one source collection",
   );
   assert.doesNotMatch(app, /Open any workout/);
 });

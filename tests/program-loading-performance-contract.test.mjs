@@ -24,7 +24,7 @@ test("workspace startup uses program summaries and opens full trees on demand", 
   const catalogLoader = sourceBetween(
     repository,
     "private async loadProgramCatalog",
-    "private async listAvailableProgramIds",
+    "async loadEditableProgram",
   );
 
   assert.match(domain, /weekCount\?: number[\s\S]*workoutCount\?: number[\s\S]*detailsLoaded\?: boolean/);

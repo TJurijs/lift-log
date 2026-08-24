@@ -98,7 +98,6 @@ test("keeps user data behind Supabase and wires every MVP mutation", async () =>
     "scheduleWorkout",
     "deactivateProgram",
     "updateWorkout",
-    "setProgramAvailability",
     "deleteOwnProgram",
     "copyProgramToOwn",
     "addProgramWeek",

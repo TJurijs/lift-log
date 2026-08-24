@@ -183,8 +183,10 @@ test("scheduled workouts can be removed from plans, calendar hover, or availabil
     "function ExercisesView",
   );
   assert.doesNotMatch(calendarView, /Next workout/);
-  assert.match(calendarView, /calendar-event-delete[\s\S]*?onDeleteSchedule\(schedule\.id\)/);
-  assert.match(styles, /\.calendar-planned-event:hover \.calendar-event-delete/);
+  assert.match(calendarView, /calendar-event-remove[\s\S]*?onRemoveSchedule\(schedule\.id\)/);
+  assert.match(calendarView, /CalendarMinus/);
+  assert.doesNotMatch(calendarView, /onDeleteSchedule|Delete from calendar/);
+  assert.match(styles, /\.calendar-planned-event:hover \.calendar-event-remove/);
   assert.match(
     app,
     /onRemoveFromCalendar[\s\S]*?Remove workout from calendar[\s\S]*?Remove from calendar/,
@@ -202,29 +204,27 @@ test("scheduled workouts can be removed from plans, calendar hover, or availabil
   );
 });
 
-test("Library programs can enter scheduling without an Own copy", async () => {
+test("Calendar owns removal while permanent deletion stays in Programs", async () => {
+  const app = await readFile(appUrl, "utf8");
+  const programsHome = sourceBetween(app, "function ProgramsHome", "function CoachProgramEmpty");
+  const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
+
+  assert.doesNotMatch(programsHome, /In schedule|availabilityAction|onAvailability/);
+  assert.match(programsHome, /Final programs and workouts are ready to schedule/);
+  assert.match(programsHome, /programItems[\s\S]*workoutItems/);
+  assert.match(programsHome, />Programs<[/]strong>/);
+  assert.match(programsHome, />Single workouts<[/]strong>/);
+  assert.match(programRow, /onSchedule[\s\S]*?CalendarPlus/);
+  assert.match(programRow, /canDelete && onDelete/);
+});
+
+test("Programs have no template-copy route and remain readable", async () => {
   const [app, styles] = await Promise.all([
     readFile(appUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
   ]);
-  const templateAction = sourceBetween(
-    app,
-    "async function handleTemplateAction",
-    "async function scheduleLibraryProgram",
-  );
-  const templateCard = sourceBetween(
-    app,
-    "function LibraryTemplateCard",
-    "function ProgramsHome",
-  );
-
-  assert.match(templateAction, /intent: "open" \| "copy" \| "schedule"/);
-  assert.match(
-    templateAction,
-    /intent === "schedule"[\s\S]*repository\.setProgramAvailability\(targetProgramId, true\)[\s\S]*repository\.prepareProgramSchedule\(targetProgram\.versionId\)[\s\S]*setModal\("schedule"\)/,
-    "a Library program must become available and open its date picker in one flow",
-  );
-  assert.match(templateCard, /onSchedule[\s\S]*Add to scheduling[\s\S]*CalendarPlus/);
+  assert.doesNotMatch(app, /function LibraryProgramsView|function LibraryTemplateCard/);
+  assert.doesNotMatch(app, /handleTemplateAction|copyProgramToOwn/);
   assert.match(
     styles,
     /\.program-card-description\s*\{[^}]*color: var\(--text-soft\)[^}]*font-size: 10px[^}]*white-space: normal/,

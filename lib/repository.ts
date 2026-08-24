@@ -255,6 +255,8 @@ interface PrescriptionInsert {
 export interface CreateExerciseInput {
   name: string;
   category: string;
+  discipline?: Exercise["discipline"];
+  tags?: string[];
   mode: EntryMode;
   cue: string;
 }
@@ -872,8 +874,6 @@ export class LiftLogRepository {
     const [
       loadedProfile,
       programCatalog,
-      availableProgramIds,
-      programTemplates,
       scheduledWorkouts,
       exercises,
       completedSessions,
@@ -882,8 +882,6 @@ export class LiftLogRepository {
     ] = await Promise.all([
       this.loadOwnProfile(),
       this.loadProgramCatalog(this.viewerId),
-      this.listAvailableProgramIds(),
-      this.listProgramTemplates(),
       this.listScheduledWorkouts(this.viewerId),
       this.listExercises(),
       this.listCompletedSessions(this.viewerId),
@@ -912,9 +910,17 @@ export class LiftLogRepository {
     return {
       profile: loadedProfile.profile,
       programCatalog,
-      availableProgramIds,
-      availablePrograms: programCatalog.filter((program) =>
-        availableProgramIds.includes(program.id),
+      schedulableProgramIds: programCatalog
+        .filter(
+          (program) =>
+            program.versionStatus === "published" &&
+            program.sourceType !== "library",
+        )
+        .map((program) => program.id),
+      schedulablePrograms: programCatalog.filter(
+        (program) =>
+          program.versionStatus === "published" &&
+          program.sourceType !== "library",
       ),
       draftProgram:
         programCatalog.find((program) => program.versionStatus === "draft") ??
@@ -922,10 +928,9 @@ export class LiftLogRepository {
       activeProgram:
         programCatalog.find(
           (program) =>
-            availableProgramIds.includes(program.id) &&
-            program.versionStatus === "published",
+          program.sourceType !== "library" &&
+          program.versionStatus === "published",
         ) ?? null,
-      programTemplates,
       scheduledWorkouts: hydratedSchedules,
       globalExercises: exercises.filter(
         (exercise) => exercise.scope === "global",
@@ -1199,20 +1204,6 @@ export class LiftLogRepository {
             program.versionStatus === "published",
         )
       : programs;
-  }
-
-  private async listAvailableProgramIds() {
-    const rows = await collectAllPages<{ program_id: string }>(
-      "Could not load available programs",
-      (from, to) =>
-        this.client
-          .from("program_availability")
-          .select("program_id")
-          .eq("athlete_id", this.viewerId)
-          .order("program_id")
-          .range(from, to),
-    );
-    return rows.map((row) => row.program_id);
   }
 
   async loadEditableProgram(athleteId: string, programId: string) {
@@ -1864,20 +1855,6 @@ export class LiftLogRepository {
     return String(result.data);
   }
 
-  async setProgramAvailability(programId: string, available: boolean) {
-    const result = await this.client.rpc("set_program_availability", {
-      target_program_id: programId,
-      make_available: available,
-    });
-    if (result.error)
-      fail(
-        available
-          ? "Could not add the program to scheduling"
-          : "Could not remove the program from scheduling",
-        result.error,
-      );
-  }
-
   async deleteOwnProgram(programId: string) {
     const result = await this.client.rpc("delete_own_program", {
       target_program_id: programId,
@@ -2120,10 +2097,12 @@ export class LiftLogRepository {
       .from("exercises")
       .insert({
         scope: "personal",
-        owner_id: this.viewerId,
-        name: input.name,
-        category: input.category || "Custom",
-        cue: input.cue,
+      owner_id: this.viewerId,
+      name: input.name,
+      category: input.category || "Custom",
+      discipline: input.discipline ?? null,
+      tags: input.tags ?? [],
+      cue: input.cue,
         default_entry_mode: input.mode,
         default_tracking_fields: fields,
       })
@@ -2136,17 +2115,55 @@ export class LiftLogRepository {
     return mapExercise(result.data as ExerciseRow, this.viewerName);
   }
 
-  async archivePersonalExercise(exerciseId: string) {
+  async updatePersonalExercise(
+    exerciseId: string,
+    input: CreateExerciseInput,
+  ) {
+    const fields: TrackingField[] =
+      input.mode === "sets"
+        ? ["reps", "load", "rpe"]
+        : input.mode === "result"
+          ? ["duration", "distance", "rpe"]
+          : input.mode === "intervals"
+            ? ["rounds", "duration", "rpe"]
+            : [];
     const result = await this.client
       .from("exercises")
-      .update({ archived_at: new Date().toISOString() })
+      .update({
+        name: input.name,
+        category: input.category || "Custom",
+        discipline: input.discipline ?? null,
+        tags: input.tags ?? [],
+        cue: input.cue,
+        default_entry_mode: input.mode,
+        default_tracking_fields: fields,
+      })
       .eq("id", exerciseId)
       .eq("scope", "personal")
       .eq("owner_id", this.viewerId)
-      .select("id")
+      .select(
+        "id, scope, owner_id, name, category, discipline, tags, cue, default_entry_mode, default_tracking_fields",
+      )
       .maybeSingle();
     if (result.error || !result.data)
-      fail("Could not delete the exercise", result.error);
+      fail("Could not update the exercise", result.error);
+    return mapExercise(result.data as ExerciseRow, this.viewerName);
+  }
+
+  async deletePersonalExercise(exerciseId: string) {
+    const result = await this.client
+      .from("exercises")
+      .delete({ count: "exact" })
+      .eq("id", exerciseId)
+      .eq("scope", "personal")
+      .eq("owner_id", this.viewerId);
+    if (result.error) fail("Could not delete the exercise", result.error);
+    if (result.count !== 1) {
+      fail(
+        "Could not delete the exercise because it no longer exists or is not owned by this account",
+        null,
+      );
+    }
   }
 
   async addWorkout(

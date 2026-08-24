@@ -19,7 +19,16 @@ test("quick workouts use the shared workout tree and can be scheduled or assigne
   assert.match(app, /Create workout/);
   assert.match(app, /createQuickWorkout\(title: string\)/);
   assert.match(app, /contentType === "quick_workout"/);
-  assert.match(app, /setProgramAvailability\(program\.id, true\)/);
+  assert.match(app, /deriveSingleWorkoutStatus/);
+  assert.match(app, /Last completed/);
+  assert.match(app, /upcomingCount > 1/);
+  assert.match(
+    app,
+    /const showProgress =\s*!isQuickWorkout &&\s*program\.versionStatus === "published"/,
+    "single workouts must not render program scheduling progress",
+  );
+  assert.doesNotMatch(app, /isQuickWorkout \? "One session" : "Training program"/);
+  assert.match(app, /Workout finalized\. It is ready to schedule or assign\./);
   assert.match(app, /Assign to athletes/);
   assert.match(app, /Assign & schedule/);
   assert.match(app, /assignQuickWorkoutToAthletes/);
