@@ -47,3 +47,23 @@ programs, workouts, calendar history, or accounts.
 - Subsequent frontend work is deployment-blocked until explicit approval and
   runs at `http://localhost:3000` against hosted development Supabase project
   `ofyeejyfroblunbspgve`.
+
+## Stabilized UI rollout — 2026-08-25 approval
+
+- Product-owner approval superseded the preceding frontend hold.
+- GitHub `main` application commit: `5b5511b`.
+- Active development release: `/srv/liftlog/nonprod/releases/20260824T234303Z`.
+- Retained rollback release: `/srv/liftlog/nonprod/releases/20260824T233658Z`.
+- `npm run build:nonprod` passed and the bundle contained development project
+  ref `ofyeejyfroblunbspgve` with no production project ref.
+- Local and hosted-development migrations matched through `202608250001`; no
+  database migration or data mutation was required for this frontend rollout.
+- Full gate passed: 114 ordinary legacy tests, one intentional hosted-integration
+  skip, and 209 behavior tests.
+- HTTP smoke passed for `/`, `/exercises`, no-cache HTML, and immutable hashed
+  JavaScript (`index-DWB7crRy.js`).
+- Signed-in smoke passed using the development test population: Programs loaded
+  three cards and the new filters, Exercises loaded 144 rows with training-style
+  icons, the 393 × 852 layout had no horizontal overflow and retained the main
+  navigation, and sign-out returned to the authentication screen.
+- Production frontend, production Supabase, and production data were untouched.
