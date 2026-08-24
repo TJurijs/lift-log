@@ -4,6 +4,7 @@ import type {
   Program,
   ScheduledWorkout,
 } from "./domain";
+import { localDateOnly } from "./date-only";
 
 export type WorkoutFocusTiming = "active" | "overdue" | "today" | "future";
 
@@ -37,10 +38,6 @@ export function listUpcomingWorkouts(
         left.sequenceNumber - right.sequenceNumber ||
         left.id.localeCompare(right.id),
     );
-}
-
-function localDateOnly(date = new Date()) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function findProgramWorkout(

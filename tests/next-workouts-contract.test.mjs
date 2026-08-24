@@ -52,7 +52,10 @@ test("finishing a scheduled workout keeps its planned calendar date", async () =
     readFile(migrationUrl, "utf8"),
   ]);
 
-  assert.match(repository, /date: session\.completed_for_date \?\? dateOnly\(start\)/);
+  assert.match(
+    repository,
+    /date: session\.completed_for_date \?\? localDateOnly\(start\)/,
+  );
   assert.match(migration, /add column if not exists completed_for_date date/i);
   assert.match(
     migration,

@@ -1,7 +1,7 @@
 import type { Exercise, Program, ScheduledWorkout } from "./domain";
 
 export type EntitySource = {
-  kind: "library" | "self" | "coach";
+  kind: "library" | "self" | "coach" | "unknown";
   creatorName?: string;
 };
 
@@ -45,7 +45,7 @@ export function sourceFromScheduledWorkout(
   schedule: Pick<ScheduledWorkout, "sourceType" | "createdByName">,
 ): EntitySource {
   return {
-    kind: schedule.sourceType ?? "library",
+    kind: schedule.sourceType ?? "unknown",
     creatorName: schedule.createdByName,
   };
 }

@@ -1,6 +1,7 @@
 import { ChevronDown, FlaskConical, X } from "lucide-react";
 import { useState } from "react";
 import personas from "virtual:liftlog-test-personas";
+import { InlineError } from "./ui-primitives";
 
 export interface TestPersonaChoice {
   key: string;
@@ -51,7 +52,7 @@ function PersonaContent({ password, currentEmail, busyKey, error, onPassword, on
         </button>;
       })}
     </div>
-    {error && <p className="auth-error" role="alert">{error}</p>}
+    {error && <InlineError>{error}</InlineError>}
   </>;
 }
 

@@ -28,7 +28,7 @@ test("coach requests are confirmed in-app without invitation links", async () =>
   const coachingView = sourceBetween(
     app,
     "function CoachingView",
-    "function ModalShell",
+    "function CoachAthleteOverview",
   );
 
   assert.match(inviteModal, /Promise<CoachInviteReceipt>/);
@@ -85,7 +85,7 @@ test("coach requests are confirmed in-app without invitation links", async () =>
   );
   assert.match(
     app,
-    /await repository\.respondToCoachInvite[\s\S]*setWorkspace[\s\S]*try \{[\s\S]*repository\.loadWorkspace\(\)[\s\S]*catch \{[\s\S]*refreshFailed = true/,
+    /await repository\.respondToCoachInvite[\s\S]*setWorkspace[\s\S]*refreshFailed = !\(await refreshCoachWorkspace\(\)\)/,
     "an accepted database mutation must remain successful when the follow-up refresh fails",
   );
   assert.match(
@@ -107,7 +107,11 @@ test("coach-only workspace tabs stay hidden until they have relevant coaching da
     "function ProgramsHome",
     "function CoachProgramEmpty",
   );
-  const coachingView = sourceBetween(app, "function CoachingView", "function ModalShell");
+  const coachingView = sourceBetween(
+    app,
+    "function CoachingView",
+    "function CoachAthleteOverview",
+  );
 
   assert.match(
     coachingView,
@@ -161,7 +165,7 @@ test("published Own programs can be assigned from either coaching entry point", 
   );
   assert.match(
     appShell,
-    /program\.athleteId === viewer\.id[\s\S]*program\.createdById === viewer\.id[\s\S]*program\.sourceType === "self"[\s\S]*program\.versionStatus === "published"[\s\S]*setAssignmentSeed\(\{ programId: program\.id \}\)[\s\S]*setModal\("assign-program"\)/,
+    /capabilitiesForProgram\(program\)\.assign[\s\S]*setAssignmentSeed\(\{ programId: program\.id \}\)[\s\S]*setModal\("assign-program"\)/,
     "an opened program must expose assignment only for the viewer's published Own program",
   );
   assert.match(

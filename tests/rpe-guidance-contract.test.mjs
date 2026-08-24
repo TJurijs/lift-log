@@ -15,8 +15,9 @@ test("planned and actual RPE remain distinct and guided", async () => {
   assert.match(app, /<small>Target<\/small>/);
   assert.match(app, /<strong className=\{`rpe-\$\{rpeTone\(normalizedValue\)\}`\}>RPE \{normalizedValue\}<\/strong>/);
   assert.match(app, /<span>Actual RPE<\/span>/);
-  assert.match(app, /<span>Session RPE<\/span>/);
+  assert.match(app, /<span id="session-rpe-label">Session RPE<\/span>/);
   assert.match(app, /function PlannedRpeSelect/);
+  assert.match(app, /<select[\s\S]*aria-label=\{ariaLabel\}/);
   assert.doesNotMatch(app, /7–8", label/);
   assert.match(app, /function RpeSelect/);
   assert.match(app, /function RpeLegend/);
@@ -25,7 +26,8 @@ test("planned and actual RPE remain distinct and guided", async () => {
   assert.doesNotMatch(app, /Athlete records/);
   assert.match(app, /about 2 reps left/);
   assert.match(app, /rpe: "",/);
-  assert.match(styles, /\.rpe-select-menu/);
+  assert.match(styles, /\.rpe-select-trigger:is\(select\)/);
+  assert.doesNotMatch(styles, /\.rpe-select-menu/);
   assert.match(styles, /\.rpe-result-input > \.rpe-select[\s\S]*overflow: visible/);
   assert.match(styles, /\.planned-rpe-select/);
   assert.match(styles, /\.rpe-very-hard/);

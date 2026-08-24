@@ -1,5 +1,7 @@
 # Lift Log MVP and architecture
 
+The canonical glossary, independent lifecycle axes, viewer-relative provenance rules, and actor/action matrix live in [PRODUCT_MODEL_AND_CAPABILITIES.md](PRODUCT_MODEL_AND_CAPABILITIES.md). This document describes the implemented service architecture; the capability contract controls how that architecture is presented and hardened.
+
 ## Product premise
 
 Every account can create and follow its own program for free. A user can invite one or more other accounts to coach them. Coaching is a revocable permission relationship, not a permanent user role: a person may coach others while being coached themselves.

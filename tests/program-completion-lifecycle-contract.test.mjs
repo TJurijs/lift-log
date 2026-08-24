@@ -33,13 +33,23 @@ test("completed fixed programs leave scheduling and can be explicitly repeated",
   );
   assert.match(
     app,
-    /const completedIds = new Set[\s\S]*availableIds\.includes\(program\.id\)[\s\S]*schedule\.status === "completed" \|\|[\s\S]*schedule\.status === "skipped"/,
-    "terminal finite programs must be recognized in the source list",
+    /const available = programs\.filter\(\(program\) =>[\s\S]*availableIds\.includes\(program\.id\)/,
+    "the source list must derive scheduling availability only from availability",
+  );
+  assert.doesNotMatch(
+    app,
+    /completedIds/,
+    "occurrence completion must not be collapsed into program availability",
   );
   assert.match(
     app,
-    /completed[\s\S]*\? "completed"[\s\S]*: "ready"/,
-    "the source list must distinguish completed from Ready programs",
+    /program\.versionStatus === "draft"[\s\S]*\? "draft"[\s\S]*: available[\s\S]*\? "in_schedule"[\s\S]*: "ready"/,
+    "content lifecycle and scheduling availability must remain separate badge dimensions",
+  );
+  assert.match(
+    app,
+    /schedule\.status === "completed" \? "completed" : "scheduled"/,
+    "completion must remain visible at the workout-occurrence level",
   );
   assert.match(primitives, /ready: "Ready"[\s\S]*in_schedule: "In schedule"[\s\S]*completed: "Completed"/);
   assert.match(
@@ -53,7 +63,7 @@ test("program assignment is hidden without active coachees", async () => {
   const app = await readFile(appPath, "utf8");
   assert.match(
     app,
-    /onAssignProgram=\{[\s\S]*workspace\.coachedAthletes\.length > 0 &&[\s\S]*program\.sourceType === "self"/,
+    /onAssignProgram=\{[\s\S]*capabilitiesForProgram\(program\)\.assign/,
   );
 });
 
@@ -72,7 +82,7 @@ test("saving a program is separate from making it available", async () => {
   );
   assert.match(
     app,
-    /available[\s\S]*?canEdit=\{false\}[\s\S]*?canDelete=\{false\}[\s\S]*?canCopy=\{false\}[\s\S]*?availabilityAction="remove"[\s\S]*?onSchedule=\{onSchedule\}[\s\S]*?onAvailability=\{\(\) => onAvailability\(item, false\)\}/,
+    /available[\s\S]*?canEdit=\{capabilitiesForProgram\(item\)\.edit\}[\s\S]*?canDelete=\{capabilitiesForProgram\(item\)\.deleteOwn\}[\s\S]*?capabilitiesForProgram\(item\)\.manageAvailability[\s\S]*?\? "remove"[\s\S]*?capabilitiesForProgram\(item\)\.schedule[\s\S]*?onAvailability=\{\(\) => onAvailability\(item, false\)\}/,
     "the Available list exposes scheduling before its removal action",
   );
   assert.match(
@@ -81,12 +91,12 @@ test("saving a program is separate from making it available", async () => {
     "availability uses a cross to remove and a checkmark to make available",
   );
   const libraryPanel =
-    app.match(/\{source === "library" && \([\s\S]*?\n        \)\}/)?.[0] ?? "";
+    app.match(/\{source === "library" && \([\s\S]*?\n {8}\)\}/)?.[0] ?? "";
   assert.ok(libraryPanel, "the Library tab must remain present");
-  assert.doesNotMatch(
+  assert.match(
     libraryPanel,
-    /availabilityAction|onAvailability/,
-    "availability controls must not appear in the Library tab",
+    /capabilitiesForProgram\(instance\)\.manageAvailability/,
+    "library instances must use the same capability policy before direct scheduling",
   );
   assert.match(
     app,
@@ -100,7 +110,7 @@ test("saving a program is separate from making it available", async () => {
   );
   assert.match(
     app,
-    /program\.versionStatus === "published" &&[\s\S]*?availableProgramIds[\s\S]*?\.includes\(program\.id\)[\s\S]*?\? \(\) => openSchedule\(\)/,
+    /capabilitiesForProgram\(program\)\.schedule[\s\S]*?\? \(\) => openSchedule\(\)/,
     "a program can be scheduled only after it is made available",
   );
   assert.doesNotMatch(app, /This is the stable version used by scheduled workouts\./);

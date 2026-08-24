@@ -18,8 +18,8 @@ test("coach athlete overview is scoped to the current coach's assignments", asyn
   const app = await readFile(appUrl, "utf8");
   const coaching = sourceBetween(
     app,
-    "function CoachingView",
-    "function ModalShell",
+    "function CoachAthleteOverview",
+    "function CoachAgendaGroup",
   );
 
   assert.doesNotMatch(
@@ -38,7 +38,11 @@ test("coach athlete overview is scoped to the current coach's assignments", asyn
   );
   assert.match(coaching, /assignedProgram\.workoutProgress\.map/);
   assert.match(coaching, /className="program-card-workout-progress"/);
-  assert.match(coaching, /<SourceTag source=\{\{ kind: "coach" \}\} compact \/>/);
+  assert.match(
+    coaching,
+    /<SourceTag[\s\S]*presentation=\{presentProvenance\(\{[\s\S]*origin: "coach"[\s\S]*viewerId,[\s\S]*athleteOwnerId: athlete\.id,[\s\S]*athleteOwnerName: athlete\.name,[\s\S]*authorId: viewerId,[\s\S]*\}\)\}[\s\S]*compact/,
+    "coach-assigned content must use the viewer-aware provenance projection",
+  );
   assert.match(coaching, /coachProgramDisplayStatus\(assignedProgram\.status\)/);
   assert.match(coaching, /onOpenProgram\(assignedProgram\)/);
   assert.match(coaching, /No programs assigned by you/);
@@ -67,7 +71,7 @@ test("coach agenda separates future and completed work with readable RPE states"
   const overview = sourceBetween(
     app,
     "function CoachAthleteOverview",
-    "function ModalShell",
+    "function ExerciseModal",
   );
 
   assert.match(overview, /entry\.kind === "upcoming"/);

@@ -7,14 +7,32 @@ import ts from "typescript";
 const helperPath = fileURLToPath(
   new URL("../lib/workout-focus.ts", import.meta.url),
 );
-const helperSource = await readFile(helperPath, "utf8");
-const compiledHelper = ts.transpileModule(helperSource, {
+const dateOnlyPath = fileURLToPath(
+  new URL("../lib/date-only.ts", import.meta.url),
+);
+const [helperSource, dateOnlySource] = await Promise.all([
+  readFile(helperPath, "utf8"),
+  readFile(dateOnlyPath, "utf8"),
+]);
+const transpileOptions = {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
     target: ts.ScriptTarget.ES2022,
   },
+};
+const compiledDateOnly = ts
+  .transpileModule(dateOnlySource, {
+    ...transpileOptions,
+    fileName: dateOnlyPath,
+  })
+  .outputText.replace(/\bexport\s+/g, "");
+const compiledHelper = ts.transpileModule(helperSource, {
+  ...transpileOptions,
   fileName: helperPath,
-}).outputText;
+}).outputText.replace(
+  /import \{ localDateOnly \} from "\.\/date-only";\s*/,
+  compiledDateOnly,
+);
 const helperModule = await import(
   `data:text/javascript;base64,${Buffer.from(compiledHelper).toString("base64")}`
 );

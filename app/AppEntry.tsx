@@ -1,8 +1,8 @@
 import { Activity, ArrowRight, Check, LockKeyhole } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import LiftLogApp from "./LiftLogApp";
 import TestPersonaSwitcher, { type TestPersonaChoice } from "./TestPersonaSwitcher";
+import { InlineError } from "./ui-primitives";
 import { demoWorkspace } from "../lib/demo-data";
 import {
   demoViewer,
@@ -18,6 +18,16 @@ type AuthStatus = "loading" | "anonymous" | "authenticated" | "demo";
 const localDemoAvailable = import.meta.env.DEV;
 const jwtClockSkewRetryDelays = [750, 1_500];
 const transientWorkspaceRetryDelays = [800];
+const LiftLogApp = lazy(() => import("./LiftLogApp"));
+
+function ProductShellFallback() {
+  return (
+    <main className="auth-loading">
+      <span className="auth-logo">LL</span>
+      <strong>Opening your training space…</strong>
+    </main>
+  );
+}
 
 function workspaceLoadMessage(error: unknown) {
   if (error instanceof Error && /timeout|timed out|statement timeout/i.test(error.message)) {
@@ -78,6 +88,8 @@ export default function AppEntry() {
     const client = getSupabaseBrowserClient();
     return client ? new LiftLogRepository(client, viewer.id, viewer.name) : null;
   }, [session]);
+
+  useEffect(() => () => repository?.dispose(), [repository]);
 
   useEffect(() => {
     const client = getSupabaseBrowserClient();
@@ -232,6 +244,7 @@ export default function AppEntry() {
       setStatus("anonymous");
       return;
     }
+    repository?.dispose();
     const client = getSupabaseBrowserClient();
     await client?.auth.signOut();
     setSession(null);
@@ -257,14 +270,16 @@ export default function AppEntry() {
 
   if (status === "authenticated" && session && workspace && repository) {
     return <>
-      <LiftLogApp
-        key={session.user.id}
-        viewer={viewerFromSupabaseUser(session.user)}
-        onSignOut={signOut}
-        onOpenTestPersonas={testPersonasAvailable ? () => setPersonaSwitcherOpen(true) : undefined}
-        initialWorkspace={workspace}
-        repository={repository}
-      />
+      <Suspense fallback={<ProductShellFallback />}>
+        <LiftLogApp
+          key={session.user.id}
+          viewer={viewerFromSupabaseUser(session.user)}
+          onSignOut={signOut}
+          onOpenTestPersonas={testPersonasAvailable ? () => setPersonaSwitcherOpen(true) : undefined}
+          initialWorkspace={workspace}
+          repository={repository}
+        />
+      </Suspense>
       {personaDialog}
     </>;
   }
@@ -278,7 +293,16 @@ export default function AppEntry() {
   }
 
   if (status === "demo") {
-    return <LiftLogApp viewer={demoViewer} onSignOut={signOut} initialWorkspace={demoWorkspace} repository={null} />;
+    return (
+      <Suspense fallback={<ProductShellFallback />}>
+        <LiftLogApp
+          viewer={demoViewer}
+          onSignOut={signOut}
+          initialWorkspace={demoWorkspace}
+          repository={null}
+        />
+      </Suspense>
+    );
   }
 
   return (
@@ -307,7 +331,7 @@ export default function AppEntry() {
             <button className="auth-provider-button" disabled={connecting} onClick={signInWithGoogle}>
               <span className="google-mark">G</span>{connecting ? "Connecting to Google…" : "Continue with Google"}<ArrowRight size={17} />
             </button>
-            {error && <p className="auth-error" role="alert">{error}</p>}
+            {error && <InlineError>{error}</InlineError>}
             {testPersonasAvailable && <TestPersonaSwitcher
               variant="inline"
               password={personaPassword}

@@ -16,7 +16,6 @@ import {
   Gauge,
   LayoutDashboard,
   Layers3,
-  ListPlus,
   LoaderCircle,
   LockKeyhole,
   LogOut,
@@ -27,7 +26,6 @@ import {
   Save,
   Search,
   Settings2,
-  Timer,
   Trash2,
   TrendingUp,
   UserPlus,
@@ -54,13 +52,14 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ActiveSession,
   AthleteSummary,
   CoachAgendaEntry,
   CoachAssignedProgramSummary,
   CoachConnection,
+  CoachingWorkspaceData,
   CoachInviteReceipt,
   CoachInviteTarget,
   CompletedSession,
@@ -87,24 +86,56 @@ import type {
 import type { AppViewer } from "../lib/auth";
 import type { LiftLogRepository } from "../lib/repository";
 import {
+  deriveOccurrenceCapabilities,
+  deriveTrainingContentCapabilities,
+  requireCapability,
+  type OccurrenceCapabilities,
+  type TrainingContentCapabilities,
+} from "../lib/capabilities";
+import { localDateOnly } from "../lib/date-only";
+import {
+  SessionDraftCoordinator,
+  type SessionDraftSaveStatus,
+} from "../lib/session-draft-coordinator";
+import {
   cn,
   formatDuration,
   formatWorkoutCount,
   getInitials,
   sourceFromExercise,
-  sourceFromProgram,
   sourceFromScheduledWorkout,
 } from "../lib/presentation";
+import {
+  presentProgramProvenance,
+  presentProvenance,
+} from "../lib/provenance";
+import {
+  formatWeight,
+  weightInputValue,
+  weightKgValue,
+} from "../lib/units";
+import {
+  moveProgramExercise,
+  programWeekCount,
+  programWorkoutCount,
+  programWorkoutIds,
+  reorderProgramSections,
+  reorderProgramWorkouts,
+} from "../lib/program-tree";
 import {
   listUpcomingWorkouts,
   selectNextWorkoutFocus,
 } from "../lib/workout-focus";
 import {
   AsyncButton,
+  InlineError,
+  ModalShell,
   PersonAvatar,
   SegmentedTabs,
+  SessionSaveIndicator,
   SourceTag,
   StatusBadge,
+  Toast,
   WorkoutSectionHeading,
 } from "./ui-primitives";
 
@@ -138,6 +169,18 @@ type ModalName =
   | "account"
   | null;
 type SetLog = SessionSetValue;
+type SessionDraftSnapshot = {
+  session: ActiveSession;
+  setLogs: Record<string, SetLog[]>;
+  resultLogs: Record<string, Record<string, string>>;
+  sessionRpe: string;
+  sessionNote: string;
+};
+type SessionDraftQueueState = {
+  sessionId: string;
+  repository: LiftLogRepository;
+  coordinator: SessionDraftCoordinator<SessionDraftSnapshot>;
+};
 type ProgramSourceTab = "library" | "own" | "coach";
 type ProgramAction = {
   id: string;
@@ -150,131 +193,14 @@ type CompletedWorkoutViewState = {
   error: string;
   returnView: "calendar" | "coaching";
 };
-
-function orderByIds<T extends { id: string }>(items: T[], ids: string[]) {
-  const itemsById = new Map(items.map((item) => [item.id, item]));
-  return ids
-    .map((id) => itemsById.get(id))
-    .filter((item): item is T => Boolean(item));
-}
-
-function programWeekCount(program: Program) {
-  return program.detailsLoaded === false
-    ? program.weekCount ?? 0
-    : program.weeks.length;
-}
-
-function programWorkoutCount(program: Program) {
-  return program.detailsLoaded === false
-    ? program.workoutCount ?? 0
-    : program.weeks.reduce(
-        (total, week) => total + week.workouts.length,
-        0,
-      );
-}
-
-function programWorkoutIds(program: Program) {
-  return program.detailsLoaded === false
-    ? program.workoutIds ?? []
-    : program.weeks.flatMap((week) => week.workouts.map((workout) => workout.id));
-}
-
-function reorderProgramWorkouts(
-  source: Program,
-  weekId: string,
-  workoutIds: string[],
-) {
-  return {
-    ...source,
-    weeks: source.weeks.map((week) =>
-      week.id === weekId
-        ? { ...week, workouts: orderByIds(week.workouts, workoutIds) }
-        : week,
-    ),
-  };
-}
-
-function reorderProgramSections(
-  source: Program,
-  workoutId: string,
-  sectionIds: string[],
-) {
-  return {
-    ...source,
-    weeks: source.weeks.map((week) => ({
-      ...week,
-      workouts: week.workouts.map((workout) =>
-        workout.id === workoutId
-          ? { ...workout, sections: orderByIds(workout.sections, sectionIds) }
-          : workout,
-      ),
-    })),
-  };
-}
-
-function moveProgramExercise(
-  source: Program,
-  workoutId: string,
-  itemId: string,
-  destinationSectionId: string,
-  destinationPosition: number,
-) {
-  const workout = source.weeks
-    .flatMap((week) => week.workouts)
-    .find((candidate) => candidate.id === workoutId);
-  const movingItem = workout?.sections
-    .flatMap((section) => section.items)
-    .find((item) => item.id === itemId);
-  if (!movingItem) return source;
-
-  return {
-    ...source,
-    weeks: source.weeks.map((week) => ({
-      ...week,
-      workouts: week.workouts.map((candidate) => {
-        if (candidate.id !== workoutId) return candidate;
-        const withoutMovingItem = candidate.sections.map((section) => ({
-          ...section,
-          items: section.items.filter((item) => item.id !== itemId),
-        }));
-        return {
-          ...candidate,
-          sections: withoutMovingItem.map((section) => {
-            if (section.id !== destinationSectionId) return section;
-            const nextItems = [...section.items];
-            const insertionIndex = Math.max(
-              0,
-              Math.min(destinationPosition, nextItems.length),
-            );
-            nextItems.splice(insertionIndex, 0, movingItem);
-            return { ...section, items: nextItems };
-          }),
-        };
-      }),
-    })),
-  };
-}
-
-const KG_PER_LB = 0.45359237;
-
-function formatWeight(valueKg: number, weightUnit: OwnProfile["weightUnit"]) {
-  const displayValue = weightUnit === "lb" ? valueKg / KG_PER_LB : valueKg;
-  return Number(displayValue.toFixed(weightUnit === "lb" ? 1 : 2)).toString();
-}
-
-function weightInputValue(valueKg: string, weightUnit: OwnProfile["weightUnit"]) {
-  const parsed = Number(valueKg);
-  return valueKg.trim() && Number.isFinite(parsed)
-    ? formatWeight(parsed, weightUnit)
-    : valueKg;
-}
-
-function weightKgValue(value: string, weightUnit: OwnProfile["weightUnit"]) {
-  const parsed = Number(value);
-  if (!value.trim() || !Number.isFinite(parsed)) return value;
-  const kilograms = weightUnit === "lb" ? parsed * KG_PER_LB : parsed;
-  return Number(kilograms.toFixed(3)).toString();
-}
+type DetailState =
+  | {
+      kind: "workout-preview";
+      schedule: ScheduledWorkout;
+      returnView: "today" | "calendar";
+    }
+  | ({ kind: "completed-workout" } & CompletedWorkoutViewState)
+  | null;
 
 function prescriptionEntries(item: WorkoutItem) {
   return item.prescription.entries?.length
@@ -354,8 +280,28 @@ function starterSetLogs(
   return logs;
 }
 
-function localDateOnly(date = new Date()) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+function createSessionDraftCoordinator(
+  repository: LiftLogRepository,
+  initialRevision: number,
+  online: boolean,
+  onStatusChange: (status: SessionDraftSaveStatus) => void,
+  onError: (error: unknown) => void,
+) {
+  return new SessionDraftCoordinator<SessionDraftSnapshot>(
+    async ({ expectedRevision, writeToken, snapshot }) => {
+      const result = await repository.saveSessionDraft(
+        snapshot.session,
+        snapshot.setLogs,
+        snapshot.resultLogs,
+        snapshot.sessionRpe,
+        snapshot.sessionNote,
+        expectedRevision,
+        writeToken,
+      );
+      return result.revision;
+    },
+    { initialRevision, online, onError, onStatusChange },
+  );
 }
 
 async function copyText(value: string) {
@@ -376,6 +322,13 @@ async function copyText(value: string) {
   } catch {
     return false;
   }
+}
+
+export function scrollToAppTop() {
+  const reduceMotion = window.matchMedia?.(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+  window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
 }
 
 export default function LiftLogApp({
@@ -408,9 +361,6 @@ export default function LiftLogApp({
   );
   const [sectionDeleteTarget, setSectionDeleteTarget] =
     useState<WorkoutSection | null>(null);
-  const [personalExercises, setPersonalExercises] = useState<Exercise[]>(
-    initialWorkspace.personalExercises,
-  );
   const [exerciseDeleteTarget, setExerciseDeleteTarget] =
     useState<Exercise | null>(null);
   const [exerciseScope, setExerciseScope] = useState<"global" | "personal">(
@@ -435,12 +385,7 @@ export default function LiftLogApp({
   const [scheduleStatusAction, setScheduleStatusAction] = useState<
     { id: string; status: "planned" | "skipped" } | null
   >(null);
-  const [workoutPreviewSchedule, setWorkoutPreviewSchedule] =
-    useState<ScheduledWorkout | null>(null);
-  const [workoutPreviewReturnView, setWorkoutPreviewReturnView] =
-    useState<"today" | "calendar">("today");
-  const [completedWorkoutView, setCompletedWorkoutView] =
-    useState<CompletedWorkoutViewState | null>(null);
+  const [detail, setDetail] = useState<DetailState>(null);
   const [sessionRpe, setSessionRpe] = useState(
     initialWorkspace.activeSession?.sessionRpe ?? "7",
   );
@@ -448,11 +393,73 @@ export default function LiftLogApp({
     initialWorkspace.activeSession?.sessionNote ?? "",
   );
   const [toast, setToast] = useState("");
-  const [coachMode, setCoachMode] = useState<"athlete" | "coach">("athlete");
+  const toastTimerRef = useRef<number | null>(null);
+  const notify = useCallback((message: string) => {
+    if (toastTimerRef.current !== null)
+      window.clearTimeout(toastTimerRef.current);
+    setToast(message);
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null;
+      setToast("");
+    }, 2600);
+  }, []);
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current !== null)
+        window.clearTimeout(toastTimerRef.current);
+    },
+    [],
+  );
+  const sessionDraftQueueRef = useRef<SessionDraftQueueState | null>(null);
+  const sessionDraftSaveTimerRef = useRef<number | null>(null);
+  const latestSessionDraftRef = useRef<SessionDraftSnapshot | null>(null);
+  const observedSessionDraftIdRef = useRef<string | null>(null);
+  const completionTokenRef = useRef<{
+    sessionId: string;
+    token: string;
+  } | null>(null);
+  const [sessionSaveStatus, setSessionSaveStatus] =
+    useState<SessionDraftSaveStatus>("saved");
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const onlineRef = useRef(isOnline);
+  const ensureSessionDraftQueue = useCallback(
+    (session: ActiveSession, targetRepository: LiftLogRepository) => {
+      const current = sessionDraftQueueRef.current;
+      if (
+        current?.sessionId === session.id &&
+        current.repository === targetRepository
+      ) {
+        return current.coordinator;
+      }
+
+      current?.coordinator.close();
+      const coordinator = createSessionDraftCoordinator(
+        targetRepository,
+        session.draftRevision ?? 0,
+        onlineRef.current,
+        setSessionSaveStatus,
+        () => notify("Workout changes are unsaved — retry when connected"),
+      );
+      sessionDraftQueueRef.current = {
+        sessionId: session.id,
+        repository: targetRepository,
+        coordinator,
+      };
+      return coordinator;
+    },
+    [notify],
+  );
+  const [requestedCoachMode, setCoachMode] = useState<"athlete" | "coach">(
+    "athlete",
+  );
   const coachingRefreshRef = useRef(false);
   const [coachingRefreshing, setCoachingRefreshing] = useState(false);
-  const [selectedAthlete, setSelectedAthlete] = useState<AthleteSummary | null>(
-    initialWorkspace.coachedAthletes[0] ?? null,
+  const coachingDetailRequestsRef = useRef(new Set<string>());
+  const [coachingDetailLoadingId, setCoachingDetailLoadingId] = useState<
+    string | null
+  >(null);
+  const [selectedAthleteId, setSelectedAthleteId] = useState<string | null>(
+    initialWorkspace.coachedAthletes[0]?.id ?? null,
   );
   const [openingCoachProgramId, setOpeningCoachProgramId] = useState<
     string | null
@@ -482,7 +489,7 @@ export default function LiftLogApp({
   const [scheduleOpening, setScheduleOpening] = useState(false);
   const completedWorkoutRequestRef = useRef(0);
   const [programOwnerId, setProgramOwnerId] = useState(viewer.id);
-  const [programSource, setProgramSource] =
+  const [requestedProgramSource, setProgramSource] =
     useState<ProgramSourceTab>("library");
   const [activatingTemplateId, setActivatingTemplateId] = useState<
     string | null
@@ -502,13 +509,56 @@ export default function LiftLogApp({
   const hasAthleteWorkspace =
     workspace.coachedAthletes.length > 0 ||
     workspace.pendingCoachInvites.length > 0;
+  const coachMode = hasAthleteWorkspace ? requestedCoachMode : "athlete";
+  const programSource =
+    requestedProgramSource === "coach" && !hasCoach
+      ? "library"
+      : requestedProgramSource;
   const programCatalog = workspace.programCatalog ?? availablePrograms;
+  const workoutPreviewSchedule =
+    detail?.kind === "workout-preview" ? detail.schedule : null;
+  const workoutPreviewReturnView =
+    detail?.kind === "workout-preview" ? detail.returnView : "today";
+  const completedWorkoutView =
+    detail?.kind === "completed-workout" ? detail : null;
+  const selectedAthlete =
+    workspace.coachedAthletes.find(
+      (athlete) => athlete.id === selectedAthleteId,
+    ) ??
+    workspace.coachedAthletes[0] ??
+    null;
+  function capabilitiesForProgram(
+    targetProgram: Program,
+  ): TrainingContentCapabilities {
+    return deriveTrainingContentCapabilities({
+      viewerId: viewer.id,
+      athleteOwnerId: targetProgram.athleteId,
+      authorId: targetProgram.createdById,
+      source: targetProgram.sourceType,
+      contentType: targetProgram.contentType ?? "program",
+      lifecycle: targetProgram.versionStatus,
+      available: (workspace.availableProgramIds ?? []).includes(
+        targetProgram.id,
+      ),
+      activeCoachOfOwner: workspace.coachedAthletes.some(
+        (athlete) => athlete.id === targetProgram.athleteId,
+      ),
+      hasAssignableAthletes: workspace.coachedAthletes.length > 0,
+      coachReadScope: "authored_only",
+    });
+  }
+  function capabilitiesForOccurrence(
+    schedule: ScheduledWorkout,
+  ): OccurrenceCapabilities {
+    return deriveOccurrenceCapabilities({
+      viewerId: viewer.id,
+      athleteOwnerId: viewer.id,
+      status: schedule.status,
+      activeCoachOfOwner: false,
+    });
+  }
   const assignableOwnPrograms = programCatalog.filter(
-    (candidate) =>
-      candidate.athleteId === viewer.id &&
-      candidate.createdById === viewer.id &&
-      candidate.sourceType === "self" &&
-      candidate.versionStatus === "published",
+    (candidate) => capabilitiesForProgram(candidate).assign,
   );
   const currentWeek = program?.weeks[selectedWeek - 1] ?? program?.weeks[0];
   const workoutFocus = selectNextWorkoutFocus(
@@ -549,35 +599,87 @@ export default function LiftLogApp({
   const [resultLogs, setResultLogs] = useState<
     Record<string, Record<string, string>>
   >(initialWorkspace.activeSession?.resultLogs ?? {});
+  const activeSessionId = activeSession?.id;
+
+  useEffect(() => {
+    const updateConnection = () => {
+      const online = navigator.onLine;
+      onlineRef.current = online;
+      setIsOnline(online);
+      sessionDraftQueueRef.current?.coordinator.setOnline(online);
+    };
+    window.addEventListener("online", updateConnection);
+    window.addEventListener("offline", updateConnection);
+    return () => {
+      window.removeEventListener("online", updateConnection);
+      window.removeEventListener("offline", updateConnection);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!repository || !activeSession) {
+      sessionDraftQueueRef.current?.coordinator.close();
+      sessionDraftQueueRef.current = null;
+      latestSessionDraftRef.current = null;
+      observedSessionDraftIdRef.current = null;
+      completionTokenRef.current = null;
+      return;
+    }
+    const coordinator = ensureSessionDraftQueue(activeSession, repository);
+    coordinator.setOnline(onlineRef.current);
+    return () => {
+      const current = sessionDraftQueueRef.current;
+      if (current?.coordinator !== coordinator) return;
+      coordinator.close();
+      sessionDraftQueueRef.current = null;
+    };
+  }, [activeSession, activeSessionId, ensureSessionDraftQueue, repository]);
 
   useEffect(() => {
     if (!repository || !activeSession || !workoutStarted) return;
+    const coordinator = ensureSessionDraftQueue(activeSession, repository);
+    const snapshot: SessionDraftSnapshot = {
+      session: activeSession,
+      setLogs,
+      resultLogs,
+      sessionRpe,
+      sessionNote,
+    };
+    latestSessionDraftRef.current = snapshot;
+    if (observedSessionDraftIdRef.current !== activeSession.id) {
+      observedSessionDraftIdRef.current = activeSession.id;
+      return;
+    }
+
+    coordinator.stage(snapshot);
+    if (!onlineRef.current) {
+      coordinator.setOnline(false);
+      return;
+    }
     const saveTimer = window.setTimeout(() => {
-      void repository
-        .saveSessionDraft(activeSession, setLogs, resultLogs)
-        .catch(() => {
-          notify("Autosave paused — check your connection");
-        });
+      if (sessionDraftSaveTimerRef.current === saveTimer) {
+        sessionDraftSaveTimerRef.current = null;
+      }
+      if (workoutActionRef.current === "finishing") return;
+      coordinator.save();
     }, 650);
-    return () => window.clearTimeout(saveTimer);
-  }, [activeSession, repository, resultLogs, setLogs, workoutStarted]);
-
-  useEffect(() => {
-    if (!hasAthleteWorkspace) {
-      setCoachMode("athlete");
-    }
-  }, [hasAthleteWorkspace]);
-
-  useEffect(() => {
-    if (programSource === "coach" && !hasCoach) {
-      setProgramSource("library");
-    }
-  }, [hasCoach, programSource]);
-
-  function notify(message: string) {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
-  }
+    sessionDraftSaveTimerRef.current = saveTimer;
+    return () => {
+      window.clearTimeout(saveTimer);
+      if (sessionDraftSaveTimerRef.current === saveTimer) {
+        sessionDraftSaveTimerRef.current = null;
+      }
+    };
+  }, [
+    activeSession,
+    ensureSessionDraftQueue,
+    repository,
+    resultLogs,
+    sessionNote,
+    sessionRpe,
+    setLogs,
+    workoutStarted,
+  ]);
 
   function selectProgram(
     nextProgram: Program,
@@ -645,7 +747,6 @@ export default function LiftLogApp({
       workoutStarted,
     );
     setWorkspace(nextWorkspace);
-    setPersonalExercises(nextWorkspace.personalExercises);
     setActiveSession(nextWorkspace.activeSession);
     if (!preserveActiveDraft) {
       setSetLogs(
@@ -658,12 +759,12 @@ export default function LiftLogApp({
       setSessionNote(nextWorkspace.activeSession?.sessionNote ?? "");
     }
     setWorkoutStarted(Boolean(nextWorkspace.activeSession));
-    setSelectedAthlete(
-      (previous) =>
+    setSelectedAthleteId(
+      (previousId) =>
         nextWorkspace.coachedAthletes.find(
-          (athlete) => athlete.id === previous?.id,
-        ) ??
-        nextWorkspace.coachedAthletes[0] ??
+          (athlete) => athlete.id === previousId,
+        )?.id ??
+        nextWorkspace.coachedAthletes[0]?.id ??
         null,
     );
     if (program?.athleteId === viewer.id) {
@@ -743,32 +844,111 @@ export default function LiftLogApp({
       setProgram(null);
       setProgramOwnerId(viewer.id);
     }
+    if (
+      view === "coaching" &&
+      coachMode === "coach" &&
+      selectedAthlete?.detailsLoaded === false
+    ) {
+      void loadCoachedAthleteDetail(selectedAthlete.id);
+    }
     setActiveView(view);
-    if (view === "coaching") void refreshCoachWorkspace();
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    scrollToAppTop();
   }
 
-  async function refreshCoachWorkspace() {
-    if (!repository || coachingRefreshRef.current) return;
+  function applyCoachingWorkspace(nextCoaching: CoachingWorkspaceData) {
+    setWorkspace((previous) => ({ ...previous, ...nextCoaching }));
+    setSelectedAthleteId(
+      (previousId) =>
+        nextCoaching.coachedAthletes.find(
+          (athlete) => athlete.id === previousId,
+        )?.id ??
+        nextCoaching.coachedAthletes[0]?.id ??
+        null,
+    );
+  }
+
+  async function loadCoachedAthleteDetail(
+    athleteId: string,
+    force = false,
+  ): Promise<boolean> {
+    if (!repository) return true;
+    const current = workspace.coachedAthletes.find(
+      (athlete) => athlete.id === athleteId,
+    );
+    if (!force && current?.detailsLoaded !== false) return true;
+    if (coachingDetailRequestsRef.current.has(athleteId)) return false;
+    coachingDetailRequestsRef.current.add(athleteId);
+    setCoachingDetailLoadingId(athleteId);
+    try {
+      const detail = await repository.loadCoachedAthleteDetail(athleteId);
+      if (!detail) throw new Error("This coaching connection is no longer active.");
+      setWorkspace((previous) => ({
+        ...previous,
+        coachedAthletes: previous.coachedAthletes.map((athlete) =>
+          athlete.id === athleteId ? detail : athlete,
+        ),
+      }));
+      return true;
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "The athlete overview could not be loaded",
+      );
+      return false;
+    } finally {
+      coachingDetailRequestsRef.current.delete(athleteId);
+      setCoachingDetailLoadingId((currentId) =>
+        currentId === athleteId ? null : currentId,
+      );
+    }
+  }
+
+  async function refreshCoachWorkspace(): Promise<boolean> {
+    if (!repository) return true;
+    if (coachingRefreshRef.current) return false;
     coachingRefreshRef.current = true;
     setCoachingRefreshing(true);
     try {
-      applyWorkspace(await repository.loadWorkspace());
+      const nextCoaching = await repository.loadCoachingWorkspace();
+      const nextSelectedId =
+        nextCoaching.coachedAthletes.find(
+          (athlete) => athlete.id === selectedAthleteId,
+        )?.id ?? nextCoaching.coachedAthletes[0]?.id;
+      applyCoachingWorkspace(nextCoaching);
+      if (coachMode === "coach" && nextSelectedId) {
+        await loadCoachedAthleteDetail(nextSelectedId, true);
+      }
+      return true;
     } catch (error) {
       notify(
         error instanceof Error
           ? error.message
           : "The coach workspace could not be refreshed",
       );
+      return false;
     } finally {
       coachingRefreshRef.current = false;
       setCoachingRefreshing(false);
     }
   }
 
-  async function changeCoachMode(nextMode: "athlete" | "coach") {
+  function changeCoachMode(nextMode: "athlete" | "coach") {
     setCoachMode(nextMode);
-    if (nextMode === "coach") await refreshCoachWorkspace();
+    if (
+      nextMode === "coach" &&
+      selectedAthlete &&
+      selectedAthlete.detailsLoaded === false
+    ) {
+      void loadCoachedAthleteDetail(selectedAthlete.id);
+    }
+  }
+
+  function selectCoachedAthlete(athlete: AthleteSummary) {
+    setSelectedAthleteId(athlete.id);
+    if (athlete.detailsLoaded === false) {
+      void loadCoachedAthleteDetail(athlete.id);
+    }
   }
 
   function updateSet(
@@ -825,6 +1005,10 @@ export default function LiftLogApp({
     setWorkoutAction("starting");
     setStartingScheduleId(schedule.id);
     try {
+      requireCapability(
+        capabilitiesForOccurrence(schedule),
+        "startOrResume",
+      );
       const detailedSchedule = await ensureScheduledWorkoutDetails(schedule);
       const workout = detailedSchedule.workout;
       if (!repository) {
@@ -842,13 +1026,15 @@ export default function LiftLogApp({
         versionId,
       );
       if (!session) throw new Error("The workout session was not created.");
+      completionTokenRef.current = null;
+      setSessionSaveStatus("saved");
       setActiveSession(session);
       setSetLogs(starterSetLogs(workout, session));
       setResultLogs(session.resultLogs);
       setSessionRpe(session.sessionRpe);
       setSessionNote(session.sessionNote);
       setWorkoutStarted(true);
-      setWorkoutPreviewSchedule(null);
+      setDetail(null);
       notify("Workout started · changes save automatically");
     } catch (error) {
       notify(
@@ -869,9 +1055,11 @@ export default function LiftLogApp({
   ) {
     try {
       const detailedSchedule = await ensureScheduledWorkoutDetails(schedule);
-      setCompletedWorkoutView(null);
-      setWorkoutPreviewReturnView(returnView);
-      setWorkoutPreviewSchedule(detailedSchedule);
+      setDetail({
+        kind: "workout-preview",
+        schedule: detailedSchedule,
+        returnView,
+      });
       setSetLogs(starterSetLogs(detailedSchedule.workout, null));
       setResultLogs({});
       setSessionRpe("7");
@@ -894,15 +1082,41 @@ export default function LiftLogApp({
     setWorkoutAction("finishing");
     try {
       if (repository && activeSession) {
-        await repository.saveSessionDraft(activeSession, setLogs, resultLogs);
+        if (!onlineRef.current) {
+          throw new Error("Reconnect before finishing this workout");
+        }
+        if (sessionDraftSaveTimerRef.current !== null) {
+          window.clearTimeout(sessionDraftSaveTimerRef.current);
+          sessionDraftSaveTimerRef.current = null;
+        }
+        const coordinator = ensureSessionDraftQueue(activeSession, repository);
+        const confirmedRevision = await coordinator.flushLatest({
+          session: activeSession,
+          setLogs,
+          resultLogs,
+          sessionRpe,
+          sessionNote,
+        });
+        const completionToken =
+          completionTokenRef.current?.sessionId === activeSession.id
+            ? completionTokenRef.current.token
+            : crypto.randomUUID();
+        completionTokenRef.current = {
+          sessionId: activeSession.id,
+          token: completionToken,
+        };
         await repository.completeSession(
           activeSession.id,
           sessionRpe,
           sessionNote,
+          confirmedRevision,
+          completionToken,
         );
         const nextWorkspace = await repository.loadWorkspace();
         applyWorkspace(nextWorkspace);
+        completionTokenRef.current = null;
         setActiveSession(null);
+        setSessionSaveStatus("saved");
         setWorkoutComplete(false);
         setWorkoutStarted(false);
         notify("Session saved · next workout is ready when you are");
@@ -1599,7 +1813,10 @@ export default function LiftLogApp({
         defaultFields: fields,
       };
     }
-    setPersonalExercises((previous) => [...previous, exercise]);
+    setWorkspace((previous) => ({
+      ...previous,
+      personalExercises: [...previous.personalExercises, exercise],
+    }));
     setExerciseScope("personal");
     setModal(null);
     notify(`${name} saved to your library`);
@@ -1610,9 +1827,12 @@ export default function LiftLogApp({
       throw new Error("Only exercises in My exercises can be deleted.");
     }
     if (repository) await repository.archivePersonalExercise(exercise.id);
-    setPersonalExercises((previous) =>
-      previous.filter((candidate) => candidate.id !== exercise.id),
-    );
+    setWorkspace((previous) => ({
+      ...previous,
+      personalExercises: previous.personalExercises.filter(
+        (candidate) => candidate.id !== exercise.id,
+      ),
+    }));
     setExerciseDeleteTarget(null);
     setModal(null);
     notify(`${exercise.name} removed from your library`);
@@ -1626,6 +1846,7 @@ export default function LiftLogApp({
     }
     setProgramAction({ id: program.id, kind: "publish" });
     try {
+      requireCapability(capabilitiesForProgram(program), "publish");
       const nextDescription = description.trim();
       if (nextDescription !== program.description) {
         await repository.updateProgramDescription(program.id, nextDescription);
@@ -1682,6 +1903,7 @@ export default function LiftLogApp({
     if (programAction) return;
     setProgramAction({ id: targetProgram.id, kind: "edit" });
     try {
+      requireCapability(capabilitiesForProgram(targetProgram), "edit");
       selectProgram(
         await repository.loadEditableProgram(
           targetProgram.athleteId,
@@ -1740,7 +1962,7 @@ export default function LiftLogApp({
     if (repository) {
       try {
         await repository.endCoachRelationship(connection.relationshipId);
-        applyWorkspace(await repository.loadWorkspace());
+        await refreshCoachWorkspace();
       } catch (error) {
         notify(
           error instanceof Error
@@ -1794,7 +2016,7 @@ export default function LiftLogApp({
     }));
     if (repository) {
       try {
-        applyWorkspace(await repository.loadWorkspace());
+        await refreshCoachWorkspace();
       } catch {
         // The request succeeded; the optimistic row remains visible.
       }
@@ -1815,7 +2037,7 @@ export default function LiftLogApp({
       }));
       if (repository) {
         try {
-          applyWorkspace(await repository.loadWorkspace());
+          await refreshCoachWorkspace();
         } catch {
           // Cancellation succeeded; keep the local removal and allow refresh.
         }
@@ -1871,6 +2093,8 @@ export default function LiftLogApp({
                   relationshipId: `pending-refresh-${invitation.id}`,
                   name: invitation.athleteName,
                   initials: invitation.athleteInitials,
+                  assignedProgramCount: 0,
+                  detailsLoaded: false,
                   assignedPrograms: [],
                   agenda: [],
                 },
@@ -1880,11 +2104,7 @@ export default function LiftLogApp({
 
       let refreshFailed = false;
       if (repository) {
-        try {
-          applyWorkspace(await repository.loadWorkspace());
-        } catch {
-          refreshFailed = true;
-        }
+        refreshFailed = !(await refreshCoachWorkspace());
       }
       notify(
         response === "accepted"
@@ -1910,6 +2130,7 @@ export default function LiftLogApp({
       (candidate) => candidate.id === programId,
     );
     if (!sourceProgram) throw new Error("Choose a finished Own program.");
+    requireCapability(capabilitiesForProgram(sourceProgram), "assign");
     if (!athleteIds.length) throw new Error("Choose at least one athlete.");
     const assignments = repository
       ? await repository.assignOwnProgramToAthletes(programId, athleteIds)
@@ -1960,19 +2181,12 @@ export default function LiftLogApp({
       ...previous,
       coachedAthletes: previous.coachedAthletes.map(withOptimisticAssignment),
     }));
-    setSelectedAthlete((previous) =>
-      previous ? withOptimisticAssignment(previous) : previous,
-    );
     setAssignmentSeed({});
     setModal(null);
 
     let refreshFailed = false;
     if (repository) {
-      try {
-        applyWorkspace(await repository.loadWorkspace());
-      } catch {
-        refreshFailed = true;
-      }
+      refreshFailed = !(await refreshCoachWorkspace());
     }
     const createdCount = assignments.filter(
       (assignment) => assignment.created,
@@ -1995,6 +2209,10 @@ export default function LiftLogApp({
     );
     if (!workout || workout.contentType !== "quick_workout")
       throw new Error("Choose a finished quick workout.");
+    requireCapability(
+      capabilitiesForProgram(workout),
+      "provideInitialAssignmentDate",
+    );
     if (!athleteIds.length) throw new Error("Choose at least one athlete.");
     const assignments = repository
       ? await repository.assignQuickWorkoutToAthletes(
@@ -2007,7 +2225,7 @@ export default function LiftLogApp({
           programId: `assigned-${programId}-${athleteId}`,
           created: true,
         }));
-    if (repository) applyWorkspace(await repository.loadWorkspace());
+    if (repository) await refreshCoachWorkspace();
     setAssignmentSeed({});
     setModal(null);
     notify(
@@ -2235,6 +2453,10 @@ export default function LiftLogApp({
     if (!repository || programAction) return;
     setProgramAction({ id: targetProgram.id, kind: "availability" });
     try {
+      requireCapability(
+        capabilitiesForProgram(targetProgram),
+        "manageAvailability",
+      );
       await repository.setProgramAvailability(targetProgram.id, true);
       await repository.prepareProgramSchedule(targetProgram.versionId);
       const nextWorkspace = await repository.loadWorkspace();
@@ -2267,6 +2489,10 @@ export default function LiftLogApp({
     if (!repository || programAction) return;
     setProgramAction({ id: targetProgram.id, kind: "availability" });
     try {
+      requireCapability(
+        capabilitiesForProgram(targetProgram),
+        "manageAvailability",
+      );
       await repository.setProgramAvailability(targetProgram.id, available);
       applyWorkspace(await repository.loadWorkspace());
       notify(
@@ -2289,6 +2515,7 @@ export default function LiftLogApp({
     if (!repository || programAction) return;
     setProgramAction({ id: targetProgram.id, kind: "copy" });
     try {
+      requireCapability(capabilitiesForProgram(targetProgram), "copyToOwn");
       const copiedId = await repository.copyProgramToOwn(targetProgram.id);
       const nextWorkspace = await repository.loadWorkspace();
       applyWorkspace(nextWorkspace);
@@ -2317,6 +2544,12 @@ export default function LiftLogApp({
 
   async function deleteOwnProgram(targetProgram: Program) {
     if (programAction) return;
+    try {
+      requireCapability(capabilitiesForProgram(targetProgram), "deleteOwn");
+    } catch {
+      notify("This program cannot be deleted from the current account");
+      return;
+    }
     if (
       !window.confirm(
         `Delete “${targetProgram.title}”? It will disappear from Own and In schedule, and unstarted planned workouts will be removed. Completed training history will stay.`,
@@ -2404,10 +2637,17 @@ export default function LiftLogApp({
   }
 
   async function saveSchedule(scheduleId: string, date: string | null) {
-    const previousDate = workspace.scheduledWorkouts.find(
+    const targetSchedule = workspace.scheduledWorkouts.find(
       (schedule) => schedule.id === scheduleId,
-    )?.plannedDate;
+    );
+    const previousDate = targetSchedule?.plannedDate;
     try {
+      if (!targetSchedule)
+        throw new Error("This scheduled workout is no longer available.");
+      requireCapability(
+        capabilitiesForOccurrence(targetSchedule),
+        date === null ? "remove" : "reschedule",
+      );
       if (repository) {
         await repository.scheduleWorkout(scheduleId, date);
       }
@@ -2449,6 +2689,19 @@ export default function LiftLogApp({
     if (scheduleStatusAction) return;
     setScheduleStatusAction({ id: scheduleId, status });
     try {
+      const targetSchedule = workspace.scheduledWorkouts.find(
+        (schedule) => schedule.id === scheduleId,
+      );
+      if (!targetSchedule)
+        throw new Error("This scheduled workout is no longer available.");
+      requireCapability(
+        capabilitiesForOccurrence(targetSchedule),
+        status === "planned"
+          ? targetSchedule.status === "in_progress"
+            ? "resetToPlanned"
+            : "restore"
+          : "skip",
+      );
       if (repository) {
         await repository.setScheduledWorkoutStatus(scheduleId, status);
         applyWorkspace(await repository.loadWorkspace());
@@ -2464,7 +2717,7 @@ export default function LiftLogApp({
           setWorkoutStarted(false);
         }
       }
-      setWorkoutPreviewSchedule(null);
+      setDetail(null);
       notify(
         status === "planned"
           ? "Workout set back to planned"
@@ -2492,8 +2745,8 @@ export default function LiftLogApp({
   ) {
     const requestId = completedWorkoutRequestRef.current + 1;
     completedWorkoutRequestRef.current = requestId;
-    setWorkoutPreviewSchedule(null);
-    setCompletedWorkoutView({
+    setDetail({
+      kind: "completed-workout",
       session,
       detail: repository ? null : { ...session, items: [] },
       loading: Boolean(repository),
@@ -2508,7 +2761,8 @@ export default function LiftLogApp({
         athleteId,
       );
       if (completedWorkoutRequestRef.current !== requestId) return;
-      setCompletedWorkoutView({
+      setDetail({
+        kind: "completed-workout",
         session: detail ?? session,
         detail,
         loading: false,
@@ -2517,7 +2771,8 @@ export default function LiftLogApp({
       });
     } catch (error) {
       if (completedWorkoutRequestRef.current !== requestId) return;
-      setCompletedWorkoutView({
+      setDetail({
+        kind: "completed-workout",
         session,
         detail: null,
         loading: false,
@@ -2567,7 +2822,7 @@ export default function LiftLogApp({
       }
       else setProgram(null);
       setActiveView("program");
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      scrollToAppTop();
     } catch (error) {
       notify(
         error instanceof Error
@@ -2614,7 +2869,10 @@ export default function LiftLogApp({
   return (
     <main className="app-shell">
       <Sidebar
-        activeView={activeView}
+        activeView={
+          detail?.returnView ??
+          (programOwnerId !== viewer.id ? "coaching" : activeView)
+        }
         onNavigate={navigate}
         viewer={viewer}
         profile={workspace.profile}
@@ -2655,6 +2913,7 @@ export default function LiftLogApp({
         {activeView === "today" && completedWorkoutView && (
           <CompletedWorkoutView
             state={completedWorkoutView}
+            viewerId={viewer.id}
             weightUnit={workspace.profile.weightUnit}
             program={
               programCatalog.find(
@@ -2665,7 +2924,7 @@ export default function LiftLogApp({
             onBack={() => {
               completedWorkoutRequestRef.current += 1;
               const returnView = completedWorkoutView.returnView;
-              setCompletedWorkoutView(null);
+              setDetail(null);
               navigate(returnView);
             }}
           />
@@ -2676,6 +2935,7 @@ export default function LiftLogApp({
             (!activeSession && workoutPreviewSchedule)) && (
           <TodayView
             program={activeSession ? todayProgram : previewProgram}
+            viewerId={viewer.id}
             workout={activeSession ? todayWorkout! : workoutPreviewSchedule!.workout}
             weightUnit={workspace.profile.weightUnit}
             timing={activeSession ? workoutFocus!.timing : "future"}
@@ -2691,6 +2951,8 @@ export default function LiftLogApp({
             resultLogs={resultLogs}
             sessionRpe={sessionRpe}
             sessionNote={sessionNote}
+            sessionSaveStatus={sessionSaveStatus}
+            online={isOnline}
             onStart={() =>
               void startWorkout(
                 activeSession ? todaySchedule! : workoutPreviewSchedule!,
@@ -2733,7 +2995,7 @@ export default function LiftLogApp({
               !activeSession
                 ? () => {
                     const returnView = workoutPreviewReturnView;
-                    setWorkoutPreviewSchedule(null);
+                    setDetail(null);
                     navigate(returnView);
                   }
                 : undefined
@@ -2747,7 +3009,7 @@ export default function LiftLogApp({
               workoutPreviewReturnView === "calendar" && workoutPreviewSchedule
                 ? () => {
                     const scheduleId = workoutPreviewSchedule.id;
-                    setWorkoutPreviewSchedule(null);
+                    setDetail(null);
                     navigate("calendar");
                     void openSchedule(scheduleId);
                   }
@@ -2757,7 +3019,7 @@ export default function LiftLogApp({
               workoutPreviewReturnView === "calendar" && workoutPreviewSchedule
                 ? () => {
                     const scheduleId = workoutPreviewSchedule.id;
-                    setWorkoutPreviewSchedule(null);
+                    setDetail(null);
                     navigate("calendar");
                     void saveSchedule(scheduleId, null);
                   }
@@ -2796,6 +3058,7 @@ export default function LiftLogApp({
             }
             mutationPending={builderMutationPending}
             viewerId={viewer.id}
+            capabilities={capabilitiesForProgram(program)}
             weightUnit={workspace.profile.weightUnit}
             isAvailable={(workspace.availableProgramIds ?? []).includes(
               program.id,
@@ -2804,7 +3067,10 @@ export default function LiftLogApp({
             selectedWeek={selectedWeek}
             selectedWorkout={selectedWorkout}
             selectedSectionId={selectedSectionId}
-            exercises={[...workspace.globalExercises, ...personalExercises]}
+            exercises={[
+              ...workspace.globalExercises,
+              ...workspace.personalExercises,
+            ]}
             onSelectWeek={(week) => {
               setSelectedWeek(week);
               setSelectedWorkoutId(
@@ -2859,11 +3125,7 @@ export default function LiftLogApp({
               }
             }}
             onAssignProgram={
-              workspace.coachedAthletes.length > 0 &&
-              program.athleteId === viewer.id &&
-              program.createdById === viewer.id &&
-              program.sourceType === "self" &&
-              program.versionStatus === "published"
+              capabilitiesForProgram(program).assign
                 ? () => {
                     setAssignmentSeed({ programId: program.id });
                     setModal("assign-program");
@@ -2873,9 +3135,7 @@ export default function LiftLogApp({
             onRenameProgram={updateProgramTitle}
             onEditWorkout={() => setModal("workout-settings")}
             onSchedule={
-              program.athleteId === viewer.id &&
-              program.versionStatus === "published" &&
-              (workspace.availableProgramIds ?? []).includes(program.id)
+              capabilitiesForProgram(program).schedule
                 ? () => openSchedule()
                 : undefined
             }
@@ -2898,7 +3158,8 @@ export default function LiftLogApp({
             />
           ) : (
             <ProgramsHome
-              programs={programCatalog}
+            programs={programCatalog}
+              viewerId={viewer.id}
               schedules={workspace.scheduledWorkouts}
               availableIds={
                 workspace.availableProgramIds ??
@@ -2909,6 +3170,7 @@ export default function LiftLogApp({
               hasCoach={hasCoach}
               activatingTemplateId={activatingTemplateId}
               action={programAction}
+              capabilitiesForProgram={capabilitiesForProgram}
               onOpen={(targetProgram) => void openProgram(targetProgram)}
               onEdit={editProgram}
               onCopy={copyProgram}
@@ -2964,7 +3226,7 @@ export default function LiftLogApp({
             scope={exerciseScope}
             query={exerciseQuery}
             global={workspace.globalExercises}
-            personal={personalExercises}
+            personal={workspace.personalExercises}
             onScope={setExerciseScope}
             onQuery={setExerciseQuery}
             onAdd={() => setModal("exercise")}
@@ -2977,13 +3239,15 @@ export default function LiftLogApp({
         {activeView === "coaching" && (
           <CoachingView
             mode={coachMode}
+            viewerId={viewer.id}
             coachConnections={workspace.coachConnections}
             pendingInvites={workspace.pendingCoachInvites}
             outgoingInvites={outgoingCoachInvites}
             athletes={workspace.coachedAthletes}
             selectedAthlete={selectedAthlete}
+            loadingAthleteId={coachingDetailLoadingId}
             openingProgramId={openingCoachProgramId}
-            onMode={(nextMode) => void changeCoachMode(nextMode)}
+            onMode={changeCoachMode}
             refreshing={coachingRefreshing}
             onRefresh={() => void refreshCoachWorkspace()}
             onInvite={() => setModal("invite")}
@@ -2994,7 +3258,7 @@ export default function LiftLogApp({
             }
             onDisconnect={removeCoachAccess}
             onCancelInvite={(invitation) => void cancelCoachInvite(invitation)}
-            onSelectAthlete={setSelectedAthlete}
+            onSelectAthlete={selectCoachedAthlete}
             onOpenAssignedProgram={(athlete, assignedProgram, workoutId) =>
               void openAthleteProgram(athlete, assignedProgram, workoutId)
             }
@@ -3133,12 +3397,7 @@ export default function LiftLogApp({
           onSignOut={onSignOut}
         />
       )}
-      {toast && (
-        <div className="toast">
-          <Check size={16} />
-          {toast}
-        </div>
-      )}
+      {toast && <Toast message={toast} />}
     </main>
   );
 }
@@ -3180,6 +3439,7 @@ function Sidebar({
                 key={item.id}
                 className={cn("nav-item", activeView === item.id && "active")}
                 onClick={() => onNavigate(item.id)}
+                aria-current={activeView === item.id ? "page" : undefined}
                 aria-label={
                   item.id === "coaching" && coachingRequestCount > 0
                     ? `${item.label}, ${coachingRequestCount} pending ${coachingRequestCount === 1 ? "request" : "requests"}`
@@ -3405,6 +3665,7 @@ function NextWorkoutsView({
 
 function TodayView({
   program,
+  viewerId,
   workout,
   weightUnit,
   timing,
@@ -3416,6 +3677,8 @@ function TodayView({
   resultLogs,
   sessionRpe,
   sessionNote,
+  sessionSaveStatus,
+  online,
   onStart,
   onFinish,
   onReset,
@@ -3436,6 +3699,7 @@ function TodayView({
   onNavigate,
 }: {
   program?: Program;
+  viewerId: string;
   workout: PlannedWorkout;
   weightUnit: OwnProfile["weightUnit"];
   timing: "active" | "overdue" | "today" | "future";
@@ -3447,6 +3711,8 @@ function TodayView({
   resultLogs: Record<string, Record<string, string>>;
   sessionRpe: string;
   sessionNote: string;
+  sessionSaveStatus: SessionDraftSaveStatus;
+  online: boolean;
   onStart: () => void;
   onFinish: () => void;
   onReset: () => void;
@@ -3519,7 +3785,11 @@ function TodayView({
         }
         description={planDescription}
       >
-        {program && <SourceTag source={sourceFromProgram(program)} />}
+        {program && (
+          <SourceTag
+            presentation={presentProgramProvenance(program, viewerId)}
+          />
+        )}
         {onBack && (
           <button className="button secondary" onClick={onBack}>
             <ArrowLeft size={15} />
@@ -3669,11 +3939,11 @@ function TodayView({
           )}
           {workoutStarted && (
             <div className="session-finish">
-              <label>
-                <span>Session RPE</span>
+              <div className="session-rpe-field" role="group" aria-labelledby="session-rpe-label">
+                <span id="session-rpe-label">Session RPE</span>
                 <small>How did the whole session feel?</small>
                 <RpeChoiceButtons value={sessionRpe} onChange={onSessionRpe} />
-              </label>
+              </div>
               <RpeLegend />
               <label>
                 <span>
@@ -3685,11 +3955,14 @@ function TodayView({
                   placeholder="What felt good? Anything to adjust next time?"
                 />
               </label>
+              <SessionSaveIndicator status={sessionSaveStatus} online={online} />
               <AsyncButton
                 className="button primary full"
                 loading={workoutAction === "finishing"}
                 loadingLabel="Finishing session…"
                 icon={Check}
+                disabled={!online}
+                title={online ? undefined : "Reconnect before finishing this workout"}
                 onClick={onFinish}
               >
                 Finish and save session
@@ -3710,10 +3983,6 @@ const rpeOptions = [
   { value: "9", label: "Very hard", detail: "about 1 rep left" },
   { value: "10", label: "Max", detail: "no reps left" },
 ] as const;
-
-function rpeOption(value: string) {
-  return rpeOptions.find((option) => option.value === value);
-}
 
 function wholeRpe(value: string) {
   const values = value
@@ -3749,7 +4018,7 @@ function RpeLegend() {
   );
 }
 
-function RpeChoiceButtons({
+export function RpeChoiceButtons({
   value,
   onChange,
 }: {
@@ -3765,6 +4034,7 @@ function RpeChoiceButtons({
           className={cn(value === option.value && "selected", `rpe-${rpeTone(option.value)}`)}
           onClick={() => onChange(option.value)}
           aria-label={`RPE ${option.value}: ${option.label}, ${option.detail}`}
+          aria-pressed={value === option.value}
         >
           <strong>{option.value}</strong>
           <span>{option.label}</span>
@@ -3783,110 +4053,64 @@ const plannedRpeOptions = [
   { value: "10", label: "Max", detail: "no reps left" },
 ] as const;
 
-function PlannedRpeSelect({
+export function PlannedRpeSelect({
   value,
   onChange,
   disabled = false,
+  ariaLabel = "Planned RPE",
 }: {
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  ariaLabel?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const current = plannedRpeOptions.find((option) => option.value === value);
   return (
     <div className="planned-rpe-select rpe-select">
-      <button
-        type="button"
+      <select
         disabled={disabled}
         className={cn("rpe-select-trigger", value && "selected", value && `rpe-${rpeTone(value)}`)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((previous) => !previous)}
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
       >
-        <Gauge size={13} />
-        <span>
-          {current?.value ? `${current.value} · ${current.label}` : "No planned effort"}
-        </span>
-        <ChevronDown size={12} />
-      </button>
-      {open && !disabled && (
-        <div className="rpe-select-menu" role="listbox" aria-label="Planned effort">
-          {plannedRpeOptions.map((option) => (
-            <button
-              type="button"
-              key={option.value || "none"}
-              role="option"
-              aria-selected={value === option.value}
-              className={cn(value === option.value && "selected", option.value && `rpe-${rpeTone(option.value)}`)}
-              onClick={() => {
-                onChange(option.value);
-                setOpen(false);
-              }}
-            >
-              <Gauge size={13} />
-              <strong>{option.value || "—"}</strong>
-              <span>
-                <b>{option.label}</b>
-                <small>{option.detail}</small>
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
+        {plannedRpeOptions.map((option) => (
+          <option key={option.value || "none"} value={option.value}>
+            {option.value ? `${option.value} · ` : ""}
+            {option.label} · {option.detail}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
 
-function RpeSelect({
+export function RpeSelect({
   disabled,
   value,
   onChange,
+  ariaLabel = "Actual RPE",
 }: {
   disabled: boolean;
   value: string;
   onChange: (value: string) => void;
+  ariaLabel?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const current = rpeOption(value);
   return (
     <div className="rpe-select">
-      <button
-        type="button"
+      <select
         disabled={disabled}
         className={cn("rpe-select-trigger", value && "selected", value && `rpe-${rpeTone(value)}`)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((previous) => !previous)}
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
       >
-        <Gauge size={13} />
-        <span>{current ? current.value : "—"}</span>
-        <ChevronDown size={12} />
-      </button>
-      {open && !disabled && (
-        <div className="rpe-select-menu" role="listbox" aria-label="Actual RPE">
-          {rpeOptions.map((option) => (
-            <button
-              type="button"
-              key={option.value}
-              role="option"
-              aria-selected={value === option.value}
-              className={cn(value === option.value && "selected", `rpe-${rpeTone(option.value)}`)}
-              onClick={() => {
-                onChange(option.value);
-                setOpen(false);
-              }}
-            >
-              <Gauge size={13} />
-              <strong>{option.value}</strong>
-              <span>
-                <b>{option.label}</b>
-                <small>{option.detail}</small>
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
+        <option value="">No actual RPE</option>
+        {rpeOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.value} · {option.label} · {option.detail}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -3993,6 +4217,7 @@ function WorkoutLogItem({
               <span>{index + 1}</span>
               {fields.includes("reps") && (
                 <input
+                  aria-label={`${item.title}, set ${index + 1}, reps`}
                   disabled={!active}
                   inputMode="numeric"
                   value={row.reps}
@@ -4004,6 +4229,7 @@ function WorkoutLogItem({
               )}
               {fields.includes("load") && (
                 <input
+                  aria-label={`${item.title}, set ${index + 1}, load in ${weightUnit}`}
                   disabled={!active}
                   inputMode="decimal"
                   value={weightInputValue(row.load, weightUnit)}
@@ -4020,6 +4246,7 @@ function WorkoutLogItem({
               )}
               {fields.includes("rpe") && (
                 <RpeSelect
+                  ariaLabel={`${item.title}, set ${index + 1}, actual RPE`}
                   disabled={!active}
                   value={row.rpe}
                   onChange={(value) => onUpdateSet(item.id, index, "rpe", value)}
@@ -4154,6 +4381,7 @@ function ProgramView({
   action,
   mutationPending,
   viewerId,
+  capabilities,
   weightUnit,
   isAvailable,
   currentWeek,
@@ -4190,6 +4418,7 @@ function ProgramView({
   action: Exclude<ProgramAction, null>["kind"] | null;
   mutationPending: boolean;
   viewerId: string;
+  capabilities: TrainingContentCapabilities;
   weightUnit: OwnProfile["weightUnit"];
   isAvailable: boolean;
   currentWeek: Program["weeks"][number];
@@ -4244,9 +4473,8 @@ function ProgramView({
   );
   const isDraft = program.versionStatus === "draft";
   const isQuickWorkout = program.contentType === "quick_workout";
-  const canEdit =
-    program.createdById === viewerId && program.sourceType !== "library";
-  const editable = isDraft && canEdit;
+  const canEdit = capabilities.edit;
+  const editable = isDraft && capabilities.edit;
   const additionalWeekCapacity = Math.max(0, 52 - program.weeks.length);
   const dragEnabled = editable && !mutationPending;
   const pickerResults = exercises
@@ -4333,7 +4561,7 @@ function ProgramView({
     localWeekActionRef.current = true;
     setLocalWeekAction(kind);
     try {
-      const completed = await mutation();
+      await mutation();
     } finally {
       localWeekActionRef.current = false;
       setLocalWeekAction(null);
@@ -4377,7 +4605,9 @@ function ProgramView({
           <ArrowLeft size={15} />
           All programs
         </button>
-        <SourceTag source={sourceFromProgram(program)} />
+        <SourceTag
+          presentation={presentProgramProvenance(program, viewerId)}
+        />
         <StatusBadge
           status={isDraft ? "draft" : isAvailable ? "in_schedule" : "ready"}
         />
@@ -4685,6 +4915,7 @@ function ProgramView({
                 <label className="search-field">
                   <Search size={16} />
                   <input
+                    aria-label="Search exercises"
                     value={pickerQuery}
                     onChange={(event) => setPickerQuery(event.target.value)}
                     placeholder="Search exercises"
@@ -5160,8 +5391,8 @@ function ObjectTypeTag({ quickWorkout }: { quickWorkout: boolean }) {
 
 function ProgramRow({
   program,
+  viewerId,
   available,
-  completed = false,
   canEdit,
   canDelete,
   canCopy = true,
@@ -5177,8 +5408,8 @@ function ProgramRow({
   onAvailability,
 }: {
   program: Program;
+  viewerId: string;
   available: boolean;
-  completed?: boolean;
   canEdit: boolean;
   canDelete: boolean;
   canCopy?: boolean;
@@ -5209,7 +5440,10 @@ function ProgramRow({
           <span>
             <strong>{program.title}</strong>
             <ObjectTypeTag quickWorkout={isQuickWorkout} />
-            <SourceTag source={sourceFromProgram(program)} compact />
+            <SourceTag
+              presentation={presentProgramProvenance(program, viewerId)}
+              compact
+            />
           </span>
         </span>
         {action === "open" && (
@@ -5259,9 +5493,7 @@ function ProgramRow({
               ? "draft"
               : available
                 ? "in_schedule"
-                : completed
-                  ? "completed"
-                  : "ready"
+                : "ready"
           }
         />
         <div className="program-card-actions">
@@ -5432,6 +5664,7 @@ function LibraryTemplateCard({
 
 function ProgramsHome({
   programs,
+  viewerId,
   schedules,
   availableIds,
   templates,
@@ -5439,6 +5672,7 @@ function ProgramsHome({
   hasCoach,
   activatingTemplateId,
   action,
+  capabilitiesForProgram,
   onOpen,
   onEdit,
   onCopy,
@@ -5454,6 +5688,7 @@ function ProgramsHome({
   onSchedule,
 }: {
   programs: Program[];
+  viewerId: string;
   schedules: ScheduledWorkout[];
   availableIds: string[];
   templates: ProgramTemplate[];
@@ -5461,6 +5696,9 @@ function ProgramsHome({
   hasCoach: boolean;
   activatingTemplateId: string | null;
   action: ProgramAction;
+  capabilitiesForProgram: (
+    program: Program,
+  ) => TrainingContentCapabilities;
   onOpen: (program: Program) => void;
   onEdit: (program: Program) => void;
   onCopy: (program: Program) => void;
@@ -5488,23 +5726,6 @@ function ProgramsHome({
   ]
     .filter(Boolean)
     .join(" · ");
-  const completedIds = new Set(
-    programs
-      .filter((program) => {
-        if (availableIds.includes(program.id)) return false;
-        const occurrences = schedules.filter(
-          (schedule) => schedule.programVersionId === program.versionId,
-        );
-        return (
-          occurrences.length > 0 &&
-          occurrences.every(
-            (schedule) =>
-              schedule.status === "completed" || schedule.status === "skipped",
-          )
-        );
-      })
-      .map((program) => program.id),
-  );
   const own = programs.filter((program) => program.sourceType === "self");
   const coach = programs.filter((program) => program.sourceType === "coach");
   const scheduleProgress = (program: Program) => {
@@ -5558,18 +5779,27 @@ function ProgramsHome({
               <ProgramRow
                 key={item.id}
                 program={item}
+                viewerId={viewerId}
                 available
                 {...scheduleProgress(item)}
-                canEdit={false}
-                canDelete={false}
-                canCopy={false}
+                canEdit={capabilitiesForProgram(item).edit}
+                canDelete={capabilitiesForProgram(item).deleteOwn}
+                canCopy={capabilitiesForProgram(item).copyToOwn}
                 action={action?.id === item.id ? action.kind : null}
-                availabilityAction="remove"
+                availabilityAction={
+                  capabilitiesForProgram(item).manageAvailability
+                    ? "remove"
+                    : undefined
+                }
                 onOpen={() => onOpen(item)}
                 onEdit={() => onEdit(item)}
                 onCopy={() => onCopy(item)}
                 onDelete={() => undefined}
-                onSchedule={onSchedule}
+                onSchedule={
+                  capabilitiesForProgram(item).schedule
+                    ? onSchedule
+                    : undefined
+                }
                 onAvailability={() => onAvailability(item, false)}
               />
             ))
@@ -5585,6 +5815,7 @@ function ProgramsHome({
         <SegmentedTabs
           className="program-source-tabs"
           label="Program sources"
+          panelId="program-source-panel"
           value={source}
           onChange={onSource}
           tabs={[
@@ -5594,7 +5825,12 @@ function ProgramsHome({
           ]}
         />
         {source === "library" && (
-          <div className="program-compact-list" role="tabpanel">
+          <div
+            className="program-compact-list"
+            id="program-source-panel"
+            role="tabpanel"
+            aria-labelledby="program-source-panel-library-tab"
+          >
             {templates.map((template) => {
               const instance = programs.find(
                 (program) => program.templateId === template.id,
@@ -5606,16 +5842,21 @@ function ProgramsHome({
                 <ProgramRow
                   key={template.id}
                   program={instance}
+                  viewerId={viewerId}
                   available={availableIds.includes(instance.id)}
-                  completed={completedIds.has(instance.id)}
-                  canEdit={false}
-                  canDelete={false}
+                  canEdit={capabilitiesForProgram(instance).edit}
+                  canDelete={capabilitiesForProgram(instance).deleteOwn}
+                  canCopy={capabilitiesForProgram(instance).copyToOwn}
                   action={instanceAction}
                   onOpen={() => onOpen(instance)}
                   onEdit={() => undefined}
                   onCopy={() => onCopy(instance)}
                   onDelete={() => undefined}
-                  onSchedule={() => onScheduleLibraryProgram(instance)}
+                  onSchedule={
+                    capabilitiesForProgram(instance).manageAvailability
+                      ? () => onScheduleLibraryProgram(instance)
+                      : undefined
+                  }
                 />
               ) : (
                 <LibraryTemplateCard
@@ -5632,20 +5873,29 @@ function ProgramsHome({
           </div>
         )}
         {source === "own" && (
-          <div className="program-compact-list" role="tabpanel">
+          <div
+            className="program-compact-list"
+            id="program-source-panel"
+            role="tabpanel"
+            aria-labelledby="program-source-panel-own-tab"
+          >
             {own.length ? (
               own.map((item) => (
                 <ProgramRow
                   key={item.id}
                   program={item}
+                  viewerId={viewerId}
                   available={availableIds.includes(item.id)}
-                  completed={completedIds.has(item.id)}
-                  canEdit
-                  canDelete
+                  canEdit={capabilitiesForProgram(item).edit}
+                  canDelete={capabilitiesForProgram(item).deleteOwn}
+                  canCopy={capabilitiesForProgram(item).copyToOwn}
                   copyToOwn={false}
                   action={action?.id === item.id ? action.kind : null}
                   availabilityAction={
-                    availableIds.includes(item.id) ? undefined : "make"
+                    capabilitiesForProgram(item).manageAvailability &&
+                    !availableIds.includes(item.id)
+                      ? "make"
+                      : undefined
                   }
                   onOpen={() => onOpen(item)}
                   onEdit={() => onEdit(item)}
@@ -5673,19 +5923,28 @@ function ProgramsHome({
           </div>
         )}
         {hasCoach && source === "coach" && (
-          <div className="program-compact-list" role="tabpanel">
+          <div
+            className="program-compact-list"
+            id="program-source-panel"
+            role="tabpanel"
+            aria-labelledby="program-source-panel-coach-tab"
+          >
             {coach.length ? (
               coach.map((item) => (
                 <ProgramRow
                   key={item.id}
                   program={item}
+                  viewerId={viewerId}
                   available={availableIds.includes(item.id)}
-                  completed={completedIds.has(item.id)}
-                  canEdit={false}
-                  canDelete={false}
+                  canEdit={capabilitiesForProgram(item).edit}
+                  canDelete={capabilitiesForProgram(item).deleteOwn}
+                  canCopy={capabilitiesForProgram(item).copyToOwn}
                   action={action?.id === item.id ? action.kind : null}
                   availabilityAction={
-                    availableIds.includes(item.id) ? undefined : "make"
+                    capabilitiesForProgram(item).manageAvailability &&
+                    !availableIds.includes(item.id)
+                      ? "make"
+                      : undefined
                   }
                   onOpen={() => onOpen(item)}
                   onEdit={() => undefined}
@@ -5741,7 +6000,7 @@ function CoachProgramEmpty({
   );
 }
 
-function CalendarView({
+export function CalendarView({
   sessions,
   schedules,
   weekStartsOnSunday,
@@ -5770,6 +6029,7 @@ function CalendarView({
   const [draggingScheduleId, setDraggingScheduleId] = useState<string | null>(
     null,
   );
+  const [selectedDate, setSelectedDate] = useState(() => localDateOnly());
   const now = new Date();
   const baseDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const year = baseDate.getFullYear();
@@ -5802,6 +6062,32 @@ function CalendarView({
   const cells = Array.from({ length: firstDay + days }, (_, index) =>
     index < firstDay ? null : index - firstDay + 1,
   );
+  const selectedSessions = sessions.filter(
+    (session) => session.date === selectedDate,
+  );
+  const selectedSchedules = schedules.filter(
+    (schedule) =>
+      schedule.plannedDate === selectedDate && schedule.status === "planned",
+  );
+  const selectedDateLabel = new Date(
+    `${selectedDate}T12:00:00`,
+  ).toLocaleDateString("en", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+  function changeMonth(offset: number) {
+    const nextOffset = monthOffset + offset;
+    const nextMonth = new Date(
+      now.getFullYear(),
+      now.getMonth() + nextOffset,
+      1,
+    );
+    setMonthOffset(nextOffset);
+    setSelectedDate(localDateOnly(nextMonth));
+  }
   return (
     <>
       <PageHeader
@@ -5864,7 +6150,7 @@ function CalendarView({
             <button
               className="icon-button"
               aria-label="Previous month"
-              onClick={() => setMonthOffset((value) => value - 1)}
+              onClick={() => changeMonth(-1)}
             >
               <ArrowLeft size={16} />
             </button>
@@ -5872,7 +6158,7 @@ function CalendarView({
             <button
               className="icon-button"
               aria-label="Next month"
-              onClick={() => setMonthOffset((value) => value + 1)}
+              onClick={() => changeMonth(1)}
             >
               <ArrowRight size={16} />
             </button>
@@ -5901,44 +6187,52 @@ function CalendarView({
                 <div
                   className={cn(
                     "calendar-day",
-                  daySessions.length > 0 && "trained",
-                  daySchedules.length > 0 && "planned",
-                  isToday && "today",
-                  draggingScheduleId && "schedule-target",
-                )}
-                key={date}
-                role={canSchedule ? "button" : undefined}
-                tabIndex={canSchedule ? 0 : undefined}
-                aria-label={
-                  canSchedule
-                    ? `Schedule a workout on ${date}`
-                    : undefined
-                }
-                onClick={() => {
-                  if (canSchedule) onScheduleDay(date);
-                }}
-                onKeyDown={(event) => {
-                  if (
-                    canSchedule &&
-                    (event.key === "Enter" || event.key === " ")
-                  ) {
+                    daySessions.length > 0 && "trained",
+                    daySchedules.length > 0 && "planned",
+                    isToday && "today",
+                    selectedDate === date && "selected",
+                    draggingScheduleId && "schedule-target",
+                  )}
+                  key={date}
+                  onDragOver={(event) => {
+                    if (draggingScheduleId) event.preventDefault();
+                  }}
+                  onDrop={(event) => {
                     event.preventDefault();
-                    onScheduleDay(date);
-                  }
-                }}
-                onDragOver={(event) => {
-                  if (draggingScheduleId) event.preventDefault();
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  const scheduleId =
-                    draggingScheduleId ??
-                    event.dataTransfer.getData("text/plain");
-                  setDraggingScheduleId(null);
-                  if (scheduleId) onMoveSchedule(scheduleId, date);
-                }}
-              >
-                  <span>{day}</span>
+                    const scheduleId =
+                      draggingScheduleId ??
+                      event.dataTransfer.getData("text/plain");
+                    setDraggingScheduleId(null);
+                    if (scheduleId) {
+                      setSelectedDate(date);
+                      onMoveSchedule(scheduleId, date);
+                    }
+                  }}
+                >
+                  {canSchedule ? (
+                    <button
+                      type="button"
+                      className="calendar-day-action calendar-day-schedule"
+                      aria-label={`Schedule a workout on ${date}`}
+                      onClick={() => {
+                        setSelectedDate(date);
+                        onScheduleDay(date);
+                      }}
+                    >
+                      <span aria-hidden="true">{day}</span>
+                    </button>
+                  ) : (
+                    <span className="calendar-day-number">{day}</span>
+                  )}
+                  <button
+                    type="button"
+                    className="calendar-day-action calendar-day-select"
+                    aria-label={`Show calendar items for ${date}`}
+                    aria-pressed={selectedDate === date}
+                    onClick={() => setSelectedDate(date)}
+                  >
+                    <span aria-hidden="true">{day}</span>
+                  </button>
                   <div className="calendar-events">
                     {daySessions.map((session) => (
                       <button
@@ -5947,6 +6241,7 @@ function CalendarView({
                         aria-label={`${session.workoutTitle}, completed on ${date}`}
                         onClick={(event) => {
                           event.stopPropagation();
+                          setSelectedDate(date);
                           onOpenResults(session);
                         }}
                       >
@@ -5962,11 +6257,13 @@ function CalendarView({
                           aria-label={`${schedule.workoutTitle}, scheduled on ${date}`}
                           onClick={(event) => {
                             event.stopPropagation();
+                            setSelectedDate(date);
                             onOpenPlan(schedule);
                           }}
                           onDragStart={(event) => {
                             event.dataTransfer.effectAllowed = "move";
                             event.dataTransfer.setData("text/plain", schedule.id);
+                            setSelectedDate(date);
                             setDraggingScheduleId(schedule.id);
                           }}
                           onDragEnd={() => setDraggingScheduleId(null)}
@@ -5980,6 +6277,7 @@ function CalendarView({
                           title="Remove from calendar"
                           onClick={(event) => {
                             event.stopPropagation();
+                            setSelectedDate(date);
                             onDeleteSchedule(schedule.id);
                           }}
                         >
@@ -5995,6 +6293,84 @@ function CalendarView({
               );
             })}
           </div>
+          <section
+            className="calendar-day-agenda"
+            aria-labelledby="calendar-selected-date-title"
+          >
+            <div className="calendar-day-agenda-heading">
+              <div>
+                <small>Selected day</small>
+                <h3 id="calendar-selected-date-title" aria-live="polite">
+                  {selectedDateLabel}
+                </h3>
+              </div>
+              {canSchedule && (
+                <button
+                  type="button"
+                  className="button secondary small"
+                  onClick={() => onScheduleDay(selectedDate)}
+                >
+                  <CalendarPlus size={15} />
+                  Schedule workout
+                </button>
+              )}
+            </div>
+            {selectedSchedules.length || selectedSessions.length ? (
+              <div className="calendar-day-agenda-list">
+                {selectedSchedules.map((schedule) => (
+                  <div className="calendar-day-agenda-row" key={schedule.id}>
+                    <button
+                      type="button"
+                      className="calendar-day-agenda-main planned"
+                      onClick={() => onOpenPlan(schedule)}
+                    >
+                      <CalendarPlus size={16} />
+                      <span>
+                        <strong>{schedule.workoutTitle}</strong>
+                        <small>{schedule.programTitle} · Planned</small>
+                      </span>
+                      <ChevronRight size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button danger"
+                      aria-label={`Remove ${schedule.workoutTitle} from the calendar`}
+                      title="Remove from calendar"
+                      onClick={() => onDeleteSchedule(schedule.id)}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+                {selectedSessions.map((session) => (
+                  <div className="calendar-day-agenda-row" key={session.id}>
+                    <button
+                      type="button"
+                      className="calendar-day-agenda-main completed"
+                      onClick={() => onOpenResults(session)}
+                    >
+                      <Check size={16} />
+                      <span>
+                        <strong>{session.workoutTitle}</strong>
+                        <small>
+                          Completed
+                          {session.durationMinutes
+                            ? ` · ${session.durationMinutes} min`
+                            : ""}
+                          {session.rpe ? ` · RPE ${session.rpe}` : ""}
+                        </small>
+                      </span>
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="calendar-day-agenda-empty">
+                No workouts on this day.
+              </p>
+            )}
+          </section>
           <div className="calendar-legend">
             <span>
               <i className="planned-dot" />
@@ -6035,11 +6411,13 @@ function completedEntryLabel(
 function CompletedWorkoutView({
   state,
   program,
+  viewerId,
   weightUnit,
   onBack,
 }: {
   state: CompletedWorkoutViewState;
   program?: Program;
+  viewerId: string;
   weightUnit: OwnProfile["weightUnit"];
   onBack: () => void;
 }) {
@@ -6054,7 +6432,11 @@ function CompletedWorkoutView({
         title="Workout results"
         description={program ? `${program.title} · completed session` : "Completed session"}
       >
-        {program && <SourceTag source={sourceFromProgram(program)} />}
+        {program && (
+          <SourceTag
+            presentation={presentProgramProvenance(program, viewerId)}
+          />
+        )}
         <StatusBadge status="completed" />
         <button className="button secondary" onClick={onBack}>
           <ArrowLeft size={15} />
@@ -6095,9 +6477,7 @@ function CompletedWorkoutView({
               <span>Loading saved results…</span>
             </div>
           ) : state.error ? (
-            <p className="auth-error" role="alert">
-              {state.error}
-            </p>
+            <InlineError>{state.error}</InlineError>
           ) : state.detail?.items.length ? (
             <div className="calendar-detail-sections">
               {state.detail.items.map((item) => (
@@ -6185,7 +6565,6 @@ function ExercisesView({
     "all" | ExerciseDiscipline
   >("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
   const filteredByDiscipline = source.filter(
     (exercise) =>
       scope !== "global" ||
@@ -6219,6 +6598,7 @@ function ExercisesView({
         <div className="library-filter-tabs">
           <SegmentedTabs
             label="Exercise sources"
+            panelId="exercise-source-panel"
             value={scope}
             onChange={onScope}
             tabs={[
@@ -6231,6 +6611,7 @@ function ExercisesView({
               className="exercise-discipline-tabs"
               compact
               label="Exercise discipline"
+              selectionMode="buttons"
               value={disciplineFilter}
               onChange={(nextDiscipline) => {
                 setDisciplineFilter(nextDiscipline);
@@ -6249,47 +6630,34 @@ function ExercisesView({
           <label className="search-field library-search">
             <Search size={17} />
             <input
+              aria-label="Search exercises"
               value={query}
               onChange={(event) => onQuery(event.target.value)}
               placeholder="Search exercises"
             />
           </label>
-          <div className="library-category-filter">
-          <button
-            type="button"
-            aria-haspopup="listbox"
-            aria-expanded={categoryMenuOpen}
-            onClick={() => setCategoryMenuOpen((open) => !open)}
-          >
+          <label className="library-category-filter">
             <Settings2 size={14} />
-            {activeCategory === "all" ? "All categories" : activeCategory}
+            <select
+              aria-label="Filter exercises by category"
+              value={activeCategory}
+              onChange={(event) => setCategoryFilter(event.target.value)}
+            >
+              {["all", ...categoryOptions].map((category) => (
+                <option key={category} value={category}>
+                  {category === "all" ? "All categories" : category}
+                </option>
+              ))}
+            </select>
             <ChevronDown size={13} />
-          </button>
-          {categoryMenuOpen && (
-            <div className="library-category-menu" role="listbox" aria-label="Filter exercises by category">
-              {["all", ...categoryOptions].map((category) => {
-                const selected = category === activeCategory;
-                return (
-                  <button
-                    type="button"
-                    key={category}
-                    role="option"
-                    aria-selected={selected}
-                    className={selected ? "selected" : undefined}
-                    onClick={() => {
-                      setCategoryFilter(category);
-                      setCategoryMenuOpen(false);
-                    }}
-                  >
-                    {category === "all" ? "All categories" : category}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          </div>
+          </label>
         </div>
       </div>
+      <div
+        id="exercise-source-panel"
+        role="tabpanel"
+        aria-labelledby={`exercise-source-panel-${scope}-tab`}
+      >
       <div className="library-meta"><span>{filtered.length} exercises</span></div>
       <div className="exercise-list panel">
         {filtered.map((exercise) => (
@@ -6321,6 +6689,7 @@ function ExercisesView({
             </div>
           </article>
         ))}
+      </div>
       </div>
     </>
   );
@@ -6368,11 +6737,13 @@ function coachAgendaStatusLabel(status: CoachAgendaEntry["status"]) {
 
 function CoachingView({
   mode,
+  viewerId,
   coachConnections,
   pendingInvites,
   outgoingInvites,
   athletes,
   selectedAthlete,
+  loadingAthleteId,
   openingProgramId,
   onMode,
   refreshing,
@@ -6389,11 +6760,13 @@ function CoachingView({
   onAssignAthlete,
 }: {
   mode: "athlete" | "coach";
+  viewerId: string;
   coachConnections: CoachConnection[];
   pendingInvites: PendingCoachInvite[];
   outgoingInvites: OutgoingCoachInvite[];
   athletes: AthleteSummary[];
   selectedAthlete: AthleteSummary | null;
+  loadingAthleteId: string | null;
   openingProgramId: string | null;
   onMode: (mode: "athlete" | "coach") => void;
   refreshing: boolean;
@@ -6433,6 +6806,7 @@ function CoachingView({
         <SegmentedTabs
           compact
           label="Coaching workspace"
+          panelId="coaching-workspace-panel"
           value={mode}
           onChange={onMode}
           tabs={[
@@ -6441,7 +6815,6 @@ function CoachingView({
               ? [{
                   value: "coach" as const,
                   label: refreshing ? <><LoaderCircle className="button-spinner" size={14} /> Refreshing…</> : "My athletes",
-                  disabled: refreshing,
                   badge: pendingInvites.length,
                 }]
               : []),
@@ -6449,7 +6822,12 @@ function CoachingView({
         />
       </PageHeader>
       {mode === "athlete" || !hasAthleteWorkspace ? (
-        <div className="coaching-athlete-layout">
+        <div
+          className="coaching-athlete-layout"
+          id="coaching-workspace-panel"
+          role="tabpanel"
+          aria-labelledby="coaching-workspace-panel-athlete-tab"
+        >
           <section className="panel coach-access-card">
             <div className="panel-heading">
               <div>
@@ -6539,7 +6917,7 @@ function CoachingView({
                   <h3>What your coaches can do</h3>
                   <span>
                     <Check size={15} />
-                    View your calendar, sessions, RPE, and training notes
+                    View programs they authored for you and their linked results
                   </span>
                   <span>
                     <Check size={15} />
@@ -6551,7 +6929,7 @@ function CoachingView({
                   </span>
                   <span className="locked">
                     <LockKeyhole size={15} />
-                    Cannot alter your completed workout history
+                    Cannot view private notes, unrelated training, or edit history
                   </span>
                 </div>
               </>
@@ -6575,7 +6953,12 @@ function CoachingView({
           </section>
         </div>
       ) : (
-        <div className="coach-dashboard">
+        <div
+          className="coach-dashboard"
+          id="coaching-workspace-panel"
+          role="tabpanel"
+          aria-labelledby="coaching-workspace-panel-coach-tab"
+        >
           <section className="panel athlete-list">
             <div className="panel-heading">
               <div>
@@ -6696,9 +7079,32 @@ function CoachingView({
               </div>
             )}
           </section>
-          {selectedAthlete ? (
+          {selectedAthlete?.detailsLoaded === false ? (
+            <section className="panel empty-state" aria-live="polite">
+              {loadingAthleteId === selectedAthlete.id ? (
+                <>
+                  <LoaderCircle className="button-spinner" size={28} />
+                  <h3>Loading athlete overview…</h3>
+                  <p>Fetching your program progress and recent agenda.</p>
+                </>
+              ) : (
+                <>
+                  <Users size={28} />
+                  <h3>Athlete overview unavailable</h3>
+                  <p>Try this bounded read again.</p>
+                  <button
+                    className="button secondary"
+                    onClick={() => onSelectAthlete(selectedAthlete)}
+                  >
+                    Retry
+                  </button>
+                </>
+              )}
+            </section>
+          ) : selectedAthlete ? (
             <CoachAthleteOverview
               athlete={selectedAthlete}
+              viewerId={viewerId}
               openingProgramId={openingProgramId}
               onAssign={() => onAssignAthlete(selectedAthlete)}
               onOpenProgram={(assignedProgram, workoutId) =>
@@ -6727,12 +7133,14 @@ function CoachingView({
 
 function CoachAthleteOverview({
   athlete,
+  viewerId,
   openingProgramId,
   onAssign,
   onOpenProgram,
   onOpenAgenda,
 }: {
   athlete: AthleteSummary;
+  viewerId: string;
   openingProgramId: string | null;
   onAssign: () => void;
   onOpenProgram: (
@@ -6813,7 +7221,16 @@ function CoachAthleteOverview({
                     </span>
                     <span>
                       <strong>{assignedProgram.title}</strong>
-                      <SourceTag source={{ kind: "coach" }} compact />
+                      <SourceTag
+                        presentation={presentProvenance({
+                          origin: "coach",
+                          viewerId,
+                          athleteOwnerId: athlete.id,
+                          athleteOwnerName: athlete.name,
+                          authorId: viewerId,
+                        })}
+                        compact
+                      />
                     </span>
                   </span>
                   <span
@@ -6831,6 +7248,14 @@ function CoachAthleteOverview({
                           title={`Workout ${index + 1}: ${state}`}
                         />
                       ))}
+                      {Boolean(assignedProgram.hiddenWorkoutCount) && (
+                        <em
+                          className="program-progress-more"
+                          title={`${assignedProgram.hiddenWorkoutCount} additional workouts`}
+                        >
+                          +{assignedProgram.hiddenWorkoutCount}
+                        </em>
+                      )}
                     </span>
                   </span>
                   <span className="program-card-meta">
@@ -6996,102 +7421,6 @@ function CoachAgendaGroup({
   );
 }
 
-function ModalShell({
-  title,
-  description,
-  onClose,
-  dismissible = true,
-  wide = false,
-  children,
-}: {
-  title: string;
-  description: string;
-  onClose: () => void;
-  dismissible?: boolean;
-  wide?: boolean;
-  children: React.ReactNode;
-}) {
-  const dialogRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const previousFocus =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const dialog = dialogRef.current;
-    dialog
-      ?.querySelector<HTMLElement>(
-        "input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)",
-      )
-      ?.focus();
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && dismissible) {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-      const focusable = [
-        ...dialog.querySelectorAll<HTMLElement>(
-          "input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex='-1'])",
-        ),
-      ];
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      previousFocus?.focus();
-    };
-  }, [dismissible, onClose]);
-  return (
-    <div className="modal-backdrop" aria-busy={!dismissible}>
-      <button
-        className="modal-dismiss-layer"
-        tabIndex={-1}
-        onClick={dismissible ? onClose : undefined}
-        disabled={!dismissible}
-        aria-label="Close dialog"
-      />
-      <section
-        ref={dialogRef}
-        className={cn("modal", wide && "wide")}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-      >
-        <div className="modal-heading">
-          <div>
-            <p className="eyebrow">Lift Log</p>
-            <h2>{title}</h2>
-            <p>{description}</p>
-          </div>
-          <button
-            className="icon-button"
-            onClick={onClose}
-            disabled={!dismissible}
-            aria-label="Close"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        {children}
-      </section>
-    </div>
-  );
-}
-
 function ExerciseModal({
   onClose,
   onSave,
@@ -7254,16 +7583,11 @@ function RenameProgramModal({
       <label className="form-field full">
         <span>{label === "program" ? "Program" : "Workout"} name</span>
         <input
-          autoFocus
           value={nextTitle}
           onChange={(event) => setNextTitle(event.target.value)}
         />
       </label>
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
         <button className="button secondary" onClick={onClose}>
           Cancel
@@ -7335,11 +7659,7 @@ function WorkoutSettingsModal({
           />
         </label>
       </div>
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
         <button className="button secondary" onClick={onClose}>
           Cancel
@@ -7447,11 +7767,7 @@ function SectionModal({
           section type.
         </p>
       )}
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
         <button className="button secondary" onClick={onClose}>
           Cancel
@@ -7507,11 +7823,7 @@ function DeleteSectionModal({
       onClose={onClose}
       dismissible={!saving}
     >
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
         <button className="button secondary" disabled={Boolean(saving)} onClick={onClose}>
           Cancel
@@ -7575,11 +7887,7 @@ function DeleteExerciseModal({
       onClose={onClose}
       dismissible={!deleting}
     >
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
         <button className="button secondary" disabled={deleting} onClick={onClose}>
           Cancel
@@ -7997,11 +8305,7 @@ function PrescriptionModal({
           />
         </label>
       </div>
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
         <button className="button secondary" onClick={onClose}>
           Cancel
@@ -8103,6 +8407,7 @@ function PrescriptionEntryTable({
             {fields.map((field) =>
               field === "rpe" ? (
                 <PlannedRpeSelect
+                  ariaLabel={`${label}, ${index + 1}, planned RPE`}
                   key={field}
                   disabled={!editable.rpe}
                   value={row.rpe}
@@ -8110,6 +8415,7 @@ function PrescriptionEntryTable({
                 />
               ) : (
                 <input
+                  aria-label={`${label}, ${index + 1}, ${field === "load" ? `weight in ${weightUnit}` : field}`}
                   key={field}
                   disabled={!editable[field]}
                   inputMode={field === "load" ? "decimal" : field === "reps" ? "text" : "numeric"}
@@ -8171,11 +8477,7 @@ function DeactivateProgramModal({
           You can choose a library program or create a new one next
         </span>
       </div>
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
         <button className="button secondary" onClick={onClose}>
           Keep current program
@@ -8287,7 +8589,7 @@ function InviteModal({
           <div className="invite-permissions">
             <span>
               <Check size={14} />
-              View your calendar, reports, and workout notes
+              View only programs they author for you and linked results
             </span>
             <span>
               <Check size={14} />
@@ -8295,14 +8597,10 @@ function InviteModal({
             </span>
             <span>
               <LockKeyhole size={14} />
-              Cannot schedule workouts or change completed logs
+              Cannot view private notes, unrelated training, or edit completed logs
             </span>
           </div>
-          {error && (
-            <p className="auth-error" role="alert">
-              {error}
-            </p>
-          )}
+      {error && <InlineError>{error}</InlineError>}
           <div className="modal-actions">
             <button
               className="button secondary"
@@ -8360,11 +8658,7 @@ function InviteModal({
               spellCheck={false}
             />
           </label>
-          {error && (
-            <p className="auth-error" role="alert">
-              {error}
-            </p>
-          )}
+      {error && <InlineError>{error}</InlineError>}
           <div className="modal-actions">
             <button
               className="button secondary"
@@ -8634,11 +8928,7 @@ function AssignProgramModal({
               </span>
             </div>
           )}
-          {error && (
-            <p className="auth-error" role="alert">
-              {error}
-            </p>
-          )}
+      {error && <InlineError>{error}</InlineError>}
           <div className="modal-actions assignment-actions">
             <button
               className="button secondary"
@@ -8669,133 +8959,6 @@ function AssignProgramModal({
           </div>
         </>
       )}
-    </ModalShell>
-  );
-}
-
-function CopyWeekModal({
-  weekIndex,
-  nextWeekIndex,
-  maxCopies,
-  onClose,
-  onCopy,
-}: {
-  weekIndex: number;
-  nextWeekIndex: number;
-  maxCopies: number;
-  onClose: () => void;
-  onCopy: (count: number) => Promise<boolean>;
-}) {
-  const initialCount = Math.min(3, maxCopies);
-  const [count, setCount] = useState(Math.max(2, initialCount));
-  const [saving, setSaving] = useState(false);
-  const savingRef = useRef(false);
-  const [error, setError] = useState("");
-  const validCount =
-    Number.isInteger(count) && count >= 2 && count <= maxCopies;
-  const finalWeekIndex = nextWeekIndex + Math.max(count, 1) - 1;
-
-  async function copy() {
-    if (!validCount || savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
-    setError("");
-    try {
-      const completed = await onCopy(count);
-      if (completed) onClose();
-      else setError("The week could not be copied. Try again.");
-    } catch (copyError) {
-      setError(
-        copyError instanceof Error
-          ? copyError.message
-          : "The week could not be copied.",
-      );
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
-  }
-
-  return (
-    <ModalShell
-      title={`Copy Week ${weekIndex}`}
-      description="Create several independent weeks in one step. You can adjust every copy afterward."
-      onClose={onClose}
-      dismissible={!saving}
-    >
-      <div className="copy-week-preview">
-        <span className="program-icon">
-          <Copy size={19} />
-        </span>
-        <div>
-          <small>Source</small>
-          <strong>Week {weekIndex}</strong>
-        </div>
-        <ArrowRight size={17} />
-        <div>
-          <small>New weeks</small>
-          <strong>
-            {validCount
-              ? `Weeks ${nextWeekIndex}–${finalWeekIndex}`
-              : "Choose a valid quantity"}
-          </strong>
-        </div>
-      </div>
-      <label className="form-field full copy-week-count">
-        <span>Number of copies</span>
-        <input
-          type="number"
-          inputMode="numeric"
-          min={2}
-          max={maxCopies}
-          step={1}
-          value={count}
-          disabled={saving}
-          onChange={(event) => setCount(Number(event.target.value))}
-        />
-        <small>
-          This program can contain up to 52 weeks. You can add {maxCopies} more.
-        </small>
-      </label>
-      {saving && (
-        <div className="assignment-progress" role="status">
-          <LoaderCircle className="button-spinner" size={17} />
-          <span>
-            Creating {count} independent {count === 1 ? "week" : "weeks"}…
-          </span>
-        </div>
-      )}
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="modal-actions copy-week-actions">
-        <button
-          className="button secondary"
-          disabled={saving}
-          onClick={onClose}
-        >
-          Cancel
-        </button>
-        <button
-          className="button primary"
-          disabled={!validCount || saving}
-          onClick={copy}
-        >
-          {saving ? (
-            <>
-              <LoaderCircle className="button-spinner" size={15} />
-              Creating weeks…
-            </>
-          ) : (
-            <>
-              <Copy size={15} />
-              Create {validCount ? count : ""} copies
-            </>
-          )}
-        </button>
-      </div>
     </ModalShell>
   );
 }
@@ -8868,11 +9031,7 @@ function ProgramModal({
           </span>
         </div>}
       </div>
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
         <button className="button secondary" onClick={onClose}>
           Cancel
@@ -9006,11 +9165,7 @@ function ScheduleModal({
             <LockKeyhole size={15} />
             <span>Only your account can assign or move this date.</span>
           </div>
-          {error && (
-            <p className="auth-error" role="alert">
-              {error}
-            </p>
-          )}
+      {error && <InlineError>{error}</InlineError>}
           <div className="modal-actions schedule-actions">
             <button
               className="button secondary"
@@ -9225,11 +9380,7 @@ function AccountModal({
           </label>
         </div>
       </section>
-      {error && (
-        <p className="auth-error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions account-actions">
         <button className="text-button danger-text" onClick={onSignOut}>
           <LogOut size={15} />

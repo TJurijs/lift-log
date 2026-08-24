@@ -100,7 +100,7 @@ test("calendar event clicks open plans and immutable completed results", async (
   );
   assert.match(
     app,
-    /function openCalendarResults[\s\S]*setCompletedWorkoutView[\s\S]*navigate\("today"\)/,
+    /function openCalendarResults[\s\S]*setDetail\(\{[\s\S]*kind: "completed-workout"[\s\S]*navigate\("today"\)/,
     "completed calendar events must use the shared full workout result screen",
   );
   assert.match(app, /function CompletedWorkoutView/);

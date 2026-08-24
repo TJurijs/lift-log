@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { createClient } from "@supabase/supabase-js";
-import postgres from "postgres";
+import { throwIntegrationFailures } from "./supabase-integration-fixture.mjs";
+import {
+  validateIntegrationCredentials,
+  validateIntegrationTarget,
+} from "./supabase-integration-target.mjs";
 
 const enabled = process.env.SUPABASE_INTEGRATION === "1";
 const testUrl = process.env.SUPABASE_TEST_URL;
-const databaseUrl = process.env.SUPABASE_TEST_DB_URL;
 const publishableKey = process.env.SUPABASE_TEST_PUBLISHABLE_KEY;
 const secretKey = process.env.SUPABASE_TEST_SECRET_KEY;
 
@@ -50,83 +53,66 @@ function datePlus(isoDate, days) {
   return value.toISOString().slice(0, 10);
 }
 
-async function cleanupApplicationData(database, userIds) {
-  if (!userIds.length) return;
-  const guardedTables = [
-    "program_versions",
-    "program_phases",
-    "program_weeks",
-    "workouts",
-    "workout_sections",
-    "workout_items",
-    "prescribed_entries",
-    "workout_sessions",
-    "session_item_logs",
-    "session_entries",
-  ];
-  await database.begin(async (sql) => {
-    for (const table of guardedTables)
-      await sql.unsafe(`alter table public.${table} disable trigger user`);
-    try {
-      await sql`delete from public.coach_feedback where athlete_id in ${sql(userIds)} or coach_id in ${sql(userIds)}`;
-      await sql`delete from public.workout_sessions where athlete_id in ${sql(userIds)}`;
-      await sql`delete from public.scheduled_workouts where athlete_id in ${sql(userIds)}`;
-      await sql`delete from public.programs where athlete_id in ${sql(userIds)}`;
-      await sql`delete from public.coach_invites where athlete_id in ${sql(userIds)} or invited_profile_id in ${sql(userIds)}`;
-      await sql`delete from public.coach_relationships where athlete_id in ${sql(userIds)} or coach_id in ${sql(userIds)}`;
-      await sql`delete from public.exercises where owner_id in ${sql(userIds)}`;
-    } finally {
-      for (const table of [...guardedTables].reverse())
-        await sql.unsafe(`alter table public.${table} enable trigger user`);
-    }
-  });
+function dateInTimeZone(timeZone, instant = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(instant);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
 }
 
 test(
   "Supabase enforces private accounts, exact invitations, explicit programs, and athlete-owned scheduling",
   { skip: !enabled },
   async () => {
-    assert.ok(
-      testUrl && databaseUrl && publishableKey && secretKey,
-      "local Supabase credentials are required",
-    );
-    assert.ok(
-      ["localhost", "127.0.0.1"].includes(new URL(testUrl).hostname),
-      "integration tests may only mutate local Supabase",
-    );
-    assert.ok(
-      ["localhost", "127.0.0.1"].includes(new URL(databaseUrl).hostname),
-      "cleanup may only use local Postgres",
-    );
+    validateIntegrationTarget(process.env);
+    validateIntegrationCredentials(process.env);
 
     const admin = client(secretKey);
-    const database = postgres(databaseUrl, { max: 1 });
-    const suffix = `${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const runToken = `${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const fixtureNamespace = `integration-${runToken}-v1`;
+    const suffix = `integration-${runToken}`;
     const password = `LiftLog-${randomUUID()}!`;
     const identities = [
       {
+        key: "athlete-a",
         role: "athlete A",
         email: `athlete-a-${suffix}@liftlog.test`,
         firstName: "Athlete",
         lastName: "Alpha",
       },
       {
+        key: "athlete-b",
         role: "athlete B",
         email: `athlete-b-${suffix}@liftlog.test`,
         firstName: "Athlete",
         lastName: "Beta",
       },
       {
+        key: "coach",
         role: "coach",
         email: `coach-${suffix}@liftlog.test`,
         firstName: "Coach",
         lastName: "Gamma",
       },
+      {
+        key: "other-coach",
+        role: "other coach",
+        email: `other-coach-${suffix}@liftlog.test`,
+        firstName: "Coach",
+        lastName: "Delta",
+      },
     ];
     const userIds = [];
+    const createdPersonaKeys = [];
     let athleteAId;
     let athleteBId;
     let coachId;
+    let otherCoachId;
+    let testFailure = null;
 
     try {
       for (const identity of identities) {
@@ -138,6 +124,13 @@ test(
             full_name: `${identity.firstName} ${identity.lastName}`,
             given_name: identity.firstName,
             family_name: identity.lastName,
+            test_persona: true,
+            test_persona_key: identity.key,
+          },
+          app_metadata: {
+            account_kind: "test",
+            test_persona_key: `${fixtureNamespace}:${identity.key}`,
+            fixture_namespace: fixtureNamespace,
           },
         });
         assert.equal(
@@ -147,11 +140,33 @@ test(
         );
         assert.ok(data.user);
         userIds.push(data.user.id);
+        createdPersonaKeys.push(identity.key);
+        assert.deepEqual(
+          expectData(
+            await admin
+              .from("profiles")
+              .update({
+                account_kind: "test",
+                test_persona_key: `${fixtureNamespace}:${identity.key}`,
+              })
+              .eq("id", data.user.id)
+              .select("id,account_kind,test_persona_key")
+              .single(),
+            `mark generated ${identity.role} profile`,
+          ),
+          {
+            id: data.user.id,
+            account_kind: "test",
+            test_persona_key: `${fixtureNamespace}:${identity.key}`,
+          },
+        );
       }
-      [athleteAId, athleteBId, coachId] = userIds;
+      [athleteAId, athleteBId, coachId, otherCoachId] = userIds;
       const athleteA = await signIn(identities[0].email, password);
+      const athleteASecondTab = await signIn(identities[0].email, password);
       const athleteB = await signIn(identities[1].email, password);
       const coach = await signIn(identities[2].email, password);
+      const otherCoach = await signIn(identities[3].email, password);
 
       const resetNamespace = `integration-${Date.now()}-${randomUUID().slice(0, 8)}-v1`;
       assert.match(
@@ -205,6 +220,25 @@ test(
       );
       assert.match(ownProfile.liftlog_id, /^LL-[A-Z0-9]{16}$/);
       assert.notEqual(ownProfile.liftlog_id, athleteAId);
+      const ownProfileProjection = expectData(
+        await athleteA.rpc("get_own_profile"),
+        "load own private profile projection",
+      );
+      assert.equal(ownProfileProjection.length, 1);
+      assert.deepEqual(
+        Object.keys(ownProfileProjection[0]).sort(),
+        [
+          "display_name",
+          "distance_unit",
+          "first_name",
+          "id",
+          "last_name",
+          "liftlog_id",
+          "timezone",
+          "week_starts_on_sunday",
+          "weight_unit",
+        ],
+      );
       assert.deepEqual(
         expectData(
           await athleteB.from("profiles").select("id").eq("id", athleteAId),
@@ -244,12 +278,16 @@ test(
       const templates = expectData(
         await athleteB
           .from("program_templates")
-          .select("id,title")
+          .select("id,title,week_count,workouts")
           .eq("is_active", true)
           .order("title"),
         "load program library",
       );
       assert.equal(templates.length, 3);
+      assert.ok(Array.isArray(templates[0].workouts));
+      const expectedLibraryWorkouts =
+        templates[0].week_count * templates[0].workouts.length;
+      assert.ok(expectedLibraryWorkouts > 0);
       const libraryProgramId = expectData(
         await athleteB.rpc("create_program_from_template", {
           target_template_id: templates[0].id,
@@ -277,6 +315,26 @@ test(
           .single(),
         "load library version",
       );
+      assert.deepEqual(
+        expectData(
+          await athleteB
+            .from("scheduled_workouts")
+            .select("id")
+            .eq("program_version_id", libraryPublished.id),
+          "library calendar before availability",
+        ),
+        [],
+      );
+      assert.equal(
+        expectData(
+          await athleteB.rpc("set_program_availability", {
+            target_program_id: libraryProgramId,
+            make_available: true,
+          }),
+          "make library program available",
+        ),
+        true,
+      );
       const libraryOccurrences = expectData(
         await athleteB
           .from("scheduled_workouts")
@@ -284,13 +342,22 @@ test(
           .eq("program_version_id", libraryPublished.id),
         "load undated library workouts",
       );
-      assert.ok(libraryOccurrences.length > 0);
+      assert.equal(libraryOccurrences.length, expectedLibraryWorkouts);
       assert.ok(
         libraryOccurrences.every(
           (occurrence) =>
             occurrence.planned_date === null &&
             occurrence.scheduled_by_id === athleteBId,
         ),
+      );
+      assert.equal(
+        expectData(
+          await athleteB.rpc("prepare_program_schedule", {
+            target_program_version_id: libraryPublished.id,
+          }),
+          "repeat library calendar preparation",
+        ),
+        0,
       );
 
       const programId = expectData(
@@ -301,16 +368,15 @@ test(
         }),
         "create blank program",
       );
-      assert.match(
-        (
-          await athleteA.rpc("create_blank_program", {
-            target_athlete_id: athleteAId,
-            target_title: "Duplicate",
-            target_planning_mode: "fixed_weeks",
-          })
-        ).error?.message ?? "",
-        /already has a current program/i,
+      const additionalProgramId = expectData(
+        await athleteA.rpc("create_blank_program", {
+          target_athlete_id: athleteAId,
+          target_title: "Additional test plan",
+          target_planning_mode: "fixed_weeks",
+        }),
+        "create an additional own program",
       );
+      assert.notEqual(additionalProgramId, programId);
       const draftVersion = expectData(
         await athleteA
           .from("program_versions")
@@ -484,6 +550,21 @@ test(
       const relationshipId = acceptedInvitation.relationshipId;
       assert.ok(relationshipId);
 
+      const otherCoachInvitation = expectData(
+        await athleteA.rpc("create_coach_invite", {
+          target_email: identities[3].email,
+        }),
+        "invite second coach",
+      );
+      const otherCoachRelationship = expectData(
+        await otherCoach.rpc("respond_to_coach_invite", {
+          target_invite_id: otherCoachInvitation.id,
+          target_response: "accepted",
+        }),
+        "accept second coach relationship",
+      );
+      assert.ok(otherCoachRelationship.relationshipId);
+
       const emailInvitation = expectData(
         await athleteB.rpc("create_coach_invite", {
           target_email: identities[2].email,
@@ -536,30 +617,186 @@ test(
         }),
         "accept replacement email invitation",
       );
-      assert.equal(
+      assert.deepEqual(
         expectData(
           await coach.from("programs").select("id").eq("id", programId),
-          "coach reads program",
-        ).length,
-        1,
+          "coach cannot read athlete-authored program",
+        ),
+        [],
       );
-      assert.equal(
+      assert.deepEqual(
         expectData(
           await coach
             .from("profiles")
             .select("display_name")
-            .eq("id", athleteAId)
-            .single(),
-          "coach reads connected name",
-        ).display_name,
-        "Alicia Athlete",
+            .eq("id", athleteAId),
+          "coach cannot read connected private profile row",
+        ),
+        [],
+      );
+      const connectedProfiles = expectData(
+        await coach.rpc("list_connected_profile_summaries"),
+        "load basic connected profile summaries",
+      );
+      assert.deepEqual(
+        connectedProfiles.map((profile) => profile.id).sort(),
+        [athleteAId, athleteBId, coachId].sort(),
+      );
+      assert.equal(
+        connectedProfiles.find((profile) => profile.id === athleteAId)
+          ?.display_name,
+        updatedProfile.displayName,
+      );
+      assert.ok(
+        connectedProfiles.every(
+          (profile) =>
+            JSON.stringify(Object.keys(profile).sort()) ===
+            JSON.stringify(["display_name", "id"]),
+        ),
+      );
+      const otherConnectedProfiles = expectData(
+        await otherCoach.rpc("list_connected_profile_summaries"),
+        "load second coach basic profile summaries",
+      );
+      assert.deepEqual(
+        otherConnectedProfiles.map((profile) => profile.id).sort(),
+        [athleteAId, otherCoachId].sort(),
+      );
+      assert.ok(
+        [...connectedProfiles, ...otherConnectedProfiles].every(
+          (profile) =>
+            JSON.stringify(Object.keys(profile).sort()) ===
+            JSON.stringify(["display_name", "id"]),
+        ),
       );
 
+      assert.ok(
+        (
+          await coach.from("workouts").insert({
+            program_week_id: week.id,
+            title: "Forbidden athlete-authored edit",
+            schedule_label: "Workout 2",
+            position: 1,
+            estimated_minutes: 30,
+          })
+        ).error,
+      );
+
+      const originalProgramTitle = "Coach-authored test plan";
+      const originalProgramDescription = "Original coaching description";
+      const revisedProgramTitle = "Coach-authored test plan v2";
+      const revisedProgramDescription = "Revised coaching description";
+      const coachProgramId = expectData(
+        await coach.rpc("create_blank_program", {
+          target_athlete_id: athleteAId,
+          target_title: originalProgramTitle,
+          target_planning_mode: "fixed_weeks",
+        }),
+        "coach creates athlete-specific program",
+      );
+      expectData(
+        await coach
+          .from("programs")
+          .update({ description: originalProgramDescription })
+          .eq("id", coachProgramId)
+          .select("id")
+          .single(),
+        "set original program description",
+      );
+      assert.deepEqual(
+        expectData(
+          await coach
+            .from("programs")
+            .select("athlete_id,created_by_id,source_type")
+            .eq("id", coachProgramId)
+            .single(),
+          "load coach-authored provenance",
+        ),
+        {
+          athlete_id: athleteAId,
+          created_by_id: coachId,
+          source_type: "coach",
+        },
+      );
+      const coachDraftVersion = expectData(
+        await coach
+          .from("program_versions")
+          .select("id,title,description")
+          .eq("program_id", coachProgramId)
+          .eq("status", "draft")
+          .single(),
+        "load coach-authored draft",
+      );
+      assert.equal(coachDraftVersion.title, originalProgramTitle);
+      assert.equal(coachDraftVersion.description, originalProgramDescription);
+      const coachWeek = expectData(
+        await coach
+          .from("program_weeks")
+          .select("id")
+          .eq("program_version_id", coachDraftVersion.id)
+          .single(),
+        "load coach-authored week",
+      );
       const coachWorkout = expectData(
         await coach
           .from("workouts")
           .insert({
-            program_week_id: week.id,
+            program_week_id: coachWeek.id,
+            title: "Coach strength session",
+            day_of_week: null,
+            schedule_label: "Workout 1",
+            position: 0,
+            estimated_minutes: 45,
+          })
+          .select("id,title")
+          .single(),
+        "coach edits future content",
+      );
+      const coachSection = expectData(
+        await coach
+          .from("workout_sections")
+          .insert({
+            workout_id: coachWorkout.id,
+            title: "Main work",
+            section_kind: "main",
+            notes: "",
+            position: 0,
+          })
+          .select("id")
+          .single(),
+        "coach adds section",
+      );
+      const coachItem = expectData(
+        await coach
+          .from("workout_items")
+          .insert({
+            section_id: coachSection.id,
+            snapshot_name: "Goblet squat",
+            snapshot_cue: "Move with control.",
+            entry_mode: "sets",
+            tracking_fields: ["reps", "load", "rpe"],
+            position: 0,
+          })
+          .select("id")
+          .single(),
+        "coach adds exercise item",
+      );
+      expectData(
+        await coach.from("prescribed_entries").insert({
+          workout_item_id: coachItem.id,
+          position: 0,
+          reps_min: 8,
+          reps_max: 10,
+          target_rpe_min: 7,
+          target_rpe_max: 8,
+        }),
+        "coach adds prescription",
+      );
+      const coachMobilityWorkout = expectData(
+        await coach
+          .from("workouts")
+          .insert({
+            program_week_id: coachWeek.id,
             title: "Coach mobility session",
             day_of_week: null,
             schedule_label: "Workout 2",
@@ -568,7 +805,7 @@ test(
           })
           .select("id,title")
           .single(),
-        "coach edits future content",
+        "coach adds second workout",
       );
       const effectiveOn = new Date().toISOString().slice(0, 10);
       assert.equal(
@@ -584,12 +821,12 @@ test(
       assert.equal(
         expectData(
           await coach.rpc("publish_program_version", {
-            target_version_id: draftVersion.id,
+            target_version_id: coachDraftVersion.id,
             effective_on: effectiveOn,
           }),
           "coach publishes content",
         ),
-        draftVersion.id,
+        coachDraftVersion.id,
       );
       assert.equal(
         expectData(
@@ -605,7 +842,7 @@ test(
       assert.match(
         (
           await coach.rpc("prepare_program_schedule", {
-            target_program_version_id: draftVersion.id,
+            target_program_version_id: coachDraftVersion.id,
           })
         ).error?.message ?? "",
         /Only the athlete/i,
@@ -613,7 +850,7 @@ test(
       assert.match(
         (
           await athleteA.rpc("prepare_program_schedule", {
-            target_program_version_id: draftVersion.id,
+            target_program_version_id: coachDraftVersion.id,
           })
         ).error?.message ?? "",
         /not available/i,
@@ -621,7 +858,7 @@ test(
       assert.equal(
         expectData(
           await athleteA.rpc("set_program_availability", {
-            target_program_id: programId,
+            target_program_id: coachProgramId,
             make_available: true,
           }),
           "athlete makes program available",
@@ -631,7 +868,7 @@ test(
       assert.equal(
         expectData(
           await athleteA.rpc("prepare_program_schedule", {
-            target_program_version_id: draftVersion.id,
+            target_program_version_id: coachDraftVersion.id,
           }),
           "repeat calendar preparation",
         ),
@@ -641,7 +878,7 @@ test(
         await athleteA
           .from("scheduled_workouts")
           .select("*")
-          .eq("program_version_id", draftVersion.id)
+          .eq("program_version_id", coachDraftVersion.id)
           .order("sequence_number"),
         "load occurrences",
       );
@@ -660,8 +897,8 @@ test(
           {
             athlete_id: athleteAId,
             scheduled_by_id: athleteAId,
-            program_version_id: draftVersion.id,
-            workout_id: athleteWorkout.id,
+            program_version_id: coachDraftVersion.id,
+            workout_id: coachWorkout.id,
             planned_date: null,
             sequence_number: 1,
             status: "planned",
@@ -669,8 +906,8 @@ test(
           {
             athlete_id: athleteAId,
             scheduled_by_id: athleteAId,
-            program_version_id: draftVersion.id,
-            workout_id: coachWorkout.id,
+            program_version_id: coachDraftVersion.id,
+            workout_id: coachMobilityWorkout.id,
             planned_date: null,
             sequence_number: 2,
             status: "planned",
@@ -680,6 +917,229 @@ test(
       assert.equal(
         new Set(occurrences.map((occurrence) => occurrence.id)).size,
         2,
+      );
+
+      expectData(
+        await athleteA.rpc("publish_program_version", {
+          target_version_id: draftVersion.id,
+          effective_on: effectiveOn,
+        }),
+        "athlete publishes own content",
+      );
+      assert.equal(
+        expectData(
+          await athleteA.rpc("set_program_availability", {
+            target_program_id: programId,
+            make_available: true,
+          }),
+          "athlete makes own program available",
+        ),
+        true,
+      );
+      const athleteAuthoredOccurrences = expectData(
+        await athleteA
+          .from("scheduled_workouts")
+          .select("id,program_version_id,workout_id")
+          .eq("program_version_id", draftVersion.id),
+        "load athlete-authored occurrence",
+      );
+      assert.equal(athleteAuthoredOccurrences.length, 1);
+
+      const otherCoachProgramId = expectData(
+        await otherCoach.rpc("create_blank_program", {
+          target_athlete_id: athleteAId,
+          target_title: "Second coach plan",
+          target_planning_mode: "fixed_weeks",
+        }),
+        "second coach creates athlete-specific program",
+      );
+      const otherCoachDraftVersion = expectData(
+        await otherCoach
+          .from("program_versions")
+          .select("id")
+          .eq("program_id", otherCoachProgramId)
+          .eq("status", "draft")
+          .single(),
+        "load second coach draft",
+      );
+      const otherCoachWeek = expectData(
+        await otherCoach
+          .from("program_weeks")
+          .select("id")
+          .eq("program_version_id", otherCoachDraftVersion.id)
+          .single(),
+        "load second coach week",
+      );
+      const otherCoachWorkout = expectData(
+        await otherCoach
+          .from("workouts")
+          .insert({
+            program_week_id: otherCoachWeek.id,
+            title: "Second coach session",
+            day_of_week: null,
+            schedule_label: "Workout 1",
+            position: 0,
+            estimated_minutes: 30,
+          })
+          .select("id")
+          .single(),
+        "second coach adds workout",
+      );
+      expectData(
+        await otherCoach.rpc("publish_program_version", {
+          target_version_id: otherCoachDraftVersion.id,
+          effective_on: effectiveOn,
+        }),
+        "second coach publishes content",
+      );
+      assert.equal(
+        expectData(
+          await athleteA.rpc("set_program_availability", {
+            target_program_id: otherCoachProgramId,
+            make_available: true,
+          }),
+          "athlete makes second coach program available",
+        ),
+        true,
+      );
+      const otherCoachOccurrences = expectData(
+        await athleteA
+          .from("scheduled_workouts")
+          .select("id,program_version_id,workout_id")
+          .eq("program_version_id", otherCoachDraftVersion.id),
+        "load second coach occurrence",
+      );
+      assert.equal(otherCoachOccurrences.length, 1);
+      assert.deepEqual(
+        expectData(
+          await otherCoach
+            .from("scheduled_workouts")
+            .select("id,program_version_id,workout_id")
+            .eq("id", otherCoachOccurrences[0].id)
+            .single(),
+          "second coach reads own authored occurrence",
+        ),
+        otherCoachOccurrences[0],
+      );
+
+      for (const [viewer, label] of [
+        [coach, "first coach"],
+        [otherCoach, "second coach"],
+      ]) {
+        assert.deepEqual(
+          expectData(
+            await viewer.from("programs").select("id").eq("id", programId),
+            `${label} cannot read athlete-authored program`,
+          ),
+          [],
+        );
+        assert.deepEqual(
+          expectData(
+            await viewer
+              .from("program_versions")
+              .select("id")
+              .eq("id", draftVersion.id),
+            `${label} cannot read athlete-authored version`,
+          ),
+          [],
+        );
+        assert.deepEqual(
+          expectData(
+            await viewer.from("workouts").select("id").eq("id", athleteWorkout.id),
+            `${label} cannot read athlete-authored tree`,
+          ),
+          [],
+        );
+        assert.deepEqual(
+          expectData(
+            await viewer
+              .from("scheduled_workouts")
+              .select("id")
+              .eq("id", athleteAuthoredOccurrences[0].id),
+            `${label} cannot read athlete-authored occurrence`,
+          ),
+          [],
+        );
+      }
+      assert.deepEqual(
+        expectData(
+          await coach
+            .from("programs")
+            .select("id")
+            .eq("id", otherCoachProgramId),
+          "first coach cannot read second coach program",
+        ),
+        [],
+      );
+      assert.deepEqual(
+        expectData(
+          await coach
+            .from("program_versions")
+            .select("id")
+            .eq("id", otherCoachDraftVersion.id),
+          "first coach cannot read second coach version",
+        ),
+        [],
+      );
+      assert.deepEqual(
+        expectData(
+          await coach
+            .from("workouts")
+            .select("id")
+            .eq("id", otherCoachWorkout.id),
+          "first coach cannot read second coach tree",
+        ),
+        [],
+      );
+      assert.deepEqual(
+        expectData(
+          await coach
+            .from("scheduled_workouts")
+            .select("id")
+            .eq("id", otherCoachOccurrences[0].id),
+          "first coach cannot read second coach occurrence",
+        ),
+        [],
+      );
+      assert.deepEqual(
+        expectData(
+          await otherCoach
+            .from("programs")
+            .select("id")
+            .eq("id", coachProgramId),
+          "second coach cannot read first coach program",
+        ),
+        [],
+      );
+      assert.deepEqual(
+        expectData(
+          await otherCoach
+            .from("program_versions")
+            .select("id")
+            .eq("id", coachDraftVersion.id),
+          "second coach cannot read first coach version",
+        ),
+        [],
+      );
+      assert.deepEqual(
+        expectData(
+          await otherCoach
+            .from("workouts")
+            .select("id")
+            .eq("id", coachWorkout.id),
+          "second coach cannot read first coach tree",
+        ),
+        [],
+      );
+      assert.deepEqual(
+        expectData(
+          await otherCoach
+            .from("scheduled_workouts")
+            .select("id")
+            .eq("id", occurrences[0].id),
+          "second coach cannot read first coach occurrence",
+        ),
+        [],
       );
       assert.match(
         (
@@ -734,7 +1194,7 @@ test(
         await coach
           .from("scheduled_workouts")
           .select("*")
-          .eq("program_version_id", draftVersion.id)
+          .eq("program_version_id", coachDraftVersion.id)
           .order("sequence_number"),
         "coach reads calendar",
       );
@@ -743,12 +1203,14 @@ test(
       const freshDraft = expectData(
         await coach
           .from("program_versions")
-          .select("id")
-          .eq("program_id", programId)
+          .select("id,title,description")
+          .eq("program_id", coachProgramId)
           .eq("status", "draft")
           .single(),
         "load next draft",
       );
+      assert.equal(freshDraft.title, originalProgramTitle);
+      assert.equal(freshDraft.description, originalProgramDescription);
       const calendarBeforeRepublish = structuredClone(coachCalendar);
       assert.deepEqual(
         expectData(
@@ -761,6 +1223,46 @@ test(
         [],
       );
       expectData(
+        await coach
+          .from("programs")
+          .update({
+            title: revisedProgramTitle,
+            description: revisedProgramDescription,
+          })
+          .eq("id", coachProgramId)
+          .select("id")
+          .single(),
+        "rename only the later draft",
+      );
+      assert.deepEqual(
+        expectData(
+          await coach
+            .from("program_versions")
+            .select("title,description")
+            .eq("id", coachDraftVersion.id)
+            .single(),
+          "load unchanged first version metadata before republish",
+        ),
+        {
+          title: originalProgramTitle,
+          description: originalProgramDescription,
+        },
+      );
+      assert.deepEqual(
+        expectData(
+          await coach
+            .from("program_versions")
+            .select("title,description")
+            .eq("id", freshDraft.id)
+            .single(),
+          "load renamed second draft metadata",
+        ),
+        {
+          title: revisedProgramTitle,
+          description: revisedProgramDescription,
+        },
+      );
+      expectData(
         await coach.rpc("publish_program_version", {
           target_version_id: freshDraft.id,
           effective_on: effectiveOn,
@@ -771,17 +1273,45 @@ test(
         await athleteA
           .from("scheduled_workouts")
           .select("*")
-          .eq("program_version_id", draftVersion.id)
+          .eq("program_version_id", coachDraftVersion.id)
           .order("sequence_number"),
         "calendar after republish",
       );
       assert.deepEqual(calendarAfterRepublish, calendarBeforeRepublish);
+      assert.deepEqual(
+        expectData(
+          await athleteA
+            .from("program_versions")
+            .select("title,description")
+            .eq("id", coachDraftVersion.id)
+            .single(),
+          "load historical first-version metadata",
+        ),
+        {
+          title: originalProgramTitle,
+          description: originalProgramDescription,
+        },
+      );
+      assert.deepEqual(
+        expectData(
+          await athleteA
+            .from("program_versions")
+            .select("title,description")
+            .eq("id", freshDraft.id)
+            .single(),
+          "load published second-version metadata",
+        ),
+        {
+          title: revisedProgramTitle,
+          description: revisedProgramDescription,
+        },
+      );
       assert.equal(
         expectData(
           await athleteA
             .from("program_versions")
             .select("status")
-            .eq("id", draftVersion.id)
+            .eq("id", coachDraftVersion.id)
             .single(),
           "load superseded version",
         ).status,
@@ -843,7 +1373,7 @@ test(
             .eq("athlete_id", athleteAId),
           "complete versioned calendar",
         ).length,
-        4,
+        6,
       );
 
       assert.deepEqual(
@@ -890,7 +1420,7 @@ test(
         {
           athlete_id: athleteAId,
           scheduled_by_id: athleteAId,
-          program_version_id: draftVersion.id,
+          program_version_id: coachDraftVersion.id,
           workout_id: occurrence.workout_id,
           planned_date: datePlus(effectiveOn, 2),
           sequence_number: 1,
@@ -917,67 +1447,506 @@ test(
         ).error?.message ?? "",
         /cannot be scheduled/i,
       );
-      const loggedItem = expectData(
+      const sessionItems = expectData(
         await athleteA
           .from("session_item_logs")
-          .select("id")
+          .select("id,entry_mode,tracking_fields,position")
           .eq("workout_session_id", sessionId)
-          .neq("entry_mode", "none")
-          .limit(1)
-          .single(),
-        "load logged item",
+          .order("position"),
+        "load complete session item set",
       );
-      const sessionEntry = expectData(
+      assert.equal(sessionItems.length, 1);
+      assert.equal(sessionItems[0].entry_mode, "sets");
+      const loggedItem = sessionItems[0];
+      const initialDraftState = expectData(
         await athleteA
-          .from("session_entries")
-          .select("id")
-          .eq("session_item_log_id", loggedItem.id)
-          .limit(1)
+          .from("workout_sessions")
+          .select(
+            "draft_revision,draft_write_token,draft_write_payload_hash,draft_saved_at",
+          )
+          .eq("id", sessionId)
           .single(),
-        "load entry",
+        "load initial draft revision",
       );
-      expectData(
-        await athleteA
-          .from("session_entries")
-          .update({ reps: 9, load_kg: 24, rpe: 7 })
-          .eq("id", sessionEntry.id)
-          .select("id")
-          .single(),
-        "save result",
-      );
-      expectData(
-        await athleteA.rpc("complete_workout_session", {
+      assert.deepEqual(initialDraftState, {
+        draft_revision: 0,
+        draft_write_token: null,
+        draft_write_payload_hash: null,
+        draft_saved_at: null,
+      });
+      const draftPayload = {
+        sessionRpe: 7,
+        sessionNote: "Controlled.",
+        items: sessionItems.map((sessionItem) => ({
+          itemLogId: sessionItem.id,
+          entries:
+            sessionItem.id === loggedItem.id
+              ? [{ position: 0, reps: 9, loadKg: 24, rpe: 7 }]
+              : [],
+        })),
+      };
+      const draftWriteToken = randomUUID();
+      const firstDraftSave = expectData(
+        await athleteA.rpc("save_workout_session_draft", {
           target_session_id: sessionId,
-          final_rpe: 7,
-          final_note: "Controlled.",
+          expected_revision: 0,
+          write_token: draftWriteToken,
+          draft_payload: draftPayload,
         }),
-        "complete workout",
+        "save atomic workout draft",
+      );
+      assert.equal(firstDraftSave.revision, 1);
+      assert.ok(firstDraftSave.savedAt);
+
+      const staleDraftPayload = structuredClone(draftPayload);
+      staleDraftPayload.items[0].entries[0].reps = 99;
+      const [draftReplayResult, staleWriterResult] = await Promise.all([
+        athleteA.rpc("save_workout_session_draft", {
+          target_session_id: sessionId,
+          expected_revision: 0,
+          write_token: draftWriteToken,
+          draft_payload: draftPayload,
+        }),
+        athleteASecondTab.rpc("save_workout_session_draft", {
+          target_session_id: sessionId,
+          expected_revision: 0,
+          write_token: randomUUID(),
+          draft_payload: staleDraftPayload,
+        }),
+      ]);
+      assert.deepEqual(
+        expectData(draftReplayResult, "replay identical workout draft token"),
+        firstDraftSave,
+      );
+      assert.match(
+        (
+          await athleteA.rpc("save_workout_session_draft", {
+            target_session_id: sessionId,
+            expected_revision: 0,
+            write_token: draftWriteToken,
+            draft_payload: staleDraftPayload,
+          })
+        ).error?.message ?? "",
+        /token was already used with a different payload/i,
+      );
+      assert.equal(
+        staleWriterResult.error?.code,
+        "PT409",
+        `unexpected stale draft response: ${JSON.stringify(staleWriterResult)}`,
+      );
+      assert.equal(staleWriterResult.status, 409);
+      assert.equal(
+        staleWriterResult.error?.message,
+        "Workout draft revision is stale",
       );
       assert.deepEqual(
         expectData(
           await athleteA
             .from("workout_sessions")
-            .select("status,session_rpe,completed_for_date")
+            .select("draft_revision,draft_write_token,session_rpe,athlete_note")
             .eq("id", sessionId)
             .single(),
-          "load completed workout",
+          "load confirmed unchanged draft state",
         ),
         {
-          status: "completed",
+          draft_revision: 1,
+          draft_write_token: draftWriteToken,
           session_rpe: 7,
-          completed_for_date: datePlus(effectiveOn, 2),
+          athlete_note: "Controlled.",
+        },
+      );
+      const sessionEntry = expectData(
+        await athleteA
+          .from("session_entries")
+          .select("id,reps,load_kg,rpe")
+          .eq("session_item_log_id", loggedItem.id)
+          .eq("position", 0)
+          .single(),
+        "load atomically saved entry",
+      );
+      assert.deepEqual(
+        {
+          reps: Number(sessionEntry.reps),
+          load_kg: Number(sessionEntry.load_kg),
+          rpe: Number(sessionEntry.rpe),
+        },
+        { reps: 9, load_kg: 24, rpe: 7 },
+      );
+      assert.match(
+        (
+          await athleteA
+            .from("session_entries")
+            .update({ reps: 99 })
+            .eq("id", sessionEntry.id)
+        ).error?.message ?? "",
+        /permission denied/i,
+        "the final contract must prevent direct writes that bypass draft CAS",
+      );
+
+      const staleCompletionResult = await athleteASecondTab.rpc(
+        "complete_workout_session_confirmed",
+        {
+          target_session_id: sessionId,
+          expected_revision: 2,
+          completion_token: randomUUID(),
+          final_rpe: 7,
+          final_note: "Controlled.",
+        },
+      );
+      assert.equal(
+        staleCompletionResult.error?.code,
+        "PT409",
+        `unexpected stale completion response: ${JSON.stringify(staleCompletionResult)}`,
+      );
+      assert.equal(staleCompletionResult.status, 409);
+      assert.equal(
+        staleCompletionResult.error?.message,
+        "Workout draft revision is stale",
+      );
+      assert.deepEqual(
+        expectData(
+          await athleteA
+            .from("workout_sessions")
+            .select("status,draft_revision,completed_at")
+            .eq("id", sessionId)
+            .single(),
+          "load unchanged session after stale completion",
+        ),
+        {
+          status: "in_progress",
+          draft_revision: 1,
+          completed_at: null,
+        },
+      );
+      assert.match(
+        (
+          await athleteA.rpc("complete_workout_session", {
+            target_session_id: randomUUID(),
+            final_rpe: 7,
+            final_note: "",
+          })
+        ).error?.message ?? "",
+        /permission denied/i,
+        "the final contract must disable the legacy completion path",
+      );
+      const completionToken = randomUUID();
+      const confirmedCompletion = {
+        target_session_id: sessionId,
+        expected_revision: 1,
+        completion_token: completionToken,
+        final_rpe: 7,
+        final_note: "Controlled.",
+      };
+      assert.equal(
+        expectData(
+          await athleteASecondTab.rpc(
+            "complete_workout_session_confirmed",
+            confirmedCompletion,
+          ),
+          "complete confirmed workout",
+        ),
+        sessionId,
+      );
+      assert.equal(
+        expectData(
+          await athleteA.rpc(
+            "complete_workout_session_confirmed",
+            confirmedCompletion,
+          ),
+          "replay confirmed completion token",
+        ),
+        sessionId,
+      );
+
+      const coachSessionSummaries = expectData(
+        await coach.rpc("list_authored_coach_session_summaries", {
+          target_limit: 250,
+        }),
+        "load authored note-free coach session summaries",
+      );
+      const coachSessionSummary = coachSessionSummaries.find(
+        (session) => session.id === sessionId,
+      );
+      assert.ok(coachSessionSummary);
+      assert.equal(coachSessionSummary.athlete_id, athleteAId);
+      assert.equal(coachSessionSummary.program_version_id, coachDraftVersion.id);
+      assert.equal(coachSessionSummary.workout_title, coachWorkout.title);
+      assert.deepEqual(Object.keys(coachSessionSummary).sort(), [
+        "athlete_id",
+        "completed_at",
+        "completed_for_date",
+        "id",
+        "program_version_id",
+        "scheduled_workout_id",
+        "session_rpe",
+        "started_at",
+        "workout_id",
+        "workout_title",
+      ]);
+      assert.doesNotMatch(JSON.stringify(coachSessionSummary), /note/i);
+      assert.equal(
+        expectData(
+          await otherCoach.rpc("list_authored_coach_session_summaries", {
+            target_limit: 250,
+          }),
+          "load isolated second coach session summaries",
+        ).some((session) => session.id === sessionId),
+        false,
+      );
+      const timezoneProbeInstant = new Date();
+      const athleteTimezone =
+        timezoneProbeInstant.getUTCHours() < 10
+          ? "Pacific/Pago_Pago"
+          : "Pacific/Kiritimati";
+      const utcDate = dateInTimeZone("UTC", timezoneProbeInstant);
+      const athleteDate = dateInTimeZone(athleteTimezone, timezoneProbeInstant);
+      assert.notEqual(athleteDate, utcDate);
+      expectData(
+        await athleteA
+          .from("profiles")
+          .update({ timezone: athleteTimezone })
+          .eq("id", athleteAId)
+          .select("id")
+          .single(),
+        "set athlete timezone boundary fixture",
+      );
+      const timezoneProbeDate = athleteDate < utcDate ? athleteDate : utcDate;
+      expectData(
+        await athleteA.rpc("schedule_workout", {
+          target_scheduled_workout_id: occurrences[1].id,
+          target_planned_date: timezoneProbeDate,
+        }),
+        "schedule athlete-timezone boundary fixture",
+      );
+      const coachAthleteOverviews = expectData(
+        await coach.rpc("list_authored_coach_athlete_overviews", {
+          target_limit: 250,
+        }),
+        "load bounded coach athlete identities",
+      );
+      const athleteOverview = coachAthleteOverviews.find(
+        (athlete) => athlete.id === athleteAId,
+      );
+      assert.ok(athleteOverview);
+      assert.ok(Number(athleteOverview.assigned_program_count) >= 1);
+      assert.deepEqual(Object.keys(athleteOverview).sort(), [
+        "assigned_program_count",
+        "display_name",
+        "id",
+        "relationship_id",
+      ]);
+
+      const coachAthleteDetail = expectData(
+        await coach.rpc("get_authored_coach_athlete_detail", {
+          target_athlete_id: athleteAId,
+          target_program_limit: 250,
+          target_upcoming_limit: 6,
+          target_completed_limit: 6,
+        }),
+        "load selected author-scoped athlete detail",
+      );
+      assert.equal(coachAthleteDetail.id, athleteAId);
+      assert.equal(
+        coachAthleteDetail.assignedPrograms.some(
+          (program) => program.id === coachProgramId,
+        ),
+        true,
+      );
+      assert.equal(
+        coachAthleteDetail.assignedPrograms.some(
+          (program) => program.id === otherCoachProgramId,
+        ),
+        false,
+      );
+      assert.equal(
+        coachAthleteDetail.agenda.some(
+          (entry) =>
+            entry.id === `session:${sessionId}` && entry.sessionId === sessionId,
+        ),
+        true,
+      );
+      assert.doesNotMatch(JSON.stringify(coachAthleteDetail), /note/i);
+      const timezoneAgendaEntry = coachAthleteDetail.agenda.find(
+        (entry) => entry.scheduleId === occurrences[1].id,
+      );
+      assert.ok(timezoneAgendaEntry);
+      assert.equal(timezoneAgendaEntry.date, timezoneProbeDate);
+      assert.equal(
+        timezoneAgendaEntry.status,
+        timezoneProbeDate < athleteDate ? "overdue" : "planned",
+      );
+
+      const otherCoachAthleteDetail = expectData(
+        await otherCoach.rpc("get_authored_coach_athlete_detail", {
+          target_athlete_id: athleteAId,
+          target_program_limit: 250,
+          target_upcoming_limit: 6,
+          target_completed_limit: 6,
+        }),
+        "load isolated second-coach athlete detail",
+      );
+      assert.equal(
+        otherCoachAthleteDetail.assignedPrograms.some(
+          (program) => program.id === otherCoachProgramId,
+        ),
+        true,
+      );
+      assert.equal(
+        otherCoachAthleteDetail.assignedPrograms.some(
+          (program) => program.id === coachProgramId,
+        ),
+        false,
+      );
+      assert.equal(
+        otherCoachAthleteDetail.agenda.some((entry) => entry.id === sessionId),
+        false,
+      );
+      assert.doesNotMatch(JSON.stringify(otherCoachAthleteDetail), /note/i);
+      assert.deepEqual(
+        expectData(
+          await coach
+            .from("workout_sessions")
+            .select("id")
+            .eq("id", sessionId),
+          "coach cannot read the private session base row",
+        ),
+        [],
+      );
+      for (const [privateTable, privateId] of [
+        ["session_item_logs", loggedItem.id],
+        ["session_entries", sessionEntry.id],
+      ]) {
+        assert.deepEqual(
+          expectData(
+            await coach.from(privateTable).select("id").eq("id", privateId),
+            `coach cannot read the private ${privateTable} base row`,
+          ),
+          [],
+        );
+      }
+      const coachSessionDetail = expectData(
+        await coach.rpc("get_authored_coach_session_detail", {
+          target_session_id: sessionId,
+        }),
+        "load authored note-free coach session detail",
+      );
+      assert.equal(coachSessionDetail.id, sessionId);
+      assert.equal(coachSessionDetail.programVersionId, coachDraftVersion.id);
+      assert.equal(coachSessionDetail.workoutTitle, coachWorkout.title);
+      assert.equal(coachSessionDetail.items[0].entries[0].reps, 9);
+      assert.deepEqual(Object.keys(coachSessionDetail).sort(), [
+        "completedAt",
+        "completedForDate",
+        "id",
+        "items",
+        "programVersionId",
+        "scheduledWorkoutId",
+        "sessionRpe",
+        "startedAt",
+        "workoutId",
+        "workoutTitle",
+      ]);
+      assert.deepEqual(Object.keys(coachSessionDetail.items[0]).sort(), [
+        "cue",
+        "entries",
+        "fields",
+        "id",
+        "mode",
+        "position",
+        "title",
+      ]);
+      assert.deepEqual(
+        Object.keys(coachSessionDetail.items[0].entries[0]).sort(),
+        [
+          "distanceMetres",
+          "durationSeconds",
+          "heartRate",
+          "id",
+          "loadKg",
+          "position",
+          "reps",
+          "rounds",
+          "rpe",
+        ],
+      );
+      assert.doesNotMatch(JSON.stringify(coachSessionDetail), /note/i);
+      assert.equal(
+        expectData(
+          await otherCoach.rpc("get_authored_coach_session_detail", {
+            target_session_id: sessionId,
+          }),
+          "deny another coach's session detail",
+        ),
+        null,
+      );
+      assert.deepEqual(
+        expectData(
+          await athleteA.rpc("get_own_session_notes", {
+            target_session_id: sessionId,
+          }),
+          "load owner-only session notes",
+        ),
+        {
+          sessionNote: "Controlled.",
+          itemNotes: { [loggedItem.id]: "" },
+          entryNotes: { [sessionEntry.id]: "" },
         },
       );
       assert.equal(
         expectData(
+          await coach.rpc("get_own_session_notes", {
+            target_session_id: sessionId,
+          }),
+          "coach cannot load athlete notes",
+        ),
+        null,
+      );
+      const completedWorkout = expectData(
+        await athleteA
+          .from("workout_sessions")
+          .select(
+            "status,session_rpe,completed_for_date,program_version_id,workout_title,draft_revision",
+          )
+          .eq("id", sessionId)
+          .single(),
+        "load completed workout",
+      );
+      assert.deepEqual(completedWorkout, {
+        status: "completed",
+        session_rpe: 7,
+        completed_for_date: datePlus(effectiveOn, 2),
+        program_version_id: coachDraftVersion.id,
+        workout_title: coachWorkout.title,
+        draft_revision: 1,
+      });
+      assert.deepEqual(
+        expectData(
+          await athleteA
+            .from("program_versions")
+            .select("title,description")
+            .eq("id", completedWorkout.program_version_id)
+            .single(),
+          "load completed result historical label",
+        ),
+        {
+          title: originalProgramTitle,
+          description: originalProgramDescription,
+        },
+      );
+      assert.deepEqual(
+        expectData(
           await athleteA
             .from("scheduled_workouts")
-            .select("status")
+            .select("status,program_version_id,workout_id")
             .eq("id", occurrence.id)
             .single(),
-          "load completed occurrence",
-        ).status,
-        "completed",
+          "load completed occurrence historical label",
+        ),
+        {
+          status: "completed",
+          program_version_id: coachDraftVersion.id,
+          workout_id: coachWorkout.id,
+        },
       );
       assert.match(
         (
@@ -988,16 +1957,15 @@ test(
         ).error?.message ?? "",
         /cannot be scheduled/i,
       );
-      assert.deepEqual(
-        expectData(
-          await athleteA
-            .from("session_entries")
-            .update({ reps: 99 })
-            .eq("id", sessionEntry.id)
-            .select("id"),
-          "completed result write",
-        ),
-        [],
+      const completedResultWrite = await athleteA
+        .from("session_entries")
+        .update({ reps: 99 })
+        .eq("id", sessionEntry.id)
+        .select("id");
+      assert.equal(completedResultWrite.error?.code, "42501");
+      assert.match(
+        completedResultWrite.error?.message ?? "",
+        /permission denied for table session_entries/i,
       );
       assert.match(
         (
@@ -1007,6 +1975,36 @@ test(
             .eq("id", sessionEntry.id)
         ).error?.message ?? "",
         /Completed workout history is immutable/,
+      );
+
+      expectData(
+        await athleteA.rpc("deactivate_current_program", {
+          target_program_id: coachProgramId,
+        }),
+        "deactivate completed coach-authored program",
+      );
+      const archivedCoachAthleteDetail = expectData(
+        await coach.rpc("get_authored_coach_athlete_detail", {
+          target_athlete_id: athleteAId,
+          target_program_limit: 250,
+          target_upcoming_limit: 6,
+          target_completed_limit: 6,
+          target_progress_limit: 104,
+        }),
+        "load completed coach history after program deactivation",
+      );
+      assert.equal(
+        archivedCoachAthleteDetail.assignedPrograms.some(
+          (program) => program.id === coachProgramId,
+        ),
+        false,
+      );
+      assert.equal(
+        archivedCoachAthleteDetail.agenda.some(
+          (entry) =>
+            entry.id === `session:${sessionId}` && entry.sessionId === sessionId,
+        ),
+        true,
       );
 
       expectData(
@@ -1020,22 +2018,22 @@ test(
       );
       assert.deepEqual(
         expectData(
-          await coach.from("programs").select("id").eq("id", programId),
+          await coach.from("programs").select("id").eq("id", coachProgramId),
           "revoked coach read",
         ),
         [],
       );
-      assert.equal(
+      assert.deepEqual(
         expectData(
           await coach.from("programs").select("id").eq("id", libraryProgramId),
-          "other athlete remains connected",
-        ).length,
-        1,
+          "connected athlete-authored library remains private",
+        ),
+        [],
       );
       assert.ok(
         (
           await coach.from("workouts").insert({
-            program_week_id: week.id,
+            program_week_id: coachWeek.id,
             title: "Forbidden",
             schedule_label: "Workout 3",
             position: 2,
@@ -1043,17 +2041,69 @@ test(
           })
         ).error,
       );
+    } catch (error) {
+      testFailure = error;
     } finally {
-      await cleanupApplicationData(database, userIds);
-      for (const userId of [coachId, athleteBId, athleteAId].filter(Boolean)) {
-        const { error } = await admin.auth.admin.deleteUser(userId);
+      const cleanupErrors = [];
+      try {
         assert.equal(
-          error,
-          null,
-          `delete temporary user: ${error?.message ?? "unknown auth error"}`,
+          new Set(createdPersonaKeys).size,
+          createdPersonaKeys.length,
+          "cleanup persona keys must be exact and unique",
+        );
+        assert.equal(
+          new Set(userIds).size,
+          userIds.length,
+          "cleanup user IDs must be exact and unique",
+        );
+        assert.equal(
+          createdPersonaKeys.length,
+          userIds.length,
+          "cleanup persona keys and user IDs must match",
+        );
+        if (createdPersonaKeys.length > 0) {
+          assert.deepEqual(
+            expectData(
+              await admin.rpc("reset_test_population", {
+                expected_namespace: fixtureNamespace,
+                expected_persona_keys: createdPersonaKeys,
+              }),
+              "reset exact generated integration namespace",
+            ),
+            {
+              removed: createdPersonaKeys.length,
+              namespace: fixtureNamespace,
+            },
+          );
+        }
+      } catch (error) {
+        cleanupErrors.push(
+          new Error(`Reset generated integration namespace: ${error.message}`, {
+            cause: error,
+          }),
         );
       }
-      await database.end();
+      for (const userId of [...userIds].reverse()) {
+        try {
+          const { error } = await admin.auth.admin.deleteUser(userId);
+          if (error) {
+            cleanupErrors.push(
+              new Error(
+                `Delete generated integration Auth user ${userId}: ${error.message}`,
+                { cause: error },
+              ),
+            );
+          }
+        } catch (error) {
+          cleanupErrors.push(
+            new Error(
+              `Delete generated integration Auth user ${userId}: ${error.message}`,
+              { cause: error },
+            ),
+          );
+        }
+      }
+      throwIntegrationFailures(testFailure, cleanupErrors);
     }
   },
 );

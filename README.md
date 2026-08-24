@@ -85,11 +85,19 @@ Database migrations follow the same direction: development project first, produc
 ```bash
 npm run lint
 npm test
+npm run test:coverage
+npm run test:e2e
 npm run test:integration
 npm run db:lint
 ```
 
-The integration test creates temporary local users and proves athlete isolation, active and revoked coach access, publishing, schedule creation, and immutable completed history. It refuses to run against a non-local Supabase URL. The regular test suite also verifies the exact test-persona graph and its production safety guards.
+The integration test creates three temporary, namespaced test users and proves athlete isolation, active and revoked coach access, publishing, schedule creation, and immutable completed history. `npm run test:integration` remains loopback-only. Hosted development is a separate, fail-closed path:
+
+```bash
+npm run test:integration:hosted-dev
+```
+
+That command still refuses to start unless the process environment explicitly sets `SUPABASE_HOSTED_DEV_INTEGRATION=1`, `SUPABASE_TEST_ENVIRONMENT=hosted-development`, `SUPABASE_TEST_PROJECT_REF=ofyeejyfroblunbspgve`, the exact `https://ofyeejyfroblunbspgve.supabase.co` test URL, and separate publishable and secret test keys. Supply keys through an ignored local environment or secret manager; never commit them or put the secret key in a `VITE_` variable. Cleanup uses the service-only, exact-namespace fixture reset before deleting those three generated Auth users. The regular test suite verifies these target guards without contacting Supabase.
 
 ## Nonprod and production builds
 
@@ -127,4 +135,4 @@ The database model is defined by:
 - `supabase/migrations/202608210011_restore_partial_repeating_cycles.sql`
 - `supabase/migrations/202608210012_safe_item_deletion_and_complete_repeating_cycles.sql`
 
-See [docs/MVP_AND_ARCHITECTURE.md](docs/MVP_AND_ARCHITECTURE.md) for the product and authorization model, and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the staged hosting layout.
+See [docs/MVP_AND_ARCHITECTURE.md](docs/MVP_AND_ARCHITECTURE.md) for the implemented architecture, [docs/PRODUCT_MODEL_AND_CAPABILITIES.md](docs/PRODUCT_MODEL_AND_CAPABILITIES.md) for the canonical terminology, state axes, provenance, and capability contract, [docs/BROWSER_SUPPORT.md](docs/BROWSER_SUPPORT.md) for the minimum browser policy, [docs/review/README.md](docs/review/README.md) for stabilization evidence, and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the staged hosting layout.

@@ -1,6 +1,12 @@
 export type ViewName =
   "today" | "program" | "calendar" | "exercises" | "coaching";
 
+export type ContentOrigin = "self" | "coach" | "library";
+export type TrainingContentType = "program" | "quick_workout";
+export type ProgramVersionLifecycle = "draft" | "published" | "superseded";
+export type OccurrenceStatus = "planned" | "in_progress" | "completed" | "skipped";
+export type WorkoutSessionStatus = "in_progress" | "completed" | "abandoned";
+
 export interface OwnProfile {
   id: string;
   firstName: string;
@@ -96,7 +102,7 @@ export interface ScheduledWorkout {
   slotLabel: string;
   plannedDate?: string;
   sequenceNumber: number;
-  status: "planned" | "in_progress" | "completed" | "skipped";
+  status: OccurrenceStatus;
   sourceType?: Program["sourceType"];
   sourceLabel?: string;
   createdByName?: string;
@@ -116,7 +122,7 @@ export interface Program {
   id: string;
   athleteId: string;
   versionId: string;
-  versionStatus: "draft" | "published" | "superseded";
+  versionStatus: ProgramVersionLifecycle;
   effectiveFrom?: string;
   title: string;
   description: string;
@@ -126,11 +132,11 @@ export interface Program {
   ownerName: string;
   createdById: string;
   createdByName: string;
-  sourceType: "self" | "coach" | "library";
+  sourceType: ContentOrigin;
   sourceLabel: string;
   templateId?: string;
   /** A quick workout uses the same editable workout tree without week planning. */
-  contentType?: "program" | "quick_workout";
+  contentType?: TrainingContentType;
   /** Present for catalog rows, which intentionally defer the full workout tree. */
   weekCount?: number;
   /** Present for catalog rows, which intentionally defer the full workout tree. */
@@ -199,7 +205,7 @@ export type CoachAssignedProgramStatus =
 export type WorkoutProgressState =
   | "unscheduled"
   | "scheduled"
-  | "completed";
+  | OccurrenceStatus;
 
 export interface CoachAssignedProgramSummary {
   id: string;
@@ -213,6 +219,7 @@ export interface CoachAssignedProgramSummary {
   completedWorkouts: number;
   completionPercent: number;
   workoutProgress: WorkoutProgressState[];
+  hiddenWorkoutCount?: number;
   nextWorkout?: {
     id: string;
     title: string;
@@ -240,6 +247,8 @@ export interface AthleteSummary {
   relationshipId?: string;
   name: string;
   initials: string;
+  assignedProgramCount?: number;
+  detailsLoaded?: boolean;
   assignedPrograms: CoachAssignedProgramSummary[];
   agenda: CoachAgendaEntry[];
 }
@@ -292,6 +301,8 @@ export interface SessionSetValue {
 
 export interface ActiveSession {
   id: string;
+  /** Last server-confirmed atomic draft revision. */
+  draftRevision: number;
   workoutId: string;
   programVersionId: string;
   scheduledWorkoutId?: string;
@@ -320,3 +331,11 @@ export interface WorkspaceData {
   outgoingCoachInvites: OutgoingCoachInvite[];
   activeSession: ActiveSession | null;
 }
+
+export type CoachingWorkspaceData = Pick<
+  WorkspaceData,
+  | "coachConnections"
+  | "coachedAthletes"
+  | "pendingCoachInvites"
+  | "outgoingCoachInvites"
+>;

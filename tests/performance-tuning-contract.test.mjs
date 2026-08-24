@@ -17,6 +17,8 @@ test("workspace loads are bounded, deduplicated, and observable", async () => {
   assert.match(appEntry, /function isTransientWorkspaceError[\s\S]*timeout[\s\S]*failed to fetch/);
   assert.match(appEntry, /while \(!nextWorkspace\)[\s\S]*retryDelay[\s\S]*transientWorkspaceRetryDelays/);
   assert.match(appEntry, /recordClientPerformance\("workspace:load"/);
+  assert.match(appEntry, /lazy\(\(\) => import\("\.\/LiftLogApp"\)\)/);
+  assert.doesNotMatch(appEntry, /import LiftLogApp from "\.\/LiftLogApp"/);
   assert.match(repository, /private workspaceLoadPromise: Promise<WorkspaceData> \| null = null/);
   assert.match(repository, /if \(this\.workspaceLoadPromise\) return this\.workspaceLoadPromise/);
   assert.match(repository, /recordClientPerformance\("workspace:repository-load"/);

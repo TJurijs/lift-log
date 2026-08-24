@@ -3,8 +3,6 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
-const cssPath = new URL("../app/globals.css", import.meta.url);
-
 test("program creation always starts a finite one-week program", async () => {
   const app = await readFile(appPath, "utf8");
   const programModal = app.slice(
