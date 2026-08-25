@@ -1483,6 +1483,77 @@ html.dev-mobile-preview-frame body::-webkit-scrollbar {
   font-size: 8px;
   white-space: nowrap;
 }
+.interval-log-table {
+  margin-top: 13px;
+  display: grid;
+  gap: 6px;
+}
+.interval-log-header,
+.interval-log-row {
+  display: grid;
+  grid-template-columns: 54px 82px minmax(90px, 1fr) minmax(82px, 1fr) minmax(82px, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+.interval-log-header {
+  color: var(--muted-dark);
+  font-size: 7.5px;
+  letter-spacing: 0.07em;
+  text-align: center;
+  text-transform: uppercase;
+}
+.interval-log-row input,
+.interval-plan-cell,
+.interval-round-toggle {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-size: 10px;
+  text-align: center;
+}
+.interval-log-row input {
+  padding: 7px 4px;
+}
+.interval-log-row input::placeholder {
+  color: var(--muted-dark);
+}
+.interval-plan-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--text-soft);
+}
+.interval-plan-cell small {
+  color: var(--muted-dark);
+  font-size: 8px;
+}
+.interval-round-toggle {
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.interval-round-toggle.completed {
+  border-color: var(--accent);
+  background: rgba(197, 243, 107, 0.08);
+  color: var(--accent);
+}
+.interval-round-toggle:disabled {
+  cursor: default;
+}
+.interval-log-summary {
+  padding-top: 3px;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--muted);
+  font-size: 8px;
+}
 .session-finish {
   margin-top: 14px;
   padding: 18px;
@@ -5588,27 +5659,118 @@ html.dev-mobile-preview-frame body::-webkit-scrollbar {
     justify-self: start;
   }
   .log-item {
-    padding: 12px;
+    margin: 7px 0 10px;
+    padding: 11px;
   }
   .exercise-heading {
     display: grid;
-    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 7px;
   }
-  .exercise-heading > span {
-    white-space: normal;
+  .exercise-heading:not(.builder-exercise-heading) > div:first-child {
+    display: contents;
+  }
+  .exercise-heading:not(.builder-exercise-heading) > div:first-child > strong {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .exercise-heading small {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: -webkit-box;
+    overflow: hidden;
+    line-height: 1.45;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .exercise-heading > .exercise-prescription {
+    grid-column: 2;
+    grid-row: 1;
+    display: inline-flex;
+    width: fit-content;
+    min-height: 27px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .exercise-prescription .target-rpe-badge {
+    min-height: auto;
+    padding: 0 0 0 6px;
+    border: 0;
+    border-left: 1px solid var(--line);
+    border-radius: 0;
+  }
+  .set-table {
+    margin-top: 10px;
   }
   .set-header,
   .set-row {
     grid-template-columns:
-      30px repeat(var(--metric-count, 3), minmax(0, 1fr))
-      44px;
+      24px repeat(var(--metric-count, 3), minmax(0, 1fr));
     gap: 4px;
+  }
+  .set-table.has-set-controls .set-header,
+  .set-table.has-set-controls .set-row {
+    grid-template-columns:
+      24px repeat(var(--metric-count, 3), minmax(0, 1fr))
+      32px;
+  }
+  .set-header span:first-child,
+  .set-row > span:first-child {
+    padding-left: 2px;
+  }
+  .set-header span:last-child,
+  .set-row > span[aria-hidden]:last-child {
+    display: none;
+  }
+  .set-table.has-set-controls .set-header span:last-child {
+    display: block;
   }
   .set-row input {
     padding: 10px 3px;
   }
+  .set-row .rpe-select-trigger {
+    padding-left: 4px;
+    padding-right: 2px;
+  }
+  .set-table.has-set-controls .set-row > button {
+    width: 32px;
+  }
+  .add-row {
+    margin-top: 1px;
+  }
   .result-fields {
     grid-template-columns: 1fr 1fr;
+  }
+  .interval-log-table {
+    gap: 5px;
+  }
+  .interval-log-header,
+  .interval-log-row {
+    grid-template-columns: 32px 48px minmax(0, 1fr) 52px 56px;
+    gap: 4px;
+  }
+  .interval-log-header {
+    font-size: 6.5px;
+    letter-spacing: 0.03em;
+  }
+  .interval-log-row input {
+    padding: 7px 2px;
+  }
+  .interval-log-row .rpe-select-trigger {
+    padding-left: 3px;
+    padding-right: 2px;
+  }
+  .interval-plan-cell {
+    font-size: 9px;
+  }
+  .interval-log-summary {
+    justify-content: flex-start;
   }
   .today-rail {
     grid-template-columns: 1fr;
@@ -5914,6 +6076,14 @@ html.dev-mobile-preview-frame body::-webkit-scrollbar {
   }
 }
 
+@media (max-width: 520px) and (hover: none),
+  (max-width: 520px) and (pointer: coarse) {
+  .set-table.has-set-controls .set-row > button {
+    width: 32px;
+    height: 44px;
+  }
+}
+
 @media (hover: none), (pointer: coarse) {
   .button,
   .button.small,
@@ -5947,6 +6117,8 @@ html.dev-mobile-preview-frame body::-webkit-scrollbar {
   .search-field input,
   .set-row input,
   .set-row .rpe-select-trigger,
+  .interval-log-row input,
+  .interval-log-row .rpe-select-trigger,
   .result-input input,
   .session-finish textarea,
   .form-field input,
@@ -5954,6 +6126,10 @@ html.dev-mobile-preview-frame body::-webkit-scrollbar {
   .form-field textarea {
     min-height: 44px;
     font-size: 16px;
+  }
+  .interval-round-toggle,
+  .interval-plan-cell {
+    min-height: 44px;
   }
   .calendar-day-schedule,
   .calendar-day > .calendar-day-number,

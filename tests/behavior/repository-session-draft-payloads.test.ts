@@ -99,6 +99,70 @@ describe("workout-session draft persistence", () => {
     });
   });
 
+  it("persists interval rounds as individual ordered entries", () => {
+    const session = fixtureSession();
+    session.itemLogIds = { "interval-item": "interval-log" };
+
+    expect(
+      buildSessionDraftPayload(
+        session,
+        {},
+        {
+          "interval-item": {
+            "round.0.completed": "1",
+            "round.0.distance": "0.25",
+            "round.0.heartRate": "142",
+            "round.0.rpe": "6",
+            "round.1.distance": "0.27",
+            "round.1.heartRate": "148",
+            "round.1.rpe": "7",
+          },
+        },
+        "7",
+        "",
+      ),
+    ).toMatchObject({
+      items: [
+        {
+          itemLogId: "interval-log",
+          entries: [
+            {
+              position: 0,
+              distanceMetres: 250,
+              rounds: 1,
+              heartRate: 142,
+              rpe: 6,
+            },
+            {
+              position: 1,
+              distanceMetres: 270,
+              rounds: null,
+              heartRate: 148,
+              rpe: 7,
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("fills untouched earlier interval positions to preserve contiguous ordering", () => {
+    const session = fixtureSession();
+    session.itemLogIds = { "interval-item": "interval-log" };
+
+    const payload = buildSessionDraftPayload(
+      session,
+      {},
+      { "interval-item": { "round.2.rpe": "8" } },
+      "7",
+      "",
+    );
+
+    expect(payload.items[0].entries.map((entry) => entry.position)).toEqual([
+      0, 1, 2,
+    ]);
+  });
+
   it("sends the expected revision and idempotency token in one RPC", async () => {
     const calls: Array<{ name: string; payload: Record<string, unknown> }> = [];
     const client = {

@@ -227,6 +227,15 @@ function prescriptionEntries(item: WorkoutItem) {
     : [item.prescription];
 }
 
+function intervalPrescriptionEntries(item: WorkoutItem) {
+  const entries = prescriptionEntries(item);
+  const roundCount = Math.max(1, item.prescription.rounds ?? entries.length);
+  return Array.from(
+    { length: roundCount },
+    (_, index) => entries[index] ?? entries.at(-1) ?? item.prescription,
+  );
+}
+
 function prescriptionEntryVaries(
   item: WorkoutItem,
   field: keyof PrescriptionEntry,
@@ -758,6 +767,35 @@ export default function LiftLogApp({
     }
   }
 
+  async function viewScheduledPlan(schedule: ScheduledWorkout) {
+    try {
+      const matchingProgram = programCatalog.find(
+        (candidate) => candidate.id === schedule.programId,
+      );
+      const nextProgram = repository
+        ? await repository.loadOwnScheduledProgramVersionById(
+            schedule.programId,
+            schedule.programVersionId,
+          )
+        : matchingProgram;
+      if (!nextProgram) throw new Error("This plan version is no longer available.");
+      const workoutWeek = nextProgram.weeks.find((week) =>
+        week.workouts.some((workout) => workout.id === schedule.workoutId),
+      );
+      selectProgram(nextProgram, {
+        weekIndex: workoutWeek?.index,
+        workoutId: schedule.workoutId,
+      });
+      setDetail(null);
+      setActiveView("program");
+      scrollToAppTop();
+    } catch (error) {
+      notify(
+        error instanceof Error ? error.message : "The plan could not be opened",
+      );
+    }
+  }
+
   function applyWorkspace(nextWorkspace: WorkspaceData) {
     const nextWorkout = selectNextWorkoutFocus(
       nextWorkspace.programCatalog,
@@ -1057,6 +1095,14 @@ export default function LiftLogApp({
       setSessionRpe(session.sessionRpe);
       setSessionNote(session.sessionNote);
       setWorkoutStarted(true);
+      setWorkspace((previous) => ({
+        ...previous,
+        scheduledWorkouts: previous.scheduledWorkouts.map((candidate) =>
+          candidate.id === schedule.id
+            ? { ...candidate, status: "in_progress" }
+            : candidate,
+        ),
+      }));
       setDetail(null);
       notify("Workout started · changes save automatically");
     } catch (error) {
@@ -2642,10 +2688,13 @@ export default function LiftLogApp({
       );
       if (!targetSchedule)
         throw new Error("This scheduled workout is no longer available.");
+      const resettingActiveOccurrence =
+        status === "planned" &&
+        activeSession?.scheduledWorkoutId === targetSchedule.id;
       requireCapability(
         capabilitiesForOccurrence(targetSchedule),
         status === "planned"
-          ? targetSchedule.status === "in_progress"
+          ? targetSchedule.status === "in_progress" || resettingActiveOccurrence
             ? "resetToPlanned"
             : "restore"
           : "skip",
@@ -2973,7 +3022,13 @@ export default function LiftLogApp({
                   }
                 : undefined
             }
-            onNavigate={navigate}
+            onViewProgram={
+              !activeSession &&
+              workoutPreviewSchedule &&
+              previewProgram?.contentType !== "quick_workout"
+                ? () => void viewScheduledPlan(workoutPreviewSchedule)
+                : undefined
+            }
           />
         )}
         {activeView === "today" &&
@@ -3370,6 +3425,9 @@ export default function LiftLogApp({
         <ScheduleModal
           key={`${scheduleOpening ? "preparing" : "ready"}:${scheduleEditingId ?? "new"}:${scheduleInitialDate ?? "today"}`}
           schedules={workspace.scheduledWorkouts}
+          schedulableVersionIds={schedulablePrograms.map(
+            (candidate) => candidate.versionId,
+          )}
           editingId={scheduleEditingId}
           initialDate={scheduleInitialDate}
           preparing={scheduleOpening}
@@ -3689,7 +3747,7 @@ function TodayView({
   backLabel = "Next workouts",
   onReschedule,
   onRemoveFromCalendar,
-  onNavigate,
+  onViewProgram,
 }: {
   program?: Program;
   viewerId: string;
@@ -3728,7 +3786,7 @@ function TodayView({
   backLabel?: string;
   onReschedule?: () => void;
   onRemoveFromCalendar?: () => void;
-  onNavigate: (view: ViewName) => void;
+  onViewProgram?: () => void;
 }) {
   const workoutDate = plannedDate
     ? new Date(`${plannedDate}T12:00:00`)
@@ -3857,13 +3915,12 @@ function TodayView({
             )}
           </button>
         )}
-        <button
-          className="button secondary"
-          onClick={() => onNavigate("program")}
-        >
-          <Pencil size={15} />
-          Edit plan
-        </button>
+        {viewMode && onViewProgram && (
+          <button className="button secondary" onClick={onViewProgram}>
+            <BookOpen size={15} />
+            View program
+          </button>
+        )}
       </PageHeader>
       {workoutComplete && (
         <div className="success-banner">
@@ -4097,10 +4154,14 @@ export function RpeSelect({
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
-        <option value="">No actual RPE</option>
+        <option value="" aria-label="No actual RPE">—</option>
         {rpeOptions.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.value} · {option.label} · {option.detail}
+          <option
+            key={option.value}
+            value={option.value}
+            aria-label={`${option.value} · ${option.label} · ${option.detail}`}
+          >
+            {option.value}
           </option>
         ))}
       </select>
@@ -4197,7 +4258,13 @@ function WorkoutLogItem({
         {!builderPreview && prescriptionSummary}
       </div>
       {item.mode === "sets" && (
-        <div className={cn("set-table", `tracking-${fields.length}`)}>
+        <div
+          className={cn(
+            "set-table",
+            `tracking-${fields.length}`,
+            showSetControls && "has-set-controls",
+          )}
+        >
           <div className="set-header">
             <span>Set</span>
             {fields.includes("reps") && <span>Reps</span>}
@@ -4266,17 +4333,16 @@ function WorkoutLogItem({
           )}
         </div>
       )}
-      {(item.mode === "result" || item.mode === "intervals") && (
+      {item.mode === "intervals" && (
+        <IntervalLogTable
+          item={item}
+          active={active}
+          resultLog={resultLog}
+          onUpdate={(field, value) => onUpdateResult(item.id, field, value)}
+        />
+      )}
+      {item.mode === "result" && (
         <div className="result-fields">
-          {item.mode === "intervals" && fields.includes("rounds") && (
-            <ResultInput
-              label="Rounds"
-              unit="rounds"
-              disabled={!active}
-              value={resultLog.rounds ?? ""}
-              onChange={(value) => onUpdateResult(item.id, "rounds", value)}
-            />
-          )}
           {fields.includes("duration") && (
             <ResultInput
               label="Duration"
@@ -4316,6 +4382,98 @@ function WorkoutLogItem({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function IntervalLogTable({
+  item,
+  active,
+  resultLog,
+  onUpdate,
+}: {
+  item: WorkoutItem;
+  active: boolean;
+  resultLog: Record<string, string>;
+  onUpdate: (field: string, value: string) => void;
+}) {
+  const rounds = intervalPrescriptionEntries(item);
+  const completedRounds = rounds.filter((_, index) =>
+    Boolean(resultLog[`round.${index}.completed`]),
+  ).length;
+  const plannedSeconds = rounds.reduce(
+    (total, round) =>
+      total + (round.workSeconds ?? 0) + (round.restSeconds ?? 0),
+    0,
+  );
+  const totalDistance = rounds.reduce(
+    (total, _, index) =>
+      total + (Number(resultLog[`round.${index}.distance`]) || 0),
+    0,
+  );
+
+  return (
+    <div className="interval-log-table">
+      <div className="interval-log-header" aria-hidden>
+        <span>Round</span>
+        <span>Plan</span>
+        <span>Distance</span>
+        <span>Avg HR</span>
+        <span>RPE</span>
+      </div>
+      {rounds.map((round, index) => {
+        const completedKey = `round.${index}.completed`;
+        const completed = Boolean(resultLog[completedKey]);
+        return (
+          <div className="interval-log-row" key={index}>
+            <button
+              type="button"
+              className={cn("interval-round-toggle", completed && "completed")}
+              disabled={!active}
+              aria-label={`${completed ? "Mark" : "Mark"} round ${index + 1} ${completed ? "incomplete" : "complete"}`}
+              aria-pressed={completed}
+              onClick={() => onUpdate(completedKey, completed ? "" : "1")}
+            >
+              {completed ? <Check size={13} /> : index + 1}
+            </button>
+            <span className="interval-plan-cell">
+              {round.workSeconds ?? "—"}/{round.restSeconds ?? "—"}
+              <small>s</small>
+            </span>
+            <input
+              aria-label={`${item.title}, round ${index + 1}, distance in kilometres`}
+              disabled={!active}
+              inputMode="decimal"
+              placeholder="km"
+              value={resultLog[`round.${index}.distance`] ?? ""}
+              onChange={(event) =>
+                onUpdate(`round.${index}.distance`, event.target.value)
+              }
+            />
+            <input
+              aria-label={`${item.title}, round ${index + 1}, average heart rate`}
+              disabled={!active}
+              inputMode="numeric"
+              placeholder="bpm"
+              value={resultLog[`round.${index}.heartRate`] ?? ""}
+              onChange={(event) =>
+                onUpdate(`round.${index}.heartRate`, event.target.value)
+              }
+            />
+            <RpeSelect
+              ariaLabel={`${item.title}, round ${index + 1}, actual RPE`}
+              disabled={!active}
+              value={resultLog[`round.${index}.rpe`] ?? ""}
+              onChange={(value) => onUpdate(`round.${index}.rpe`, value)}
+            />
+          </div>
+        );
+      })}
+      <div className="interval-log-summary">
+        <span>{completedRounds}/{rounds.length} rounds completed</span>
+        <span>{Math.round(plannedSeconds / 60)} min planned</span>
+        {totalDistance > 0 && <span>{totalDistance.toFixed(2)} km total</span>}
+      </div>
     </div>
   );
 }
@@ -9383,6 +9541,7 @@ function ProgramModal({
 
 function ScheduleModal({
   schedules,
+  schedulableVersionIds,
   editingId,
   initialDate,
   preparing,
@@ -9390,14 +9549,21 @@ function ScheduleModal({
   onSave,
 }: {
   schedules: ScheduledWorkout[];
+  schedulableVersionIds: string[];
   editingId: string | null;
   initialDate: string | null;
   preparing: boolean;
   onClose: () => void;
   onSave: (scheduleId: string, date: string | null) => Promise<void>;
 }) {
+  const schedulableVersions = new Set(schedulableVersionIds);
   const candidates = schedules.filter(
-    (schedule) => schedule.status === "planned",
+    (schedule) =>
+      schedule.status === "planned" &&
+      (editingId
+        ? schedule.id === editingId
+        : !schedule.plannedDate &&
+          schedulableVersions.has(schedule.programVersionId)),
   );
   const initial =
     candidates.find((schedule) => schedule.id === editingId) ??

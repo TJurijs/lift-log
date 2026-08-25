@@ -27,7 +27,25 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   assert.match(app, /Next workouts/);
   assert.match(app, /Set back to planned/);
   assert.match(app, /Skip workout/);
+  assert.match(app, /viewScheduledPlan\(workoutPreviewSchedule\)/);
+  assert.match(app, /loadOwnScheduledProgramVersionById/);
+  assert.match(app, /previewProgram\?\.contentType !== "quick_workout"/);
+  assert.match(app, /viewMode && onViewProgram/);
+  assert.match(app, /View program/);
+  assert.doesNotMatch(app, />\s*Edit plan\s*</);
   assert.match(app, /Every workout scheduled from today onward/);
+});
+
+test("new scheduling only offers unscheduled workouts from current finalized versions", async () => {
+  const app = await readFile(appUrl, "utf8");
+
+  assert.match(app, /schedulableVersionIds=\{schedulablePrograms\.map/);
+  assert.match(app, /const schedulableVersions = new Set\(schedulableVersionIds\)/);
+  assert.match(app, /editingId[\s\S]*schedule\.id === editingId/);
+  assert.match(
+    app,
+    /!schedule\.plannedDate &&[\s\S]*schedulableVersions\.has\(schedule\.programVersionId\)/,
+  );
 });
 
 test("skipping or restoring a scheduled workout abandons an active draft safely", async () => {
@@ -44,6 +62,19 @@ test("skipping or restoring a scheduled workout abandons an active draft safely"
     /update public\.workout_sessions[\s\S]*set status = 'abandoned'[\s\S]*status = 'in_progress'/i,
   );
   assert.match(migration, /set status = target_status/i);
+});
+
+test("starting and resetting a workout keep the occurrence state coherent", async () => {
+  const app = await readFile(appUrl, "utf8");
+
+  assert.match(
+    app,
+    /candidate\.id === schedule\.id[\s\S]*status: "in_progress"/,
+  );
+  assert.match(
+    app,
+    /activeSession\?\.scheduledWorkoutId === targetSchedule\.id[\s\S]*"resetToPlanned"/,
+  );
 });
 
 test("finishing a scheduled workout keeps its planned calendar date", async () => {

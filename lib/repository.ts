@@ -775,6 +775,18 @@ export function buildSessionDraftPayload(
     ([itemId, itemLogId]) => {
       const sets = setLogs[itemId];
       const result = resultLogs[itemId];
+      const touchedIntervalPositions = result
+        ? Object.keys(result)
+            .map((key) => /^round\.(\d+)\./.exec(key)?.[1])
+            .filter((position): position is string => position !== undefined)
+            .map(Number)
+        : [];
+      const intervalPositions = touchedIntervalPositions.length
+        ? Array.from(
+            { length: Math.max(...touchedIntervalPositions) + 1 },
+            (_, position) => position,
+          )
+        : [];
       const entries: SessionDraftEntryPayload[] = sets
         ? sets.map((set, position) => ({
             position,
@@ -786,7 +798,21 @@ export function buildSessionDraftPayload(
             heartRate: null,
             rpe: numberValue(set.rpe),
           }))
-        : result
+        : result && intervalPositions.length
+          ? intervalPositions.map((position) => ({
+              position,
+              reps: null,
+              loadKg: null,
+              durationSeconds: null,
+              distanceMetres:
+                numberValue(result[`round.${position}.distance`]) === null
+                  ? null
+                  : Number(result[`round.${position}.distance`]) * 1000,
+              rounds: result[`round.${position}.completed`] ? 1 : null,
+              heartRate: numberValue(result[`round.${position}.heartRate`]),
+              rpe: numberValue(result[`round.${position}.rpe`]),
+            }))
+          : result
           ? [
               {
                 position: 0,
@@ -1026,6 +1052,54 @@ export class LiftLogRepository {
           programId,
           versionId,
         ),
+    );
+  }
+
+  async loadOwnScheduledProgramVersionById(
+    programId: string,
+    versionId: string,
+  ): Promise<Program | null> {
+    return this.cacheImmutable(
+      this.programVersionCache,
+      `${this.viewerId}:${programId}:${versionId}`,
+      async () => {
+        const programResult = await this.client
+          .from("programs")
+          .select(
+            "id, athlete_id, created_by_id, title, description, source_type, source_label, template_id, content_type",
+          )
+          .eq("id", programId)
+          .eq("athlete_id", this.viewerId)
+          .eq("is_current", true)
+          .is("archived_at", null)
+          .maybeSingle();
+        if (programResult.error)
+          fail("Could not load the scheduled program", programResult.error);
+        if (!programResult.data) return null;
+        const programRow = programResult.data as ProgramRow;
+
+        const versionResult = await this.client
+          .from("program_versions")
+          .select(
+            "id, program_id, version_number, status, effective_from, title, description",
+          )
+          .eq("id", versionId)
+          .eq("program_id", programId)
+          .in("status", ["published", "superseded"])
+          .maybeSingle();
+        if (versionResult.error)
+          fail("Could not load the scheduled program version", versionResult.error);
+        if (!versionResult.data) return null;
+
+        return this.loadVersionTree(
+          programRow,
+          versionResult.data as VersionRow,
+          this.viewerName,
+          programRow.created_by_id === this.viewerId
+            ? this.viewerName
+            : programRow.source_label,
+        );
+      },
     );
   }
 
@@ -2676,6 +2750,39 @@ export class LiftLogRepository {
           load: displayNumber(entry.load_kg),
           rpe: displayNumber(entry.rpe),
         }));
+      } else if (item.entry_mode === "intervals") {
+        const legacyAggregate =
+          values.length === 1 && Number(values[0]?.rounds ?? 0) > 1;
+        resultLogs[item.source_workout_item_id] = legacyAggregate
+          ? {
+              rounds: displayNumber(values[0].rounds),
+              duration:
+                values[0].duration_seconds === null
+                  ? ""
+                  : String(values[0].duration_seconds / 60),
+              distance:
+                numberValue(values[0].distance_metres) === null
+                  ? ""
+                  : String(Number(values[0].distance_metres) / 1000),
+              heartRate: displayNumber(values[0].heart_rate),
+              rpe: displayNumber(values[0].rpe),
+            }
+          : Object.fromEntries(
+              values.flatMap((entry) => [
+                [`round.${entry.position}.completed`, entry.rounds ? "1" : ""],
+                [
+                  `round.${entry.position}.distance`,
+                  numberValue(entry.distance_metres) === null
+                    ? ""
+                    : String(Number(entry.distance_metres) / 1000),
+                ],
+                [
+                  `round.${entry.position}.heartRate`,
+                  displayNumber(entry.heart_rate),
+                ],
+                [`round.${entry.position}.rpe`, displayNumber(entry.rpe)],
+              ]),
+            );
       } else if (item.entry_mode !== "none") {
         const entry = values[0];
         resultLogs[item.source_workout_item_id] = entry
