@@ -17,8 +17,9 @@ export interface WorkoutFocus {
 
 /**
  * Calendar workouts that are still ahead of the athlete. The Next workouts
- * page intentionally shows every dated planned or skipped occurrence from
- * today onward, not just the earliest one.
+ * page intentionally shows every dated planned, active, or skipped occurrence
+ * from today onward, not just the earliest one. Active occurrences remain in
+ * the list so an athlete can leave the workout screen and resume later.
  */
 export function listUpcomingWorkouts(
   schedules: ScheduledWorkout[],
@@ -27,7 +28,9 @@ export function listUpcomingWorkouts(
   return schedules
     .filter(
       (schedule) =>
-        (schedule.status === "planned" || schedule.status === "skipped") &&
+        (schedule.status === "planned" ||
+          schedule.status === "in_progress" ||
+          schedule.status === "skipped") &&
         Boolean(schedule.plannedDate) &&
         String(schedule.plannedDate) >= today,
     )

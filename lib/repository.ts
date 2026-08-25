@@ -265,6 +265,32 @@ function fail(context: string, error: { message: string } | null): never {
   throw new Error(error ? `${context}: ${error.message}` : context);
 }
 
+export class SessionRevisionConflictError extends Error {
+  constructor(
+    message = "This workout keeps changing in another tab or device. Your entries are safe here; close the other copy and try again.",
+  ) {
+    super(message);
+    this.name = "SessionRevisionConflictError";
+  }
+}
+
+export class SessionDraftAmbiguousWriteError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "SessionDraftAmbiguousWriteError";
+  }
+}
+
+export function isAmbiguousSessionDraftError(error: unknown) {
+  if (error instanceof SessionDraftAmbiguousWriteError) return true;
+  return (
+    error instanceof Error &&
+    /failed to fetch|fetch failed|network|timed? out|connection|load failed|abort(?:ed|error)?|\bjwt\b|authentication required/i.test(
+      error.message,
+    )
+  );
+}
+
 type JsonRecord = Record<string, unknown>;
 
 function jsonRecord(value: unknown): JsonRecord | null {
@@ -2504,6 +2530,15 @@ export class LiftLogRepository {
     return this.loadActiveSession(String(result.data));
   }
 
+  /**
+   * Reloads one in-progress session after a compare-and-swap conflict.
+   * Keeping this read scoped to the known session avoids reloading the whole
+   * workspace while the athlete is actively logging a workout.
+   */
+  async reloadActiveSession(sessionId: string) {
+    return this.loadActiveSession(sessionId);
+  }
+
   async saveSessionDraft(
     session: ActiveSession,
     setLogs: Record<string, SessionSetValue[]>,
@@ -2513,25 +2548,41 @@ export class LiftLogRepository {
     expectedRevision: number,
     writeToken: string,
   ) {
-    const result = await this.client.rpc("save_workout_session_draft", {
-      target_session_id: session.id,
-      expected_revision: expectedRevision,
-      write_token: writeToken,
-      draft_payload: buildSessionDraftPayload(
-        session,
-        setLogs,
-        resultLogs,
-        sessionRpe,
-        sessionNote,
-      ),
-    });
-    if (result.error) fail("Could not save workout changes", result.error);
+    let result;
+    try {
+      result = await this.client.rpc("save_workout_session_draft", {
+        target_session_id: session.id,
+        expected_revision: expectedRevision,
+        write_token: writeToken,
+        draft_payload: buildSessionDraftPayload(
+          session,
+          setLogs,
+          resultLogs,
+          sessionRpe,
+          sessionNote,
+        ),
+      });
+    } catch (error) {
+      throw new SessionDraftAmbiguousWriteError(
+        "The workout save was interrupted before it could be confirmed",
+        { cause: error },
+      );
+    }
+    if (result.error) {
+      if (/revision is stale/i.test(result.error.message))
+        throw new SessionRevisionConflictError();
+      fail("Could not save workout changes", result.error);
+    }
     const record = jsonRecord(result.data);
     if (!record)
-      throw new Error("Workout autosave returned an invalid response");
+      throw new SessionDraftAmbiguousWriteError(
+        "Workout autosave returned an invalid response",
+      );
     const revision = jsonInteger(record, "revision");
     if (revision === undefined)
-      throw new Error("Workout autosave did not confirm a revision");
+      throw new SessionDraftAmbiguousWriteError(
+        "Workout autosave did not confirm a revision",
+      );
     return {
       revision,
       savedAt: jsonString(record, "savedAt", "saved_at") ?? undefined,
@@ -2552,7 +2603,11 @@ export class LiftLogRepository {
       final_rpe: numberValue(rpe),
       final_note: note,
     });
-    if (result.error) fail("Could not complete the workout", result.error);
+    if (result.error) {
+      if (/revision is stale/i.test(result.error.message))
+        throw new SessionRevisionConflictError();
+      fail("Could not complete the workout", result.error);
+    }
   }
 
   private async loadOwnSessionNotes(sessionId: string): Promise<OwnSessionNotes> {
@@ -2694,7 +2749,7 @@ export class LiftLogRepository {
     let query = this.client
       .from("workout_sessions")
       .select(
-        "id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, completed_for_date, session_rpe",
+        "id, draft_revision, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, completed_for_date, session_rpe",
       )
       .eq("athlete_id", this.viewerId)
       .eq("status", "in_progress")

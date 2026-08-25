@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const stylesPath = new URL("../app/globals.css", import.meta.url);
 const repositoryPath = new URL("../lib/repository.ts", import.meta.url);
 const migrationPath = new URL(
   "../supabase/migrations/202608230001_quick_workouts.sql",
@@ -10,8 +11,9 @@ const migrationPath = new URL(
 );
 
 test("quick workouts use the shared workout tree and can be scheduled or assigned", async () => {
-  const [app, repository, migration] = await Promise.all([
+  const [app, styles, repository, migration] = await Promise.all([
     readFile(appPath, "utf8"),
+    readFile(stylesPath, "utf8"),
     readFile(repositoryPath, "utf8"),
     readFile(migrationPath, "utf8"),
   ]);
@@ -28,6 +30,16 @@ test("quick workouts use the shared workout tree and can be scheduled or assigne
     "single workouts must not render program scheduling progress",
   );
   assert.doesNotMatch(app, /isQuickWorkout \? "One session" : "Training program"/);
+  assert.match(
+    app,
+    /className=\{`builder-layout\$\{isQuickWorkout \? " quick-workout-builder" : ""\}`\}[\s\S]*\{!isQuickWorkout && <aside className="workout-list panel">/,
+    "a single quick workout must not render the redundant session selector",
+  );
+  assert.match(
+    styles,
+    /\.builder-layout\.quick-workout-builder\s*\{[\s\S]*grid-template-columns:\s*minmax\(340px, 1fr\) 260px/,
+    "the editor and exercise picker must reclaim the removed selector column",
+  );
   assert.match(app, /Workout finalized\. It is ready to schedule or assign\./);
   assert.match(app, /Assign to athletes/);
   assert.match(app, /Assign & schedule/);

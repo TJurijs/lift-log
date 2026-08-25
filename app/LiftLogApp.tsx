@@ -55,7 +55,16 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import type {
   ActiveSession,
   AthleteSummary,
@@ -86,7 +95,17 @@ import type {
   WorkspaceData,
 } from "../lib/domain";
 import type { AppViewer } from "../lib/auth";
-import type { LiftLogRepository } from "../lib/repository";
+import {
+  isAmbiguousSessionDraftError,
+  LiftLogRepository,
+  SessionRevisionConflictError,
+} from "../lib/repository";
+import {
+  ActiveWorkoutDraftStore,
+  type ActiveWorkoutDraftRestoreResult,
+  type ActiveWorkoutDraftSnapshot,
+} from "../lib/active-workout-draft-storage";
+import { mergeActiveWorkoutDraftSnapshots } from "../lib/active-workout-draft-merge";
 import {
   deriveOccurrenceCapabilities,
   deriveTrainingContentCapabilities,
@@ -99,12 +118,12 @@ import {
   SessionDraftCoordinator,
   type SessionDraftSaveStatus,
 } from "../lib/session-draft-coordinator";
+import { flushSessionDraftWithRecovery } from "../lib/session-draft-recovery";
 import {
   cn,
   formatDuration,
   formatWorkoutCount,
   getInitials,
-  sourceFromExercise,
   sourceFromScheduledWorkout,
 } from "../lib/presentation";
 import {
@@ -197,9 +216,94 @@ type SessionDraftSnapshot = {
 };
 type SessionDraftQueueState = {
   sessionId: string;
-  repository: LiftLogRepository;
+  repositoryRef: { current: LiftLogRepository };
   coordinator: SessionDraftCoordinator<SessionDraftSnapshot>;
 };
+type SessionDraftConflictState = {
+  sessionId: string;
+  authoritativeRevision: number;
+  remoteSnapshot: ActiveWorkoutDraftSnapshot;
+  localCandidate: ActiveWorkoutDraftSnapshot;
+  serverCandidate: ActiveWorkoutDraftSnapshot;
+  conflicts: string[];
+  resolve?: (snapshot: ActiveWorkoutDraftSnapshot) => void;
+};
+const activeWorkoutDraftStore = new ActiveWorkoutDraftStore();
+
+function localDraftSnapshot(
+  snapshot: SessionDraftSnapshot,
+): ActiveWorkoutDraftSnapshot {
+  return {
+    setLogs: snapshot.setLogs,
+    resultLogs: snapshot.resultLogs,
+    sessionRpe: snapshot.sessionRpe,
+    sessionNote: snapshot.sessionNote,
+  };
+}
+
+function activeSessionDraftSnapshot(
+  session: ActiveSession,
+): ActiveWorkoutDraftSnapshot {
+  return {
+    setLogs: session.setLogs,
+    resultLogs: session.resultLogs,
+    sessionRpe: session.sessionRpe,
+    sessionNote: session.sessionNote,
+  };
+}
+
+function sameLocalDraft(
+  left: ActiveWorkoutDraftSnapshot,
+  right: ActiveWorkoutDraftSnapshot,
+) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function restoredActiveWorkoutDraft(
+  session: ActiveSession,
+  result: ActiveWorkoutDraftRestoreResult,
+) {
+  if (result.status !== "restored" && result.status !== "revision-mismatch") {
+    return null;
+  }
+
+  const remoteSnapshot = activeSessionDraftSnapshot(session);
+  const { draft } = result;
+  if (!draft.baseSnapshot) {
+    if (draft.baseRevision === session.draftRevision) {
+      return {
+        snapshot: draft.snapshot,
+        remoteSnapshot,
+        serverCandidate: remoteSnapshot,
+        conflicts: [] as string[],
+      };
+    }
+    return {
+      snapshot: draft.snapshot,
+      remoteSnapshot,
+      serverCandidate: remoteSnapshot,
+      conflicts: ["workout"],
+    };
+  }
+
+  const localMerge = mergeActiveWorkoutDraftSnapshots(
+    draft.baseSnapshot,
+    draft.snapshot,
+    remoteSnapshot,
+  );
+  const serverMerge = mergeActiveWorkoutDraftSnapshots(
+    draft.baseSnapshot,
+    remoteSnapshot,
+    draft.snapshot,
+  );
+  return {
+    snapshot: localMerge.snapshot,
+    remoteSnapshot,
+    serverCandidate: serverMerge.snapshot,
+    conflicts: localMerge.conflicts,
+  };
+}
+
 type ProgramSourceTab = "own" | "coach";
 type ProgramAction = {
   id: string;
@@ -309,15 +413,19 @@ function starterSetLogs(
 }
 
 function createSessionDraftCoordinator(
-  repository: LiftLogRepository,
+  repositoryRef: { current: LiftLogRepository },
   initialRevision: number,
   online: boolean,
   onStatusChange: (status: SessionDraftSaveStatus) => void,
   onError: (error: unknown) => void,
+  onRevisionConfirmed: (
+    revision: number,
+    snapshot: SessionDraftSnapshot,
+  ) => void,
 ) {
   return new SessionDraftCoordinator<SessionDraftSnapshot>(
     async ({ expectedRevision, writeToken, snapshot }) => {
-      const result = await repository.saveSessionDraft(
+      const result = await repositoryRef.current.saveSessionDraft(
         snapshot.session,
         snapshot.setLogs,
         snapshot.resultLogs,
@@ -326,9 +434,18 @@ function createSessionDraftCoordinator(
         expectedRevision,
         writeToken,
       );
+      onRevisionConfirmed(result.revision, snapshot);
       return result.revision;
     },
-    { initialRevision, online, onError, onStatusChange },
+    {
+      initialRevision,
+      online,
+      isAmbiguousFailure: isAmbiguousSessionDraftError,
+      isRevisionConflict: (error) =>
+        error instanceof SessionRevisionConflictError,
+      onError,
+      onStatusChange,
+    },
   );
 }
 
@@ -372,6 +489,29 @@ export default function LiftLogApp({
   initialWorkspace: WorkspaceData;
   repository: LiftLogRepository | null;
 }) {
+  const [initialWorkoutDraft] = useState(() => {
+    const session = initialWorkspace.activeSession;
+    if (!session) return { result: null, restored: null };
+    const result = activeWorkoutDraftStore.restore(
+      viewer.id,
+      session.id,
+      session.draftRevision,
+    );
+    return {
+      result,
+      restored: restoredActiveWorkoutDraft(session, result),
+    };
+  });
+  const restoredSnapshot = initialWorkoutDraft.restored?.snapshot;
+  const restoredSnapshotNeedsSync = Boolean(
+    initialWorkspace.activeSession &&
+      restoredSnapshot &&
+      initialWorkoutDraft.restored?.conflicts.length === 0 &&
+      !sameLocalDraft(
+        restoredSnapshot,
+        activeSessionDraftSnapshot(initialWorkspace.activeSession),
+      ),
+  );
   const [activeView, setActiveView] = useState<ViewName>("today");
   const [workspace, setWorkspace] = useState<WorkspaceData>(initialWorkspace);
   const [program, setProgram] = useState<Program | null>(null);
@@ -412,6 +552,9 @@ export default function LiftLogApp({
   const [workoutStarted, setWorkoutStarted] = useState(
     Boolean(initialWorkspace.activeSession),
   );
+  const [activeWorkoutVisible, setActiveWorkoutVisible] = useState(
+    Boolean(initialWorkspace.activeSession),
+  );
   const [workoutComplete, setWorkoutComplete] = useState(false);
   const workoutActionRef = useRef<"starting" | "finishing" | null>(null);
   const [workoutAction, setWorkoutAction] = useState<
@@ -425,10 +568,31 @@ export default function LiftLogApp({
   >(null);
   const [detail, setDetail] = useState<DetailState>(null);
   const [sessionRpe, setSessionRpe] = useState(
-    initialWorkspace.activeSession?.sessionRpe ?? "7",
+    restoredSnapshot?.sessionRpe ??
+      initialWorkspace.activeSession?.sessionRpe ??
+      "7",
   );
   const [sessionNote, setSessionNote] = useState(
-    initialWorkspace.activeSession?.sessionNote ?? "",
+    restoredSnapshot?.sessionNote ??
+      initialWorkspace.activeSession?.sessionNote ??
+      "",
+  );
+  const [sessionDraftConflict, setSessionDraftConflict] =
+    useState<SessionDraftConflictState | null>(() => {
+      const session = initialWorkspace.activeSession;
+      const restored = initialWorkoutDraft.restored;
+      if (!session || !restored?.conflicts.length) return null;
+      return {
+        sessionId: session.id,
+        authoritativeRevision: session.draftRevision,
+        remoteSnapshot: restored.remoteSnapshot,
+        localCandidate: restored.snapshot,
+        serverCandidate: restored.serverCandidate,
+        conflicts: restored.conflicts,
+      };
+    });
+  const [localRecoveryAvailable, setLocalRecoveryAvailable] = useState(
+    initialWorkoutDraft.result?.status !== "storage-unavailable",
   );
   const [toast, setToast] = useState("");
   const toastTimerRef = useRef<number | null>(null);
@@ -452,41 +616,278 @@ export default function LiftLogApp({
   const sessionDraftSaveTimerRef = useRef<number | null>(null);
   const latestSessionDraftRef = useRef<SessionDraftSnapshot | null>(null);
   const observedSessionDraftIdRef = useRef<string | null>(null);
+  const lastSessionDraftContentRef = useRef<{
+    sessionId: string;
+    serialized: string;
+  } | null>(null);
+  const restoredDraftNeedsSyncRef = useRef(restoredSnapshotNeedsSync);
+  const confirmedSessionRevisionRef = useRef(
+    new Map<string, number>(
+      initialWorkspace.activeSession
+        ? [
+            [
+              initialWorkspace.activeSession.id,
+              initialWorkspace.activeSession.draftRevision,
+            ],
+          ]
+        : [],
+    ),
+  );
+  const confirmedSessionSnapshotRef = useRef(
+    new Map<string, ActiveWorkoutDraftSnapshot>(
+      initialWorkspace.activeSession
+        ? [
+            [
+              initialWorkspace.activeSession.id,
+              activeSessionDraftSnapshot(initialWorkspace.activeSession),
+            ],
+          ]
+        : [],
+    ),
+  );
+  const sessionDraftRecoveryRef = useRef<Promise<number> | null>(null);
   const completionTokenRef = useRef<{
     sessionId: string;
     token: string;
+    confirmedRevision: number;
+    sessionRpe: string;
+    sessionNote: string;
   } | null>(null);
   const [sessionSaveStatus, setSessionSaveStatus] =
     useState<SessionDraftSaveStatus>("saved");
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const onlineRef = useRef(isOnline);
+  const persistActiveWorkoutDraft = useCallback(
+    (
+      sessionId: string,
+      baseRevision: number,
+      snapshot: ActiveWorkoutDraftSnapshot,
+      baseSnapshot: ActiveWorkoutDraftSnapshot,
+    ) => {
+      const stored = activeWorkoutDraftStore.save(
+        viewer.id,
+        sessionId,
+        baseRevision,
+        snapshot,
+        baseSnapshot,
+      );
+      setLocalRecoveryAvailable((current) =>
+        current === stored ? current : stored,
+      );
+      return stored;
+    },
+    [viewer.id],
+  );
+  const requestSessionDraftConflictResolution = useCallback(
+    (
+      conflict: Omit<SessionDraftConflictState, "resolve">,
+    ): Promise<ActiveWorkoutDraftSnapshot> =>
+      new Promise((resolve) => {
+        setSessionSaveStatus("error");
+        setSessionDraftConflict({ ...conflict, resolve });
+        notify(
+          "This workout changed in another copy · choose which conflicting values to keep",
+        );
+      }),
+    [notify],
+  );
+  const recoverSessionDraftRevision = useCallback(
+    (sessionId: string, forceAuthoritativeReload = false) => {
+      if (sessionDraftRecoveryRef.current) {
+        return sessionDraftRecoveryRef.current;
+      }
+
+      const recovery = (async () => {
+        const queue = sessionDraftQueueRef.current;
+        if (queue?.sessionId !== sessionId) {
+          throw new Error("The active workout save queue is no longer available.");
+        }
+        if (
+          !forceAuthoritativeReload &&
+          !queue.coordinator.revisionResetRequired
+        ) {
+          return queue.coordinator.confirmedRevision;
+        }
+
+        let authoritativeSession: ActiveSession | null = null;
+        setSessionSaveStatus("saving");
+        const revision = await flushSessionDraftWithRecovery({
+          coordinator: queue.coordinator,
+          isRevisionConflict: (error) =>
+            error instanceof SessionRevisionConflictError,
+          startWithAuthoritativeRevision: forceAuthoritativeReload,
+          loadAuthoritativeRevision: async () => {
+            authoritativeSession =
+              await queue.repositoryRef.current.reloadActiveSession(sessionId);
+            if (!authoritativeSession) {
+              throw new Error(
+                "This workout is no longer active. Your unsaved entries remain on this device.",
+              );
+            }
+            return authoritativeSession.draftRevision;
+          },
+          getLatestSnapshot: async ({ authoritativeRevision }) => {
+            const latest = latestSessionDraftRef.current;
+            if (!latest || latest.session.id !== sessionId) {
+              throw new Error(
+                "The latest workout entries could not be prepared for recovery.",
+              );
+            }
+            if (authoritativeRevision === undefined) return latest;
+            if (!authoritativeSession) {
+              throw new Error(
+                "The authoritative workout could not be prepared for recovery.",
+              );
+            }
+            const remoteSnapshot = activeSessionDraftSnapshot(
+              authoritativeSession,
+            );
+            const baseSnapshot =
+              confirmedSessionSnapshotRef.current.get(sessionId) ??
+              remoteSnapshot;
+            const localSnapshot = localDraftSnapshot(latest);
+            const localMerge = mergeActiveWorkoutDraftSnapshots(
+              baseSnapshot,
+              localSnapshot,
+              remoteSnapshot,
+            );
+            let recoveredLocalSnapshot = localMerge.snapshot;
+            if (localMerge.conflicts.length > 0) {
+              const serverMerge = mergeActiveWorkoutDraftSnapshots(
+                baseSnapshot,
+                remoteSnapshot,
+                localSnapshot,
+              );
+              recoveredLocalSnapshot =
+                await requestSessionDraftConflictResolution({
+                  sessionId,
+                  authoritativeRevision,
+                  remoteSnapshot,
+                  localCandidate: localMerge.snapshot,
+                  serverCandidate: serverMerge.snapshot,
+                  conflicts: localMerge.conflicts,
+                });
+            }
+            const recoveredSnapshot: SessionDraftSnapshot = {
+              session: {
+                ...latest.session,
+                draftRevision: authoritativeRevision,
+                itemLogIds: authoritativeSession.itemLogIds,
+              },
+              ...recoveredLocalSnapshot,
+            };
+            confirmedSessionSnapshotRef.current.set(
+              sessionId,
+              remoteSnapshot,
+            );
+            persistActiveWorkoutDraft(
+              sessionId,
+              authoritativeRevision,
+              recoveredLocalSnapshot,
+              remoteSnapshot,
+            );
+            latestSessionDraftRef.current = recoveredSnapshot;
+            setActiveSession(authoritativeSession);
+            setSetLogs(recoveredLocalSnapshot.setLogs);
+            setResultLogs(recoveredLocalSnapshot.resultLogs);
+            setSessionRpe(recoveredLocalSnapshot.sessionRpe);
+            setSessionNote(recoveredLocalSnapshot.sessionNote);
+            return recoveredSnapshot;
+          },
+        });
+        confirmedSessionRevisionRef.current.set(sessionId, revision);
+        return revision;
+      })().finally(() => {
+          if (sessionDraftRecoveryRef.current === recovery) {
+            sessionDraftRecoveryRef.current = null;
+          }
+        });
+      sessionDraftRecoveryRef.current = recovery;
+      return recovery;
+    },
+    [persistActiveWorkoutDraft, requestSessionDraftConflictResolution],
+  );
+  const startSessionDraftRecovery = useCallback(
+    (sessionId: string, forceAuthoritativeReload = false) => {
+      void recoverSessionDraftRevision(
+        sessionId,
+        forceAuthoritativeReload,
+      ).then(
+        () => notify("Workout reconnected · latest entries saved"),
+        (error: unknown) => {
+          setSessionSaveStatus(
+            onlineRef.current ? "error" : "unsaved-offline",
+          );
+          notify(
+            error instanceof Error
+              ? error.message
+              : "Your workout is safe on this device but could not sync yet.",
+          );
+        },
+      );
+    },
+    [notify, recoverSessionDraftRevision],
+  );
   const ensureSessionDraftQueue = useCallback(
     (session: ActiveSession, targetRepository: LiftLogRepository) => {
       const current = sessionDraftQueueRef.current;
-      if (
-        current?.sessionId === session.id &&
-        current.repository === targetRepository
-      ) {
+      if (current?.sessionId === session.id) {
+        current.repositoryRef.current = targetRepository;
         return current.coordinator;
       }
 
       current?.coordinator.close();
-      const coordinator = createSessionDraftCoordinator(
-        targetRepository,
+      const repositoryRef = { current: targetRepository };
+      const initialRevision = Math.max(
         session.draftRevision ?? 0,
+        confirmedSessionRevisionRef.current.get(session.id) ?? 0,
+      );
+      const coordinator = createSessionDraftCoordinator(
+        repositoryRef,
+        initialRevision,
         onlineRef.current,
         setSessionSaveStatus,
-        () => notify("Workout changes are unsaved — retry when connected"),
+        (error) => {
+          if (error instanceof SessionRevisionConflictError) {
+            startSessionDraftRecovery(session.id);
+            return;
+          }
+          notify(
+            error instanceof Error
+              ? error.message
+              : "Workout changes are unsaved — retry when connected",
+          );
+        },
+        (revision, confirmedSnapshot) => {
+          if (sessionDraftQueueRef.current?.sessionId !== session.id) return;
+          confirmedSessionRevisionRef.current.set(session.id, revision);
+          const latest = latestSessionDraftRef.current;
+          const confirmedLocalSnapshot =
+            localDraftSnapshot(confirmedSnapshot);
+          confirmedSessionSnapshotRef.current.set(
+            session.id,
+            confirmedLocalSnapshot,
+          );
+          persistActiveWorkoutDraft(
+            session.id,
+            revision,
+            localDraftSnapshot(
+              latest?.session.id === session.id ? latest : confirmedSnapshot,
+            ),
+            confirmedLocalSnapshot,
+          );
+        },
       );
       sessionDraftQueueRef.current = {
         sessionId: session.id,
-        repository: targetRepository,
+        repositoryRef,
         coordinator,
       };
       return coordinator;
     },
-    [notify],
+    [notify, persistActiveWorkoutDraft, startSessionDraftRecovery],
   );
+
   const [requestedCoachMode, setCoachMode] = useState<"athlete" | "coach">(
     "athlete",
   );
@@ -626,19 +1027,62 @@ export default function LiftLogApp({
     currentWeek?.workouts[0];
 
   const [setLogs, setSetLogs] = useState<Record<string, SetLog[]>>(() =>
-    todayWorkout ? starterSetLogs(todayWorkout, activeSession) : {},
+    restoredSnapshot?.setLogs ??
+    (todayWorkout ? starterSetLogs(todayWorkout, activeSession) : {}),
   );
   const [resultLogs, setResultLogs] = useState<
     Record<string, Record<string, string>>
-  >(initialWorkspace.activeSession?.resultLogs ?? {});
+  >(restoredSnapshot?.resultLogs ?? initialWorkspace.activeSession?.resultLogs ?? {});
   const activeSessionId = activeSession?.id;
+
+  useLayoutEffect(() => {
+    if (!activeSession || !workoutStarted) return;
+    const snapshot: SessionDraftSnapshot = {
+      session: activeSession,
+      setLogs,
+      resultLogs,
+      sessionRpe,
+      sessionNote,
+    };
+    latestSessionDraftRef.current = snapshot;
+    const coordinator =
+      sessionDraftQueueRef.current?.sessionId === activeSession.id
+        ? sessionDraftQueueRef.current.coordinator
+        : null;
+    const confirmedRevision = Math.max(
+      activeSession.draftRevision,
+      coordinator?.confirmedRevision ?? 0,
+      confirmedSessionRevisionRef.current.get(activeSession.id) ?? 0,
+    );
+    const baseSnapshot =
+      confirmedSessionSnapshotRef.current.get(activeSession.id) ??
+      activeSessionDraftSnapshot(activeSession);
+    persistActiveWorkoutDraft(
+      activeSession.id,
+      confirmedRevision,
+      localDraftSnapshot(snapshot),
+      baseSnapshot,
+    );
+  }, [
+    activeSession,
+    persistActiveWorkoutDraft,
+    resultLogs,
+    sessionNote,
+    sessionRpe,
+    setLogs,
+    workoutStarted,
+  ]);
 
   useEffect(() => {
     const updateConnection = () => {
       const online = navigator.onLine;
       onlineRef.current = online;
       setIsOnline(online);
-      sessionDraftQueueRef.current?.coordinator.setOnline(online);
+      const queue = sessionDraftQueueRef.current;
+      queue?.coordinator.setOnline(online);
+      if (online && queue?.coordinator.revisionResetRequired) {
+        startSessionDraftRecovery(queue.sessionId);
+      }
     };
     window.addEventListener("online", updateConnection);
     window.addEventListener("offline", updateConnection);
@@ -646,7 +1090,68 @@ export default function LiftLogApp({
       window.removeEventListener("online", updateConnection);
       window.removeEventListener("offline", updateConnection);
     };
-  }, []);
+  }, [startSessionDraftRecovery]);
+
+  useEffect(() => {
+    const persistLatest = () => {
+      const latest = latestSessionDraftRef.current;
+      if (!latest) return;
+      const coordinator =
+        sessionDraftQueueRef.current?.sessionId === latest.session.id
+          ? sessionDraftQueueRef.current.coordinator
+          : null;
+      const revision = Math.max(
+        latest.session.draftRevision,
+        coordinator?.confirmedRevision ?? 0,
+        confirmedSessionRevisionRef.current.get(latest.session.id) ?? 0,
+      );
+      const baseSnapshot =
+        confirmedSessionSnapshotRef.current.get(latest.session.id) ??
+        activeSessionDraftSnapshot(latest.session);
+      persistActiveWorkoutDraft(
+        latest.session.id,
+        revision,
+        localDraftSnapshot(latest),
+        baseSnapshot,
+      );
+    };
+    const resumeSync = () => {
+      const online = navigator.onLine;
+      onlineRef.current = online;
+      setIsOnline(online);
+      const queue = sessionDraftQueueRef.current;
+      queue?.coordinator.setOnline(online);
+      if (!online || !queue) return;
+      if (queue.coordinator.revisionResetRequired) {
+        startSessionDraftRecovery(queue.sessionId);
+      } else if (queue.coordinator.hasUnsavedChanges) {
+        queue.coordinator.save();
+      }
+    };
+    const backgroundSync = () => {
+      persistLatest();
+      if (sessionDraftSaveTimerRef.current !== null) {
+        window.clearTimeout(sessionDraftSaveTimerRef.current);
+        sessionDraftSaveTimerRef.current = null;
+      }
+      if (onlineRef.current) {
+        sessionDraftQueueRef.current?.coordinator.save();
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") backgroundSync();
+      else resumeSync();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", backgroundSync);
+    window.addEventListener("pageshow", resumeSync);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", backgroundSync);
+      window.removeEventListener("pageshow", resumeSync);
+    };
+  }, [persistActiveWorkoutDraft, startSessionDraftRecovery]);
 
   useEffect(() => {
     if (!repository || !activeSession) {
@@ -654,18 +1159,29 @@ export default function LiftLogApp({
       sessionDraftQueueRef.current = null;
       latestSessionDraftRef.current = null;
       observedSessionDraftIdRef.current = null;
+      lastSessionDraftContentRef.current = null;
+      if (sessionDraftSaveTimerRef.current !== null) {
+        window.clearTimeout(sessionDraftSaveTimerRef.current);
+        sessionDraftSaveTimerRef.current = null;
+      }
       completionTokenRef.current = null;
       return;
     }
     const coordinator = ensureSessionDraftQueue(activeSession, repository);
     coordinator.setOnline(onlineRef.current);
-    return () => {
-      const current = sessionDraftQueueRef.current;
-      if (current?.coordinator !== coordinator) return;
-      coordinator.close();
-      sessionDraftQueueRef.current = null;
-    };
   }, [activeSession, activeSessionId, ensureSessionDraftQueue, repository]);
+
+  useEffect(
+    () => () => {
+      if (sessionDraftSaveTimerRef.current !== null) {
+        window.clearTimeout(sessionDraftSaveTimerRef.current);
+        sessionDraftSaveTimerRef.current = null;
+      }
+      sessionDraftQueueRef.current?.coordinator.close();
+      sessionDraftQueueRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!repository || !activeSession || !workoutStarted) return;
@@ -678,15 +1194,46 @@ export default function LiftLogApp({
       sessionNote,
     };
     latestSessionDraftRef.current = snapshot;
+    const durableSnapshot = localDraftSnapshot(snapshot);
+    const serializedSnapshot = JSON.stringify(durableSnapshot);
+    const confirmedRevision = Math.max(
+      activeSession.draftRevision,
+      coordinator.confirmedRevision,
+      confirmedSessionRevisionRef.current.get(activeSession.id) ?? 0,
+    );
+    confirmedSessionRevisionRef.current.set(
+      activeSession.id,
+      confirmedRevision,
+    );
     if (observedSessionDraftIdRef.current !== activeSession.id) {
       observedSessionDraftIdRef.current = activeSession.id;
+      if (!restoredDraftNeedsSyncRef.current) {
+        lastSessionDraftContentRef.current = {
+          sessionId: activeSession.id,
+          serialized: serializedSnapshot,
+        };
+        return;
+      }
+      restoredDraftNeedsSyncRef.current = false;
+    }
+    if (
+      lastSessionDraftContentRef.current?.sessionId === activeSession.id &&
+      lastSessionDraftContentRef.current.serialized === serializedSnapshot
+    ) {
       return;
     }
+    lastSessionDraftContentRef.current = {
+      sessionId: activeSession.id,
+      serialized: serializedSnapshot,
+    };
 
     coordinator.stage(snapshot);
     if (!onlineRef.current) {
       coordinator.setOnline(false);
       return;
+    }
+    if (sessionDraftSaveTimerRef.current !== null) {
+      window.clearTimeout(sessionDraftSaveTimerRef.current);
     }
     const saveTimer = window.setTimeout(() => {
       if (sessionDraftSaveTimerRef.current === saveTimer) {
@@ -696,12 +1243,6 @@ export default function LiftLogApp({
       coordinator.save();
     }, 650);
     sessionDraftSaveTimerRef.current = saveTimer;
-    return () => {
-      window.clearTimeout(saveTimer);
-      if (sessionDraftSaveTimerRef.current === saveTimer) {
-        sessionDraftSaveTimerRef.current = null;
-      }
-    };
   }, [
     activeSession,
     ensureSessionDraftQueue,
@@ -797,29 +1338,97 @@ export default function LiftLogApp({
   }
 
   function applyWorkspace(nextWorkspace: WorkspaceData) {
+    const previousActiveSessionId = activeSession?.id;
+    const nextActiveSession = nextWorkspace.activeSession;
     const nextWorkout = selectNextWorkoutFocus(
       nextWorkspace.programCatalog,
-      nextWorkspace.activeSession,
+      nextActiveSession,
       nextWorkspace.scheduledWorkouts,
     )?.workout;
     const preserveActiveDraft = Boolean(
       activeSession &&
-      nextWorkspace.activeSession?.id === activeSession.id &&
+      nextActiveSession?.id === activeSession.id &&
       workoutStarted,
     );
+    const storedResult =
+      !preserveActiveDraft && nextActiveSession
+        ? activeWorkoutDraftStore.restore(
+            viewer.id,
+            nextActiveSession.id,
+            nextActiveSession.draftRevision,
+          )
+        : null;
+    const restoredDraft =
+      storedResult && nextActiveSession
+        ? restoredActiveWorkoutDraft(nextActiveSession, storedResult)
+        : null;
+    const storedSnapshot = restoredDraft?.snapshot ?? null;
     setWorkspace(nextWorkspace);
-    setActiveSession(nextWorkspace.activeSession);
+    setActiveSession(nextActiveSession);
     if (!preserveActiveDraft) {
-      setSetLogs(
-        nextWorkout
-          ? starterSetLogs(nextWorkout, nextWorkspace.activeSession)
-          : {},
+      restoredDraftNeedsSyncRef.current = Boolean(
+        nextActiveSession &&
+          storedSnapshot &&
+          restoredDraft?.conflicts.length === 0 &&
+          !sameLocalDraft(
+            storedSnapshot,
+            activeSessionDraftSnapshot(nextActiveSession),
+          ),
       );
-      setResultLogs(nextWorkspace.activeSession?.resultLogs ?? {});
-      setSessionRpe(nextWorkspace.activeSession?.sessionRpe ?? "7");
-      setSessionNote(nextWorkspace.activeSession?.sessionNote ?? "");
+      observedSessionDraftIdRef.current = null;
+      lastSessionDraftContentRef.current = null;
+      setSessionDraftConflict(
+        nextActiveSession && restoredDraft?.conflicts.length
+          ? {
+              sessionId: nextActiveSession.id,
+              authoritativeRevision: nextActiveSession.draftRevision,
+              remoteSnapshot: restoredDraft.remoteSnapshot,
+              localCandidate: restoredDraft.snapshot,
+              serverCandidate: restoredDraft.serverCandidate,
+              conflicts: restoredDraft.conflicts,
+            }
+          : null,
+      );
+      setSetLogs(
+        storedSnapshot?.setLogs ??
+          (nextWorkout ? starterSetLogs(nextWorkout, nextActiveSession) : {}),
+      );
+      setResultLogs(storedSnapshot?.resultLogs ?? nextActiveSession?.resultLogs ?? {});
+      setSessionRpe(
+        storedSnapshot?.sessionRpe ?? nextActiveSession?.sessionRpe ?? "7",
+      );
+      setSessionNote(
+        storedSnapshot?.sessionNote ?? nextActiveSession?.sessionNote ?? "",
+      );
+      if (storedSnapshot) {
+        notify("Recovered unsaved workout entries from this device");
+      }
     }
-    setWorkoutStarted(Boolean(nextWorkspace.activeSession));
+    if (nextActiveSession) {
+      confirmedSessionRevisionRef.current.set(
+        nextActiveSession.id,
+        Math.max(
+          nextActiveSession.draftRevision,
+          confirmedSessionRevisionRef.current.get(nextActiveSession.id) ?? 0,
+        ),
+      );
+      confirmedSessionSnapshotRef.current.set(
+        nextActiveSession.id,
+        activeSessionDraftSnapshot(nextActiveSession),
+      );
+    }
+    if (
+      previousActiveSessionId &&
+      nextActiveSession?.id !== previousActiveSessionId
+    ) {
+      activeWorkoutDraftStore.clearAfterCompletion(
+        viewer.id,
+        previousActiveSessionId,
+      );
+      confirmedSessionRevisionRef.current.delete(previousActiveSessionId);
+      confirmedSessionSnapshotRef.current.delete(previousActiveSessionId);
+    }
+    setWorkoutStarted(Boolean(nextActiveSession));
     setSelectedAthleteId(
       (previousId) =>
         nextWorkspace.coachedAthletes.find(
@@ -901,6 +1510,10 @@ export default function LiftLogApp({
   }
 
   function navigate(view: ViewName) {
+    if (view === "today" && activeSession && activeWorkoutVisible) {
+      setActiveWorkoutVisible(false);
+      setDetail(null);
+    }
     if (view === "program" && programOwnerId !== viewer.id) {
       setProgram(null);
       setProgramOwnerId(viewer.id);
@@ -1047,6 +1660,68 @@ export default function LiftLogApp({
     }));
   }
 
+  function resolveSessionDraftConflict(keepLocalValues: boolean) {
+    const conflict = sessionDraftConflict;
+    if (!conflict) return;
+    const chosen = keepLocalValues
+      ? conflict.localCandidate
+      : conflict.serverCandidate;
+    confirmedSessionRevisionRef.current.set(
+      conflict.sessionId,
+      conflict.authoritativeRevision,
+    );
+    confirmedSessionSnapshotRef.current.set(
+      conflict.sessionId,
+      conflict.remoteSnapshot,
+    );
+    persistActiveWorkoutDraft(
+      conflict.sessionId,
+      conflict.authoritativeRevision,
+      chosen,
+      conflict.remoteSnapshot,
+    );
+    setSetLogs(chosen.setLogs);
+    setResultLogs(chosen.resultLogs);
+    setSessionRpe(chosen.sessionRpe);
+    setSessionNote(chosen.sessionNote);
+    setSessionDraftConflict(null);
+
+    if (conflict.resolve) {
+      conflict.resolve(chosen);
+    } else {
+      const needsSync = !sameLocalDraft(chosen, conflict.remoteSnapshot);
+      restoredDraftNeedsSyncRef.current = false;
+      observedSessionDraftIdRef.current = null;
+      lastSessionDraftContentRef.current = null;
+      if (
+        needsSync &&
+        repository &&
+        activeSession?.id === conflict.sessionId
+      ) {
+        const snapshot: SessionDraftSnapshot = {
+          session: activeSession,
+          ...chosen,
+        };
+        latestSessionDraftRef.current = snapshot;
+        lastSessionDraftContentRef.current = {
+          sessionId: conflict.sessionId,
+          serialized: JSON.stringify(chosen),
+        };
+        const coordinator = ensureSessionDraftQueue(activeSession, repository);
+        coordinator.stage(snapshot);
+        if (onlineRef.current) coordinator.save();
+        else coordinator.setOnline(false);
+      } else {
+        setSessionSaveStatus("saved");
+      }
+    }
+    notify(
+      keepLocalValues
+        ? "Kept this device's conflicting values · syncing merged workout"
+        : "Kept the last server-saved conflicting values",
+    );
+  }
+
   async function ensureScheduledWorkoutDetails(schedule: ScheduledWorkout) {
     if (!repository || schedule.detailsLoaded !== false) return schedule;
     const detail = await repository.loadScheduledWorkoutDetail(schedule.id);
@@ -1074,6 +1749,7 @@ export default function LiftLogApp({
       const workout = detailedSchedule.workout;
       if (!repository) {
         setWorkoutStarted(true);
+        setActiveWorkoutVisible(true);
         return;
       }
       const versionId =
@@ -1087,14 +1763,49 @@ export default function LiftLogApp({
         versionId,
       );
       if (!session) throw new Error("The workout session was not created.");
+      const storedResult = activeWorkoutDraftStore.restore(
+        viewer.id,
+        session.id,
+        session.draftRevision,
+      );
+      const restoredDraft = restoredActiveWorkoutDraft(session, storedResult);
+      const storedSnapshot = restoredDraft?.snapshot ?? null;
       completionTokenRef.current = null;
       setSessionSaveStatus("saved");
+      confirmedSessionRevisionRef.current.set(
+        session.id,
+        session.draftRevision,
+      );
+      confirmedSessionSnapshotRef.current.set(
+        session.id,
+        activeSessionDraftSnapshot(session),
+      );
+      restoredDraftNeedsSyncRef.current = Boolean(
+        storedSnapshot &&
+          restoredDraft?.conflicts.length === 0 &&
+          !sameLocalDraft(storedSnapshot, activeSessionDraftSnapshot(session)),
+      );
+      observedSessionDraftIdRef.current = null;
+      lastSessionDraftContentRef.current = null;
+      setSessionDraftConflict(
+        restoredDraft?.conflicts.length
+          ? {
+              sessionId: session.id,
+              authoritativeRevision: session.draftRevision,
+              remoteSnapshot: restoredDraft.remoteSnapshot,
+              localCandidate: restoredDraft.snapshot,
+              serverCandidate: restoredDraft.serverCandidate,
+              conflicts: restoredDraft.conflicts,
+            }
+          : null,
+      );
       setActiveSession(session);
-      setSetLogs(starterSetLogs(workout, session));
-      setResultLogs(session.resultLogs);
-      setSessionRpe(session.sessionRpe);
-      setSessionNote(session.sessionNote);
+      setSetLogs(storedSnapshot?.setLogs ?? starterSetLogs(workout, session));
+      setResultLogs(storedSnapshot?.resultLogs ?? session.resultLogs);
+      setSessionRpe(storedSnapshot?.sessionRpe ?? session.sessionRpe);
+      setSessionNote(storedSnapshot?.sessionNote ?? session.sessionNote);
       setWorkoutStarted(true);
+      setActiveWorkoutVisible(true);
       setWorkspace((previous) => ({
         ...previous,
         scheduledWorkouts: previous.scheduledWorkouts.map((candidate) =>
@@ -1104,7 +1815,13 @@ export default function LiftLogApp({
         ),
       }));
       setDetail(null);
-      notify("Workout started · changes save automatically");
+      notify(
+        storedSnapshot && !restoredDraft?.conflicts.length
+          ? "Workout resumed · recovered entries are syncing"
+          : restoredDraft?.conflicts.length
+            ? "Workout resumed · choose which conflicting values to keep"
+          : "Workout started · changes save automatically",
+      );
     } catch (error) {
       notify(
         error instanceof Error
@@ -1145,6 +1862,40 @@ export default function LiftLogApp({
     }
   }
 
+  function clearConfirmedActiveSession(
+    session: ActiveSession,
+    scheduleStatus: "planned" | "skipped" | "completed",
+  ) {
+    if (sessionDraftSaveTimerRef.current !== null) {
+      window.clearTimeout(sessionDraftSaveTimerRef.current);
+      sessionDraftSaveTimerRef.current = null;
+    }
+    if (sessionDraftQueueRef.current?.sessionId === session.id) {
+      sessionDraftQueueRef.current.coordinator.close();
+      sessionDraftQueueRef.current = null;
+    }
+    latestSessionDraftRef.current = null;
+    observedSessionDraftIdRef.current = null;
+    lastSessionDraftContentRef.current = null;
+    activeWorkoutDraftStore.clearAfterCompletion(viewer.id, session.id);
+    confirmedSessionRevisionRef.current.delete(session.id);
+    confirmedSessionSnapshotRef.current.delete(session.id);
+    setSessionDraftConflict(null);
+    setActiveSession(null);
+    setWorkoutStarted(false);
+    setWorkoutComplete(false);
+    setSessionSaveStatus("saved");
+    setWorkspace((previous) => ({
+      ...previous,
+      activeSession: null,
+      scheduledWorkouts: previous.scheduledWorkouts.map((scheduled) =>
+        scheduled.id === session.scheduledWorkoutId
+          ? { ...scheduled, status: scheduleStatus }
+          : scheduled,
+      ),
+    }));
+  }
+
   async function finishWorkout() {
     if (workoutActionRef.current) return;
     workoutActionRef.current = "finishing";
@@ -1159,36 +1910,84 @@ export default function LiftLogApp({
           sessionDraftSaveTimerRef.current = null;
         }
         const coordinator = ensureSessionDraftQueue(activeSession, repository);
-        const confirmedRevision = await coordinator.flushLatest({
-          session: activeSession,
-          setLogs,
-          resultLogs,
-          sessionRpe,
-          sessionNote,
-        });
-        const completionToken =
+        let completion =
           completionTokenRef.current?.sessionId === activeSession.id
-            ? completionTokenRef.current.token
-            : crypto.randomUUID();
-        completionTokenRef.current = {
-          sessionId: activeSession.id,
-          token: completionToken,
-        };
-        await repository.completeSession(
-          activeSession.id,
-          sessionRpe,
-          sessionNote,
-          confirmedRevision,
-          completionToken,
-        );
-        const nextWorkspace = await repository.loadWorkspace();
-        applyWorkspace(nextWorkspace);
+            ? completionTokenRef.current
+            : null;
+        let recoveredRevision: number | null = null;
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (!completion) {
+            let confirmedRevision: number;
+            if (recoveredRevision !== null) {
+              confirmedRevision = recoveredRevision;
+              recoveredRevision = null;
+            } else {
+              try {
+                confirmedRevision = await coordinator.flushLatest({
+                  session: activeSession,
+                  setLogs,
+                  resultLogs,
+                  sessionRpe,
+                  sessionNote,
+                });
+              } catch (error) {
+                if (!(error instanceof SessionRevisionConflictError)) throw error;
+                confirmedRevision = await recoverSessionDraftRevision(
+                  activeSession.id,
+                );
+              }
+            }
+            const latest = latestSessionDraftRef.current;
+            completion = {
+              sessionId: activeSession.id,
+              token: crypto.randomUUID(),
+              confirmedRevision,
+              sessionRpe:
+                latest?.session.id === activeSession.id
+                  ? latest.sessionRpe
+                  : sessionRpe,
+              sessionNote:
+                latest?.session.id === activeSession.id
+                  ? latest.sessionNote
+                  : sessionNote,
+            };
+            completionTokenRef.current = completion;
+          }
+
+          try {
+            await repository.completeSession(
+              completion.sessionId,
+              completion.sessionRpe,
+              completion.sessionNote,
+              completion.confirmedRevision,
+              completion.token,
+            );
+            break;
+          } catch (error) {
+            if (
+              !(error instanceof SessionRevisionConflictError) ||
+              attempt === 2
+            ) {
+              throw error;
+            }
+            completionTokenRef.current = null;
+            completion = null;
+            recoveredRevision = await recoverSessionDraftRevision(
+              activeSession.id,
+              true,
+            );
+          }
+        }
+
+        clearConfirmedActiveSession(activeSession, "completed");
         completionTokenRef.current = null;
-        setActiveSession(null);
-        setSessionSaveStatus("saved");
-        setWorkoutComplete(false);
-        setWorkoutStarted(false);
         notify("Session saved · next workout is ready when you are");
+        try {
+          applyWorkspace(await repository.loadWorkspace());
+        } catch {
+          notify("Session saved · refresh when connected to load what is next");
+        }
         return;
       }
 
@@ -2701,7 +3500,21 @@ export default function LiftLogApp({
       );
       if (repository) {
         await repository.setScheduledWorkoutStatus(scheduleId, status);
-        applyWorkspace(await repository.loadWorkspace());
+        if (activeSession?.scheduledWorkoutId === scheduleId) {
+          clearConfirmedActiveSession(activeSession, status);
+        } else {
+          setWorkspace((previous) => ({
+            ...previous,
+            scheduledWorkouts: previous.scheduledWorkouts.map((schedule) =>
+              schedule.id === scheduleId ? { ...schedule, status } : schedule,
+            ),
+          }));
+        }
+        try {
+          applyWorkspace(await repository.loadWorkspace());
+        } catch {
+          notify("Workout updated · refresh when connected for the latest plan");
+        }
       } else {
         setWorkspace((previous) => ({
           ...previous,
@@ -2709,9 +3522,8 @@ export default function LiftLogApp({
             schedule.id === scheduleId ? { ...schedule, status } : schedule,
           ),
         }));
-        if (status === "planned") {
-          setActiveSession(null);
-          setWorkoutStarted(false);
+        if (activeSession?.scheduledWorkoutId === scheduleId) {
+          clearConfirmedActiveSession(activeSession, status);
         }
       }
       setDetail(null);
@@ -2928,7 +3740,7 @@ export default function LiftLogApp({
         )}
         {activeView === "today" &&
           !completedWorkoutView &&
-          ((activeSession && todayWorkout && workoutFocus) ||
+          ((activeSession && activeWorkoutVisible && todayWorkout && workoutFocus) ||
             (!activeSession && workoutPreviewSchedule)) && (
           <TodayView
             program={activeSession ? todayProgram : previewProgram}
@@ -2949,6 +3761,7 @@ export default function LiftLogApp({
             sessionRpe={sessionRpe}
             sessionNote={sessionNote}
             sessionSaveStatus={sessionSaveStatus}
+            localRecoveryAvailable={localRecoveryAvailable}
             online={isOnline}
             onStart={() =>
               void startWorkout(
@@ -2989,7 +3802,9 @@ export default function LiftLogApp({
             }
             viewMode={!activeSession}
             onBack={
-              !activeSession
+              activeSession
+                ? () => setActiveWorkoutVisible(false)
+                : !activeSession
                 ? () => {
                     const returnView = workoutPreviewReturnView;
                     setDetail(null);
@@ -3013,12 +3828,22 @@ export default function LiftLogApp({
                 : undefined
             }
             onRemoveFromCalendar={
-              workoutPreviewReturnView === "calendar" && workoutPreviewSchedule
+              workoutPreviewSchedule
                 ? () => {
                     const scheduleId = workoutPreviewSchedule.id;
-                    setDetail(null);
-                    navigate("calendar");
-                    void saveSchedule(scheduleId, null);
+                    const returnView = workoutPreviewReturnView;
+                    void saveSchedule(scheduleId, null)
+                      .then(() => {
+                        setDetail(null);
+                        navigate(returnView);
+                      })
+                      .catch((error) =>
+                        notify(
+                          error instanceof Error
+                            ? error.message
+                            : "The workout could not be removed from the calendar",
+                        ),
+                      );
                   }
                 : undefined
             }
@@ -3033,7 +3858,7 @@ export default function LiftLogApp({
         )}
         {activeView === "today" &&
           !completedWorkoutView &&
-          !activeSession &&
+          (!activeSession || !activeWorkoutVisible) &&
           !workoutPreviewSchedule && (
           <NextWorkoutsView
             schedules={upcomingWorkouts}
@@ -3042,10 +3867,35 @@ export default function LiftLogApp({
               (candidate) => candidate.versionStatus === "published",
             )}
             startingScheduleId={startingScheduleId}
+            activeScheduleId={
+              activeSession
+                ? (todaySchedule?.id ?? activeSession.scheduledWorkoutId ?? null)
+                : null
+            }
             onNavigate={navigate}
             onSchedule={() => openSchedule()}
-            onStart={(schedule) => void startWorkout(schedule)}
-            onOpen={openWorkoutPreview}
+            onStart={(schedule) => {
+              if (
+                activeSession &&
+                schedule.id ===
+                  (todaySchedule?.id ?? activeSession.scheduledWorkoutId)
+              ) {
+                setActiveWorkoutVisible(true);
+                return;
+              }
+              void startWorkout(schedule);
+            }}
+            onOpen={(schedule) => {
+              if (
+                activeSession &&
+                schedule.id ===
+                  (todaySchedule?.id ?? activeSession.scheduledWorkoutId)
+              ) {
+                setActiveWorkoutVisible(true);
+                return;
+              }
+              openWorkoutPreview(schedule);
+            }}
             onSetStatus={(scheduleId, status) => {
               void setScheduledWorkoutStatus(scheduleId, status);
             }}
@@ -3428,6 +4278,9 @@ export default function LiftLogApp({
           schedulableVersionIds={schedulablePrograms.map(
             (candidate) => candidate.versionId,
           )}
+          quickWorkoutVersionIds={schedulablePrograms
+            .filter((candidate) => candidate.contentType === "quick_workout")
+            .map((candidate) => candidate.versionId)}
           editingId={scheduleEditingId}
           initialDate={scheduleInitialDate}
           preparing={scheduleOpening}
@@ -3447,6 +4300,35 @@ export default function LiftLogApp({
           onSave={saveProfile}
           onSignOut={onSignOut}
         />
+      )}
+      {sessionDraftConflict && (
+        <ModalShell
+          title="Workout changed elsewhere"
+          description="Your entries are safe. Non-conflicting values from both copies were merged; choose which copy wins only where the same value changed in both."
+          onClose={() => undefined}
+          dismissible={false}
+        >
+          <InlineError>
+            {sessionDraftConflict.conflicts[0] === "workout"
+              ? "This older recovery copy has no trustworthy merge base, so choose the whole draft."
+              : `${sessionDraftConflict.conflicts.length} conflicting ${sessionDraftConflict.conflicts.length === 1 ? "value needs" : "values need"} your choice.`}
+          </InlineError>
+          <div className="modal-actions">
+            <button
+              className="button secondary"
+              onClick={() => resolveSessionDraftConflict(false)}
+            >
+              Use last saved
+            </button>
+            <button
+              className="button primary"
+              data-modal-initial-focus
+              onClick={() => resolveSessionDraftConflict(true)}
+            >
+              Keep this device
+            </button>
+          </div>
+        </ModalShell>
       )}
       {toast && <Toast message={toast} />}
     </main>
@@ -3579,6 +4461,7 @@ function NextWorkoutsView({
   hasProgram,
   hasPublishedProgram,
   startingScheduleId,
+  activeScheduleId,
   onNavigate,
   onSchedule,
   onStart,
@@ -3590,6 +4473,7 @@ function NextWorkoutsView({
   hasProgram: boolean;
   hasPublishedProgram: boolean;
   startingScheduleId: string | null;
+  activeScheduleId: string | null;
   onNavigate: (view: ViewName) => void;
   onSchedule: () => void;
   onStart: (schedule: ScheduledWorkout) => void;
@@ -3654,11 +4538,13 @@ function NextWorkoutsView({
                   <AsyncButton
                     className="button primary"
                     loading={startingScheduleId === schedule.id}
-                    loadingLabel="Starting workout…"
+                    loadingLabel="Starting…"
                     icon={Activity}
                     onClick={() => onStart(schedule)}
                   >
-                    Start workout
+                    {activeScheduleId === schedule.id
+                      ? "Resume workout"
+                      : "Start workout"}
                   </AsyncButton>
                 )}
               </article>
@@ -3729,6 +4615,7 @@ function TodayView({
   sessionRpe,
   sessionNote,
   sessionSaveStatus,
+  localRecoveryAvailable,
   online,
   onStart,
   onFinish,
@@ -3763,6 +4650,7 @@ function TodayView({
   sessionRpe: string;
   sessionNote: string;
   sessionSaveStatus: SessionDraftSaveStatus;
+  localRecoveryAvailable: boolean;
   online: boolean;
   onStart: () => void;
   onFinish: () => void;
@@ -3806,11 +4694,14 @@ function TodayView({
     : undefined;
   const workoutIndex =
     workoutWeek?.workouts.findIndex((item) => item.id === workout.id) ?? -1;
-  const planDescription = workoutWeek
-    ? `Week ${workoutWeek.index} of ${program?.title} · ${program?.phase} phase`
-    : workoutBelongsToProgram && program
-      ? `${workout.dayLabel} · scheduled workout`
-      : `${workout.dayLabel} · scheduled from an earlier plan version`;
+  const isQuickWorkout = program?.contentType === "quick_workout";
+  const planDescription = isQuickWorkout
+    ? undefined
+    : workoutWeek
+      ? `Week ${workoutWeek.index} of ${program?.title} · ${program?.phase} phase`
+      : workoutBelongsToProgram && program
+        ? `${workout.dayLabel} · scheduled workout`
+        : `${workout.dayLabel} · scheduled from an earlier plan version`;
   const timingLabel =
     timing === "active"
       ? plannedDate
@@ -3836,15 +4727,17 @@ function TodayView({
         }
         description={planDescription}
       >
+        <div className={`workout-preview-actions${workoutStarted ? " started" : ""}`}>
         {program && (
           <SourceTag
             presentation={presentProgramProvenance(program, viewerId)}
           />
         )}
         {onBack && (
-          <button className="button secondary" onClick={onBack}>
+          <button className="button secondary workout-back-action" onClick={onBack}>
             <ArrowLeft size={15} />
-            {backLabel}
+            <span className="workout-action-full">{backLabel}</span>
+            <span className="workout-action-compact">Workouts</span>
           </button>
         )}
         {viewMode && onReschedule && (
@@ -3859,20 +4752,23 @@ function TodayView({
         )}
         {viewMode && onRemoveFromCalendar && (
           <button
-            className="icon-button danger"
+            className="button secondary"
             onClick={onRemoveFromCalendar}
             aria-label="Remove workout from calendar"
             title="Remove from calendar"
           >
-            <X size={15} />
+            <CalendarMinus size={15} />
+            <span className="workout-action-full">Remove from calendar</span>
+            <span className="workout-action-compact">Unschedule</span>
           </button>
         )}
         {workoutStarted && onSetPlanned && onSkip && (
           <>
             <button
-              className="button secondary"
+              className="button secondary workout-back-action"
               disabled={statusAction !== null}
               onClick={onSetPlanned}
+              aria-label="Set back to planned"
             >
               {statusAction === "planned" ? (
                 <>
@@ -3880,7 +4776,11 @@ function TodayView({
                   Restoring…
                 </>
               ) : (
-                "Set back to planned"
+                <>
+                  <RefreshCw size={15} />
+                  <span className="workout-action-full">Set back to planned</span>
+                  <span className="workout-action-compact">Planned</span>
+                </>
               )}
             </button>
             <button
@@ -3894,7 +4794,10 @@ function TodayView({
                   Skipping…
                 </>
               ) : (
-                "Skip workout"
+                <>
+                  <span className="workout-action-full">Skip workout</span>
+                  <span className="workout-action-compact">Skip</span>
+                </>
               )}
             </button>
           </>
@@ -3911,7 +4814,10 @@ function TodayView({
                 Skipping…
               </>
             ) : (
-              "Skip workout"
+              <>
+                <span className="workout-action-full">Skip workout</span>
+                <span className="workout-action-compact">Skip</span>
+              </>
             )}
           </button>
         )}
@@ -3921,6 +4827,7 @@ function TodayView({
             View program
           </button>
         )}
+        </div>
       </PageHeader>
       {workoutComplete && (
         <div className="success-banner">
@@ -3942,16 +4849,22 @@ function TodayView({
         <article className="workout-card">
           <div className="workout-heading">
             <div>
-              <p className="eyebrow">
-                {workoutWeek
-                  ? `Session ${workoutIndex + 1} of ${workoutWeek.workouts.length}`
-                  : "Scheduled session"}
-              </p>
+              {!isQuickWorkout && (
+                <p className="eyebrow">
+                  {workoutWeek
+                    ? `Session ${workoutIndex + 1} of ${workoutWeek.workouts.length}`
+                    : "Scheduled session"}
+                </p>
+              )}
               <h2>{workout.title}</h2>
-              <p>
-                {workout.dayLabel} · follow the prescription and adjust to how
-                you feel on the day.
-              </p>
+              {isQuickWorkout ? (
+                program.description && <p>{program.description}</p>
+              ) : (
+                <p>
+                  {workout.dayLabel} · follow the prescription and adjust to how
+                  you feel on the day.
+                </p>
+              )}
             </div>
             <span className="time-pill">
               <Clock3 size={14} />~ {workout.durationMinutes} min
@@ -4002,10 +4915,15 @@ function TodayView({
                 <textarea
                   value={sessionNote}
                   onChange={(event) => onSessionNote(event.target.value)}
+                  maxLength={4000}
                   placeholder="What felt good? Anything to adjust next time?"
                 />
               </label>
-              <SessionSaveIndicator status={sessionSaveStatus} online={online} />
+              <SessionSaveIndicator
+                status={sessionSaveStatus}
+                online={online}
+                localRecoveryAvailable={localRecoveryAvailable}
+              />
               <AsyncButton
                 className="button primary full"
                 loading={workoutAction === "finishing"}
@@ -4026,12 +4944,12 @@ function TodayView({
 }
 
 const rpeOptions = [
-  { value: "5", label: "Light", detail: "5+ reps left" },
-  { value: "6", label: "Easy", detail: "about 4 reps left" },
-  { value: "7", label: "Moderate", detail: "about 3 reps left" },
-  { value: "8", label: "Hard", detail: "about 2 reps left" },
-  { value: "9", label: "Very hard", detail: "about 1 rep left" },
-  { value: "10", label: "Max", detail: "no reps left" },
+  { value: "5", label: "Light", detail: "5+ left" },
+  { value: "6", label: "Easy", detail: "4+ left" },
+  { value: "7", label: "Moderate", detail: "3 left" },
+  { value: "8", label: "Hard", detail: "2 left" },
+  { value: "9", label: "Very hard", detail: "1 left" },
+  { value: "10", label: "Max", detail: "None left" },
 ] as const;
 
 function wholeRpe(value: string) {
@@ -4145,26 +5063,94 @@ export function RpeSelect({
   onChange: (value: string) => void;
   ariaLabel?: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const helpId = useId();
+  const selected = rpeOptions.find((option) => option.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !rootRef.current?.contains(event.target)
+      ) {
+        setOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
   return (
-    <div className="rpe-select">
-      <select
+    <div className={cn("rpe-select", open && "open")} ref={rootRef}>
+      <button
+        type="button"
         disabled={disabled}
         className={cn("rpe-select-trigger", value && "selected", value && `rpe-${rpeTone(value)}`)}
         aria-label={ariaLabel}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
       >
-        <option value="" aria-label="No actual RPE">—</option>
-        {rpeOptions.map((option) => (
-          <option
-            key={option.value}
-            value={option.value}
-            aria-label={`${option.value} · ${option.label} · ${option.detail}`}
+        <strong>{selected?.value ?? "—"}</strong>
+        <ChevronDown size={14} aria-hidden />
+      </button>
+      {open && !disabled && (
+        <div className="rpe-select-menu">
+          <p className="rpe-select-help" id={helpId}>
+            <strong>RPE</strong> shows how hard the set felt by how many good
+            reps you had left.
+          </p>
+          <div
+            className="rpe-select-options"
+            role="listbox"
+            aria-label={`${ariaLabel} options`}
+            aria-describedby={helpId}
           >
-            {option.value}
-          </option>
-        ))}
-      </select>
+            <button
+              type="button"
+              role="option"
+              aria-selected={!value}
+              className={!value ? "selected" : undefined}
+              onClick={() => {
+                onChange("");
+                setOpen(false);
+              }}
+            >
+              <strong>—</strong>
+              <span>Not logged</span>
+            </button>
+            {rpeOptions.map((option) => (
+              <button
+                type="button"
+                role="option"
+                key={option.value}
+                aria-label={`RPE ${option.value}: ${option.detail}`}
+                aria-selected={value === option.value}
+                className={cn(
+                  value === option.value && "selected",
+                  `rpe-${rpeTone(option.value)}`,
+                )}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <strong>{option.value}</strong>
+                <span>{option.detail}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4246,10 +5232,12 @@ function WorkoutLogItem({
       <div className={cn("exercise-heading", builderPreview && "builder-exercise-heading")}>
         <div className={builderPreview ? "builder-exercise-title" : undefined}>
           {builderPreview ? (
-            <div className="builder-exercise-title-row">
-              <strong>{item.title}</strong>
+            <>
+              <div className="builder-exercise-title-row">
+                <strong>{item.title}</strong>
+              </div>
               {prescriptionSummary}
-            </div>
+            </>
           ) : (
             <strong>{item.title}</strong>
           )}
@@ -4750,7 +5738,8 @@ function ProgramView({
             : "A finite sequence of weeks. The athlete assigns workouts to calendar dates separately.")
         }
       >
-        <button className="button secondary small" onClick={onBack}>
+        <div className="program-editor-header-actions">
+        <button className="button secondary small program-editor-back" onClick={onBack}>
           <ArrowLeft size={15} />
           All programs
         </button>
@@ -4776,7 +5765,7 @@ function ProgramView({
         )}
         {editable ? (
           <button
-            className="button primary small"
+            className="button primary small program-editor-primary-action"
             disabled={Boolean(action)}
             onClick={() => onSave(description)}
           >
@@ -4812,8 +5801,9 @@ function ProgramView({
                 </>
               )}
             </button>
-          )
+            )
         )}
+        </div>
       </PageHeader>
       <div className="program-summary panel">
         <div>
@@ -4906,8 +5896,10 @@ function ProgramView({
           <ArrowRight size={16} />
         </button>
       </div>}
-      <div className="builder-layout">
-        <aside className="workout-list panel">
+      <div
+        className={`builder-layout${isQuickWorkout ? " quick-workout-builder" : ""}`}
+      >
+        {!isQuickWorkout && <aside className="workout-list panel">
           <div className="panel-heading">
             <div>
               <p className="eyebrow">
@@ -4947,7 +5939,7 @@ function ProgramView({
             <Plus size={15} />
             Add workout
           </button>}
-        </aside>
+        </aside>}
         <DndContext
           sensors={dragSensors}
           collisionDetection={closestCenter}
@@ -6683,7 +7675,6 @@ function ExercisesHome({
         personal={personal}
         copyingExerciseId={copyingExerciseId}
         onQuery={onQuery}
-        onAdd={onAdd}
         onOpen={onOpen}
         onCopy={onCopy}
         onEdit={onEdit}
@@ -6700,7 +7691,6 @@ function ExercisesView({
   personal,
   copyingExerciseId,
   onQuery,
-  onAdd,
   onOpen,
   onCopy,
   onEdit,
@@ -6712,7 +7702,6 @@ function ExercisesView({
   personal: Exercise[];
   copyingExerciseId: string | null;
   onQuery: (query: string) => void;
-  onAdd: () => void;
   onOpen: (exercise: Exercise) => void;
   onCopy: (exercise: Exercise) => void;
   onEdit: (exercise: Exercise) => void;
@@ -9542,6 +10531,7 @@ function ProgramModal({
 function ScheduleModal({
   schedules,
   schedulableVersionIds,
+  quickWorkoutVersionIds,
   editingId,
   initialDate,
   preparing,
@@ -9550,6 +10540,7 @@ function ScheduleModal({
 }: {
   schedules: ScheduledWorkout[];
   schedulableVersionIds: string[];
+  quickWorkoutVersionIds: string[];
   editingId: string | null;
   initialDate: string | null;
   preparing: boolean;
@@ -9557,6 +10548,7 @@ function ScheduleModal({
   onSave: (scheduleId: string, date: string | null) => Promise<void>;
 }) {
   const schedulableVersions = new Set(schedulableVersionIds);
+  const quickWorkoutVersions = new Set(quickWorkoutVersionIds);
   const candidates = schedules.filter(
     (schedule) =>
       schedule.status === "planned" &&
@@ -9630,7 +10622,7 @@ function ScheduleModal({
         <>
           <div className="form-grid">
             <label className="form-field full">
-              <span>Program workout</span>
+              <span>Workout</span>
               <select
                 value={scheduleId}
                 disabled={Boolean(editingId) || saving}
@@ -9644,8 +10636,9 @@ function ScheduleModal({
               >
                 {candidates.map((schedule) => (
                   <option value={schedule.id} key={schedule.id}>
-                    {schedule.slotLabel} · {schedule.workoutTitle}
-                    {schedule.plannedDate ? ` · ${schedule.plannedDate}` : ""}
+                    {quickWorkoutVersions.has(schedule.programVersionId)
+                      ? schedule.workoutTitle
+                      : `${schedule.programTitle} · ${schedule.workoutTitle}`}
                   </option>
                 ))}
               </select>

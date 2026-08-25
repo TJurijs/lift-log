@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { ActiveSession } from "../../lib/domain";
 import {
   buildSessionDraftPayload,
+  isAmbiguousSessionDraftError,
   LiftLogRepository,
+  SessionDraftAmbiguousWriteError,
+  SessionRevisionConflictError,
 } from "../../lib/repository";
 
 function fixtureSession(): ActiveSession {
@@ -248,5 +251,73 @@ describe("workout-session draft persistence", () => {
         },
       },
     ]);
+  });
+
+  it("classifies interrupted writes separately from deterministic failures", async () => {
+    const interruptedRepository = new LiftLogRepository(
+      {
+        rpc: async () => {
+          throw new TypeError("Failed to fetch");
+        },
+      } as never,
+      "athlete-1",
+      "Athlete One",
+    );
+
+    await expect(
+      interruptedRepository.saveSessionDraft(
+        fixtureSession(),
+        setLogs,
+        resultLogs,
+        "8",
+        "Felt controlled.",
+        3,
+        "00000000-0000-4000-8000-000000000003",
+      ),
+    ).rejects.toBeInstanceOf(SessionDraftAmbiguousWriteError);
+    expect(
+      isAmbiguousSessionDraftError(
+        new Error("Could not save workout changes: connection timed out"),
+      ),
+    ).toBe(true);
+    expect(
+      isAmbiguousSessionDraftError(
+        new Error("Session RPE must be a whole number"),
+      ),
+    ).toBe(false);
+  });
+
+  it("types stale draft and completion revisions for bounded recovery", async () => {
+    const repository = new LiftLogRepository(
+      {
+        rpc: async () => ({
+          data: null,
+          error: { message: "Workout draft revision is stale" },
+        }),
+      } as never,
+      "athlete-1",
+      "Athlete One",
+    );
+
+    await expect(
+      repository.saveSessionDraft(
+        fixtureSession(),
+        setLogs,
+        resultLogs,
+        "8",
+        "Felt controlled.",
+        3,
+        "00000000-0000-4000-8000-000000000004",
+      ),
+    ).rejects.toBeInstanceOf(SessionRevisionConflictError);
+    await expect(
+      repository.completeSession(
+        "session-1",
+        "8",
+        "Felt controlled.",
+        3,
+        "00000000-0000-4000-8000-000000000005",
+      ),
+    ).rejects.toBeInstanceOf(SessionRevisionConflictError);
   });
 });

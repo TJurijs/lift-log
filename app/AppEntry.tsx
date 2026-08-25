@@ -1,6 +1,6 @@
 import { Activity, ArrowRight, Check, LockKeyhole } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import TestPersonaSwitcher, { type TestPersonaChoice } from "./TestPersonaSwitcher";
 import { InlineError } from "./ui-primitives";
 import { demoWorkspace } from "../lib/demo-data";
@@ -13,12 +13,31 @@ import {
 import type { WorkspaceData } from "../lib/domain";
 import { recordClientPerformance } from "../lib/performance";
 import { LiftLogRepository } from "../lib/repository";
+import { ActiveWorkoutDraftStore } from "../lib/active-workout-draft-storage";
 
 type AuthStatus = "loading" | "anonymous" | "authenticated" | "demo";
 const localDemoAvailable = import.meta.env.DEV;
 const jwtClockSkewRetryDelays = [750, 1_500];
 const transientWorkspaceRetryDelays = [800];
 const LiftLogApp = lazy(() => import("./LiftLogApp"));
+const activeWorkoutDraftStore = new ActiveWorkoutDraftStore();
+
+const redundantSameUserAuthEvents = new Set<AuthChangeEvent>([
+  "INITIAL_SESSION",
+  "SIGNED_IN",
+  "TOKEN_REFRESHED",
+]);
+
+export function shouldApplyAuthSession(
+  event: AuthChangeEvent,
+  currentUserId: string | null | undefined,
+  nextSession: Session | null,
+) {
+  if (currentUserId === undefined) return true;
+  const nextUserId = nextSession?.user.id ?? null;
+  if (currentUserId !== nextUserId) return true;
+  return !redundantSameUserAuthEvents.has(event);
+}
 
 function ProductShellFallback() {
   return (
@@ -80,7 +99,7 @@ export default function AppEntry() {
   const [personaError, setPersonaError] = useState("");
   const [personaSwitcherOpen, setPersonaSwitcherOpen] = useState(false);
   const processedInvite = useRef(false);
-  const activeUserId = useRef<string | null>(null);
+  const activeUserId = useRef<string | null | undefined>(undefined);
   const testPersonasAvailable = testPersonaFeatureAvailable();
   const repository = useMemo(() => {
     if (!session) return null;
@@ -96,9 +115,13 @@ export default function AppEntry() {
     if (!client) return;
 
     let mounted = true;
+    let authEventObserved = false;
     function applySession(nextSession: Session | null) {
       const nextUserId = nextSession?.user.id ?? null;
       if (activeUserId.current !== nextUserId) {
+        if (typeof activeUserId.current === "string") {
+          activeWorkoutDraftStore.clearOnSignOut(activeUserId.current);
+        }
         activeUserId.current = nextUserId;
         processedInvite.current = false;
         setWorkspace(null);
@@ -109,16 +132,25 @@ export default function AppEntry() {
     }
 
     client.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      applySession(data.session);
+      if (!mounted || authEventObserved) return;
+      if (
+        shouldApplyAuthSession(
+          "INITIAL_SESSION",
+          activeUserId.current,
+          data.session,
+        )
+      ) {
+        applySession(data.session);
+      }
     });
 
     const { data } = client.auth.onAuthStateChange((event, nextSession) => {
       if (!mounted) return;
-      // The Supabase client already uses the refreshed token. Replacing this
-      // same-user session would rebuild the repository and reload the whole
-      // workspace every time a token refreshes.
-      if (!(event === "TOKEN_REFRESHED" && activeUserId.current === nextSession?.user.id)) {
+      authEventObserved = true;
+      // Supabase also emits SIGNED_IN whenever an existing tab is refocused.
+      // The shared client already owns the current token, so redundant
+      // same-user events must not rebuild the repository or autosave queue.
+      if (shouldApplyAuthSession(event, activeUserId.current, nextSession)) {
         applySession(nextSession);
       }
       setConnecting(false);
@@ -244,9 +276,14 @@ export default function AppEntry() {
       setStatus("anonymous");
       return;
     }
+    const signingOutUserId = session?.user.id;
     repository?.dispose();
     const client = getSupabaseBrowserClient();
     await client?.auth.signOut();
+    if (signingOutUserId) {
+      activeWorkoutDraftStore.clearOnSignOut(signingOutUserId);
+    }
+    activeUserId.current = null;
     setSession(null);
     setWorkspace(null);
     setStatus("anonymous");

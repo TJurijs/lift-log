@@ -153,14 +153,28 @@ describe("shared labels and async actions", () => {
   it.each([
     ["saved", true, "Saved"],
     ["saving", true, "Saving…"],
-    ["unsaved-offline", false, "Unsaved — reconnect to save"],
-    ["error", true, "Unsaved — retry to save"],
+    ["unsaved-offline", false, "Saved on this device · reconnect to sync"],
+    ["error", true, "Saved on this device · sync needs attention"],
     ["saved", false, "Saved · reconnect to finish"],
   ] as const)("announces the %s workout save state", (status, online, label) => {
     render(<SessionSaveIndicator status={status} online={online} />);
 
     expect(screen.getByRole("status")).toHaveTextContent(label);
     expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("does not claim device recovery when browser storage is unavailable", () => {
+    render(
+      <SessionSaveIndicator
+        status="unsaved-offline"
+        online={false}
+        localRecoveryAvailable={false}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Not saved yet · keep this page open and reconnect",
+    );
   });
 });
 

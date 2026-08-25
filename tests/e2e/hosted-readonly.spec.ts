@@ -32,7 +32,9 @@ test("fictional athlete can read the core hosted-development views", async ({ pa
   await expect(page.getByRole("heading", { name: "Calendar", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Exercises", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Exercise library" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Exercises", exact: true }),
+  ).toBeVisible();
 
   expect(pageErrors).toEqual([]);
 });

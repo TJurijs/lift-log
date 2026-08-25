@@ -9,12 +9,22 @@ test("coach workspace fixtures use real program occurrences and representative R
 
   assert.match(
     seed,
-    /async function completeFixtureOccurrence[\s\S]*start_or_resume_workout[\s\S]*complete_workout_session/,
+    /async function completeFixtureOccurrence[\s\S]*start_or_resume_workout[\s\S]*save_workout_session_draft[\s\S]*complete_workout_session_confirmed/,
   );
   assert.match(
     seed,
     /sharedCoachProgramKey = "guntis-ulmanis:raimonds-vejonis"[\s\S]*target_athlete_id: identities\.get\("guntis-ulmanis"\)\.user\.id[\s\S]*clients\.get\("raimonds-vejonis"\)/,
     "the shared athlete needs one independently authored program per coach",
+  );
+  assert.match(
+    seed,
+    /visible\.length !== 1[\s\S]*visible\[0\]\.created_by_id !== identities\.get\(coachKey\)\.user\.id[\s\S]*athleteVisiblePrograms\.length !== 2/,
+    "each coach sees only their authored program while the athlete sees both",
+  );
+  assert.match(
+    seed,
+    /rpc\("list_connected_profile_summaries"\)[\s\S]*connectedCoachIds\.has\(profile\.id\)/,
+    "connected identities are verified through the minimal summary RPC",
   );
   assert.match(
     seed,

@@ -119,7 +119,8 @@ test("keeps user data behind Supabase and wires every MVP mutation", async () =>
   }
 
   assert.match(app, /changes save automatically/i);
-  assert.match(app, /repository\.saveSessionDraft/);
+  // Autosave wiring, reload recovery, conflict rebasing, and completion are
+  // exercised by the rendered active-workout behavior suite.
   assert.match(app, /repository\.loadProgramForAthlete/);
   assert.match(
     repository,

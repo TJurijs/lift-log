@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const stylesUrl = new URL("../app/globals.css", import.meta.url);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 const migrationUrl = new URL(
   "../supabase/migrations/202608220012_complete_sessions_on_scheduled_date.sql",
@@ -19,14 +20,34 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   assert.match(app, /title="Next workouts"/);
   assert.match(app, /function NextWorkoutsView/);
   assert.match(app, /schedules=\{upcomingWorkouts\}/);
-  assert.match(app, /onOpen=\{openWorkoutPreview\}/);
-  assert.match(app, /onStart=\{\(schedule\) => void startWorkout\(schedule\)\}/);
+  assert.match(app, /onOpen=\{\(schedule\) => \{[\s\S]*?openWorkoutPreview\(schedule\)/);
+  assert.match(app, /onStart=\{\(schedule\) => \{[\s\S]*?startWorkout\(schedule\)/);
   assert.match(app, /workoutPreviewSchedule/);
   assert.match(app, /viewMode=\{!activeSession\}/);
   assert.match(app, /Workout preview/);
   assert.match(app, /Next workouts/);
   assert.match(app, /Set back to planned/);
   assert.match(app, /Skip workout/);
+  assert.match(
+    app,
+    /onRemoveFromCalendar=\{[\s\S]*?workoutPreviewSchedule[\s\S]*?saveSchedule\(scheduleId, null\)/,
+    "an unstarted workout can be removed from the calendar from its preview",
+  );
+  assert.match(app, /className="workout-action-full">Remove from calendar</);
+  assert.match(app, /className=\{`workout-preview-actions\$\{workoutStarted/);
+  assert.match(app, /className="workout-action-compact">Workouts</);
+  assert.match(app, /className="workout-action-compact">Unschedule</);
+  assert.match(app, /className="workout-action-compact">Skip</);
+  assert.match(app, /const isQuickWorkout = program\?\.contentType === "quick_workout"/);
+  assert.match(app, /isQuickWorkout\s*\?\s*undefined/);
+  assert.match(app, /!isQuickWorkout && \([\s\S]*?Session \$\{workoutIndex \+ 1\} of/);
+  assert.match(app, /isQuickWorkout \? \([\s\S]*?program\.description/);
+  assert.match(app, /workout-preview-actions\$\{workoutStarted \? " started"/);
+  assert.match(app, /className="workout-action-compact">Planned</);
+  assert.match(app, /const \[activeWorkoutVisible, setActiveWorkoutVisible\]/);
+  assert.match(app, /activeSession\s*\?\s*\(\) => setActiveWorkoutVisible\(false\)/);
+  assert.match(app, /view === "today" && activeSession && activeWorkoutVisible[\s\S]*?setActiveWorkoutVisible\(false\)/);
+  assert.match(app, /activeScheduleId === schedule\.id[\s\S]*?"Resume workout"/);
   assert.match(app, /viewScheduledPlan\(workoutPreviewSchedule\)/);
   assert.match(app, /loadOwnScheduledProgramVersionById/);
   assert.match(app, /previewProgram\?\.contentType !== "quick_workout"/);
@@ -36,11 +57,36 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   assert.match(app, /Every workout scheduled from today onward/);
 });
 
+test("mobile workout cards reserve stable action space", async () => {
+  const [app, styles] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
+
+  assert.match(app, /loadingLabel="Starting…"/);
+  assert.match(styles, /\.next-workout-card\s*\{[^}]*grid-template-areas:[^}]*"date action"[^}]*"summary action"/s);
+  assert.match(styles, /\.next-workout-card > \.button\s*\{[^}]*width: 132px[^}]*white-space: nowrap/s);
+  assert.match(styles, /\.workout-preview-actions\.started\s*\{[^}]*grid-template-columns:/s);
+});
+
 test("new scheduling only offers unscheduled workouts from current finalized versions", async () => {
   const app = await readFile(appUrl, "utf8");
 
   assert.match(app, /schedulableVersionIds=\{schedulablePrograms\.map/);
+  assert.match(
+    app,
+    /quickWorkoutVersionIds=\{schedulablePrograms[\s\S]*contentType === "quick_workout"/,
+  );
   assert.match(app, /const schedulableVersions = new Set\(schedulableVersionIds\)/);
+  assert.match(
+    app,
+    /quickWorkoutVersions\.has\(schedule\.programVersionId\)[\s\S]*schedule\.workoutTitle[\s\S]*schedule\.programTitle.*schedule\.workoutTitle/,
+    "quick workouts use only their name while program options use program and workout names",
+  );
+  assert.doesNotMatch(
+    app.slice(app.indexOf("function ScheduleModal")),
+    /schedule\.slotLabel/,
+  );
   assert.match(app, /editingId[\s\S]*schedule\.id === editingId/);
   assert.match(
     app,

@@ -64,7 +64,9 @@ try {
     fullPage: true,
   });
   await mobilePage.getByRole("button", { name: "Exercises", exact: true }).click();
-  await mobilePage.getByRole("heading", { name: "Exercise library" }).waitFor();
+  await mobilePage
+    .getByRole("heading", { name: "Exercises", exact: true })
+    .waitFor();
   await mobilePage.screenshot({
     path: evidencePath("exercises-mobile-native-filters-360x800.png"),
     fullPage: true,

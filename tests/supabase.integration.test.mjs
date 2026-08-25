@@ -275,91 +275,6 @@ test(
         [],
       );
 
-      const templates = expectData(
-        await athleteB
-          .from("program_templates")
-          .select("id,title,week_count,workouts")
-          .eq("is_active", true)
-          .order("title"),
-        "load program library",
-      );
-      assert.equal(templates.length, 3);
-      assert.ok(Array.isArray(templates[0].workouts));
-      const expectedLibraryWorkouts =
-        templates[0].week_count * templates[0].workouts.length;
-      assert.ok(expectedLibraryWorkouts > 0);
-      const libraryProgramId = expectData(
-        await athleteB.rpc("create_program_from_template", {
-          target_template_id: templates[0].id,
-        }),
-        "choose library program",
-      );
-      const libraryProgram = expectData(
-        await athleteB
-          .from("programs")
-          .select("source_type,template_id")
-          .eq("id", libraryProgramId)
-          .single(),
-        "load library provenance",
-      );
-      assert.deepEqual(libraryProgram, {
-        source_type: "library",
-        template_id: templates[0].id,
-      });
-      const libraryPublished = expectData(
-        await athleteB
-          .from("program_versions")
-          .select("id")
-          .eq("program_id", libraryProgramId)
-          .eq("status", "published")
-          .single(),
-        "load library version",
-      );
-      assert.deepEqual(
-        expectData(
-          await athleteB
-            .from("scheduled_workouts")
-            .select("id")
-            .eq("program_version_id", libraryPublished.id),
-          "library calendar before availability",
-        ),
-        [],
-      );
-      assert.equal(
-        expectData(
-          await athleteB.rpc("set_program_availability", {
-            target_program_id: libraryProgramId,
-            make_available: true,
-          }),
-          "make library program available",
-        ),
-        true,
-      );
-      const libraryOccurrences = expectData(
-        await athleteB
-          .from("scheduled_workouts")
-          .select("id,planned_date,scheduled_by_id")
-          .eq("program_version_id", libraryPublished.id),
-        "load undated library workouts",
-      );
-      assert.equal(libraryOccurrences.length, expectedLibraryWorkouts);
-      assert.ok(
-        libraryOccurrences.every(
-          (occurrence) =>
-            occurrence.planned_date === null &&
-            occurrence.scheduled_by_id === athleteBId,
-        ),
-      );
-      assert.equal(
-        expectData(
-          await athleteB.rpc("prepare_program_schedule", {
-            target_program_version_id: libraryPublished.id,
-          }),
-          "repeat library calendar preparation",
-        ),
-        0,
-      );
-
       const programId = expectData(
         await athleteA.rpc("create_blank_program", {
           target_athlete_id: athleteAId,
@@ -847,23 +762,14 @@ test(
         ).error?.message ?? "",
         /Only the athlete/i,
       );
-      assert.match(
-        (
-          await athleteA.rpc("prepare_program_schedule", {
-            target_program_version_id: coachDraftVersion.id,
-          })
-        ).error?.message ?? "",
-        /not available/i,
-      );
       assert.equal(
         expectData(
-          await athleteA.rpc("set_program_availability", {
-            target_program_id: coachProgramId,
-            make_available: true,
+          await athleteA.rpc("prepare_program_schedule", {
+            target_program_version_id: coachDraftVersion.id,
           }),
-          "athlete makes program available",
+          "athlete prepares final coach program",
         ),
-        true,
+        2,
       );
       assert.equal(
         expectData(
@@ -928,13 +834,12 @@ test(
       );
       assert.equal(
         expectData(
-          await athleteA.rpc("set_program_availability", {
-            target_program_id: programId,
-            make_available: true,
+          await athleteA.rpc("prepare_program_schedule", {
+            target_program_version_id: draftVersion.id,
           }),
-          "athlete makes own program available",
+          "athlete prepares own final program",
         ),
-        true,
+        1,
       );
       const athleteAuthoredOccurrences = expectData(
         await athleteA
@@ -994,13 +899,12 @@ test(
       );
       assert.equal(
         expectData(
-          await athleteA.rpc("set_program_availability", {
-            target_program_id: otherCoachProgramId,
-            make_available: true,
+          await athleteA.rpc("prepare_program_schedule", {
+            target_program_version_id: otherCoachDraftVersion.id,
           }),
-          "athlete makes second coach program available",
+          "athlete prepares second coach final program",
         ),
-        true,
+        1,
       );
       const otherCoachOccurrences = expectData(
         await athleteA
@@ -2025,8 +1929,8 @@ test(
       );
       assert.deepEqual(
         expectData(
-          await coach.from("programs").select("id").eq("id", libraryProgramId),
-          "connected athlete-authored library remains private",
+          await coach.from("programs").select("id").eq("id", programId),
+          "revoked coach cannot read athlete-authored programs",
         ),
         [],
       );

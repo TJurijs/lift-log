@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { loadEnv } from "vite";
@@ -370,9 +370,35 @@ async function completeFixtureOccurrence(
     }),
     `Start ${label} occurrence ${sequenceNumber}`,
   );
-  expectData(
-    await client.rpc("complete_workout_session", {
+  const sessionItems = expectData(
+    await client
+      .from("session_item_logs")
+      .select("id")
+      .eq("workout_session_id", sessionId)
+      .order("position"),
+    `Load ${label} session items ${sequenceNumber}`,
+  );
+  const confirmedDraft = expectData(
+    await client.rpc("save_workout_session_draft", {
       target_session_id: sessionId,
+      expected_revision: 0,
+      write_token: randomUUID(),
+      draft_payload: {
+        sessionRpe: rpe,
+        sessionNote: note,
+        items: sessionItems.map((item) => ({
+          itemLogId: item.id,
+          entries: [],
+        })),
+      },
+    }),
+    `Confirm ${label} draft ${sequenceNumber}`,
+  );
+  expectData(
+    await client.rpc("complete_workout_session_confirmed", {
+      target_session_id: sessionId,
+      expected_revision: confirmedDraft.revision,
+      completion_token: randomUUID(),
       final_rpe: rpe,
       final_note: note,
     }),
@@ -1304,14 +1330,31 @@ async function main() {
       await clients
         .get(coachKey)
         .from("programs")
-        .select("id")
+        .select("id, created_by_id")
         .eq("athlete_id", guntisId),
       `Verify ${coachKey} shared access`,
     );
-    if (visible.length !== 2)
+    if (
+      visible.length !== 1 ||
+      visible[0].created_by_id !== identities.get(coachKey).user.id
+    ) {
       stop(
-        `Fixture verification failed: ${coachKey} cannot read both Guntis programs.`,
+        `Fixture verification failed: ${coachKey} must read only their authored Guntis program.`,
       );
+    }
+  }
+  const athleteVisiblePrograms = expectData(
+    await clients
+      .get("guntis-ulmanis")
+      .from("programs")
+      .select("id")
+      .eq("athlete_id", guntisId),
+    "Verify Guntis shared program access",
+  );
+  if (athleteVisiblePrograms.length !== 2) {
+    stop(
+      "Fixture verification failed: Guntis must read both coach-authored programs.",
+    );
   }
   const guntisCoachPrograms = expectData(
     await admin
@@ -1418,18 +1461,20 @@ async function main() {
   const guntisCoachProfiles = expectData(
     await clients
       .get("guntis-ulmanis")
-      .from("profiles")
-      .select("id")
-      .in(
-        "id",
-        guntisConnections.map((relationship) => relationship.coach_id),
-      ),
-    "Verify Guntis coach profiles",
+      .rpc("list_connected_profile_summaries"),
+    "Verify Guntis connected profile summaries",
   );
-  if (guntisCoachProfiles.length !== 2)
+  const connectedCoachIds = new Set(
+    guntisConnections.map((relationship) => relationship.coach_id),
+  );
+  if (
+    guntisCoachProfiles.filter((profile) => connectedCoachIds.has(profile.id))
+      .length !== 2
+  ) {
     stop(
-      "Fixture verification failed: Guntis cannot read both coach profiles.",
+      "Fixture verification failed: Guntis cannot resolve both connected coach summaries.",
     );
+  }
   for (const [coachKey, expectedCount] of [
     ["valdis-zatlers", 3],
     ["raimonds-vejonis", 2],

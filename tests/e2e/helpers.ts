@@ -28,5 +28,7 @@ export async function signInAsTestPersona(page: Page, personaName: string) {
     .getByPlaceholder("Enter once, then choose an account")
     .fill(getPersonaPassword());
   await page.getByRole("button", { name: new RegExp(personaName, "i") }).click();
-  await expect(page.getByRole("heading", { name: "Next workouts" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Next workouts", exact: true }),
+  ).toBeVisible();
 }

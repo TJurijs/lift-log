@@ -167,7 +167,7 @@ describe("mobile and accessible interactions", () => {
     expect(hard).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("uses native selects with complete labels for planned and actual RPE", async () => {
+  it("keeps planned RPE native and uses a guided in-app actual RPE menu", async () => {
     const user = userEvent.setup();
     const onPlannedChange = vi.fn();
     const onActualChange = vi.fn();
@@ -179,12 +179,19 @@ describe("mobile and accessible interactions", () => {
     );
 
     const planned = screen.getByRole("combobox", { name: "Planned RPE" });
-    const actual = screen.getByRole("combobox", { name: "Actual RPE" });
+    const actual = screen.getByRole("button", { name: "Actual RPE" });
     expect(within(planned).getByRole("option", { name: /8 · Hard · about 2 reps left/ })).toBeVisible();
-    expect(within(actual).getByRole("option", { name: /7 · Moderate · about 3 reps left/ })).toBeVisible();
 
     await user.selectOptions(planned, "8");
-    await user.selectOptions(actual, "7");
+    await user.click(actual);
+    expect(
+      screen.getByText(/shows how hard the set felt/i),
+    ).toBeVisible();
+    const actualSeven = screen.getByRole("option", {
+      name: /RPE 7: 3 left/,
+    });
+    expect(actualSeven).toBeVisible();
+    await user.click(actualSeven);
     expect(onPlannedChange).toHaveBeenCalledWith("8");
     expect(onActualChange).toHaveBeenCalledWith("7");
   });

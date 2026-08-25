@@ -213,13 +213,14 @@ test("next workouts lists every planned calendar occurrence from today onward", 
     schedule({ id: "today", date: "2026-08-21", sequence: 2 }),
     schedule({ id: "first-future", date: "2026-08-23", sequence: 2 }),
     schedule({ id: "second-future", date: "2026-08-23", sequence: 3 }),
+    schedule({ id: "active", date: "2026-08-24", status: "in_progress" }),
     schedule({ id: "skipped", date: "2026-08-24", status: "skipped" }),
     schedule({ id: "finished", date: "2026-08-24", status: "completed" }),
   ];
 
   assert.deepEqual(
     listUpcomingWorkouts(schedules, "2026-08-21").map(({ id }) => id),
-    ["today", "first-future", "second-future", "skipped"],
+    ["today", "first-future", "second-future", "active", "skipped"],
   );
 });
 

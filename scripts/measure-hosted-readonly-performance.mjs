@@ -669,7 +669,7 @@ function janisTargets(page) {
       action: () => navigationButton(page, "Exercises").click(),
       ready: () =>
         page
-          .getByRole("heading", { name: "Exercise library", exact: true })
+          .getByRole("heading", { name: "Exercises", exact: true })
           .first()
           .waitFor({ state: "visible" }),
     },

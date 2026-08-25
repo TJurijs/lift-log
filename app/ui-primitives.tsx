@@ -301,17 +301,23 @@ export function Toast({ message }: { message: string }) {
 export function SessionSaveIndicator({
   status,
   online,
+  localRecoveryAvailable = true,
 }: {
   status: SessionDraftSaveStatus;
   online: boolean;
+  localRecoveryAvailable?: boolean;
 }) {
   const label =
     status === "saving"
       ? "Saving…"
       : status === "unsaved-offline"
-        ? "Unsaved — reconnect to save"
+        ? localRecoveryAvailable
+          ? "Saved on this device · reconnect to sync"
+          : "Not saved yet · keep this page open and reconnect"
         : status === "error"
-          ? "Unsaved — retry to save"
+          ? localRecoveryAvailable
+            ? "Saved on this device · sync needs attention"
+            : "Sync needs attention · keep this page open"
           : online
             ? "Saved"
             : "Saved · reconnect to finish";

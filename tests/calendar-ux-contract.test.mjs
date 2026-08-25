@@ -59,6 +59,19 @@ test("the native date picker is visibly active in the dark theme", async () => {
   );
 });
 
+test("the mobile calendar fits all seven days without horizontal scrolling", async () => {
+  const styles = await readFile(stylesUrl, "utf8");
+
+  assert.match(
+    styles,
+    /\.calendar-grid\s*\{[^}]*grid-template-columns:\s*repeat\(7,\s*minmax\(0,\s*1fr\)\)[^}]*overflow-x:\s*hidden/s,
+  );
+  assert.doesNotMatch(
+    styles,
+    /\.calendar-grid\s*\{[^}]*grid-template-columns:\s*repeat\(7,\s*minmax\(46px,\s*1fr\)\)/s,
+  );
+});
+
 test("the primary training destination is labelled Next workouts", async () => {
   const app = await readFile(appUrl, "utf8");
 

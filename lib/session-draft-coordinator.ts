@@ -14,14 +14,17 @@ export interface SessionDraftCoordinatorOptions {
   initialRevision?: number;
   online?: boolean;
   createToken?: () => string;
+  isRevisionConflict?: (error: unknown) => boolean;
+  /** Defaults to true so existing callers keep exact-token replay semantics. */
+  isAmbiguousFailure?: (error: unknown) => boolean;
   onStatusChange?: (status: SessionDraftSaveStatus) => void;
   onError?: (error: unknown) => void;
 }
 
-type StagedMutation<Snapshot> = Omit<
-  SessionDraftMutation<Snapshot>,
-  "expectedRevision"
->;
+type PendingMutation<Snapshot> = {
+  snapshot: Snapshot;
+  writeToken: string | null;
+};
 
 type FlushWaiter = {
   resolve: (revision: number) => void;
@@ -59,6 +62,8 @@ export class SessionDraftCoordinator<Snapshot> {
     mutation: SessionDraftMutation<Snapshot>,
   ) => Promise<number>;
   readonly #createToken: () => string;
+  readonly #isRevisionConflict: (error: unknown) => boolean;
+  readonly #isAmbiguousFailure: (error: unknown) => boolean;
   readonly #onStatusChange?: (status: SessionDraftSaveStatus) => void;
   readonly #onError?: (error: unknown) => void;
   readonly #flushWaiters = new Set<FlushWaiter>();
@@ -69,7 +74,9 @@ export class SessionDraftCoordinator<Snapshot> {
   #closed = false;
   #active: SessionDraftMutation<Snapshot> | null = null;
   #retry: SessionDraftMutation<Snapshot> | null = null;
-  #pending: StagedMutation<Snapshot> | null = null;
+  #pending: PendingMutation<Snapshot> | null = null;
+  #revisionConflict: unknown | null = null;
+  #deterministicFailure: unknown | null = null;
 
   constructor(
     write: (mutation: SessionDraftMutation<Snapshot>) => Promise<number>,
@@ -79,6 +86,8 @@ export class SessionDraftCoordinator<Snapshot> {
     this.#confirmedRevision = options.initialRevision ?? 0;
     this.#online = options.online ?? true;
     this.#createToken = options.createToken ?? defaultToken;
+    this.#isRevisionConflict = options.isRevisionConflict ?? (() => false);
+    this.#isAmbiguousFailure = options.isAmbiguousFailure ?? (() => true);
     this.#onStatusChange = options.onStatusChange;
     this.#onError = options.onError;
   }
@@ -95,10 +104,30 @@ export class SessionDraftCoordinator<Snapshot> {
     return Boolean(this.#active || this.#retry || this.#pending);
   }
 
+  get revisionResetRequired() {
+    return this.#revisionConflict !== null;
+  }
+
   stage(snapshot: Snapshot) {
     this.#assertOpen();
-    this.#pending = { snapshot, writeToken: this.#createToken() };
-    this.#setStatus(this.#online ? "saving" : "unsaved-offline");
+    this.#deterministicFailure = null;
+    try {
+      this.#pending = { snapshot, writeToken: this.#createToken() };
+    } catch (error) {
+      this.#pending = { snapshot, writeToken: null };
+      this.#deterministicFailure = error;
+      this.#setStatus(this.#online ? "error" : "unsaved-offline");
+      this.#reportError(error);
+      this.#rejectFlushWaiters(error);
+      return;
+    }
+    this.#setStatus(
+      !this.#online
+        ? "unsaved-offline"
+        : this.#revisionConflict !== null
+          ? "error"
+          : "saving",
+    );
   }
 
   enqueue(snapshot: Snapshot) {
@@ -112,6 +141,14 @@ export class SessionDraftCoordinator<Snapshot> {
       this.#setStatus("unsaved-offline");
       return;
     }
+    if (this.#revisionConflict !== null) {
+      this.#setStatus("error");
+      return;
+    }
+    if (this.#deterministicFailure !== null) {
+      this.#setStatus("error");
+      return;
+    }
     this.#startNext();
   }
 
@@ -123,9 +160,53 @@ export class SessionDraftCoordinator<Snapshot> {
       return;
     }
     if (this.hasUnsavedChanges) {
-      this.#setStatus("saving");
-      this.#startNext();
+      if (
+        this.#revisionConflict !== null ||
+        this.#deterministicFailure !== null
+      ) {
+        this.#setStatus("error");
+      } else {
+        this.#setStatus("saving");
+        this.#startNext();
+      }
     }
+  }
+
+  /**
+   * Re-seeds compare-and-swap state after the caller has loaded the
+   * authoritative server revision. A known revision conflict keeps the latest
+   * local snapshot pending, but never replays the rejected mutation until this
+   * method is called. Ambiguous writes must still be resolved by exact-token
+   * replay and therefore cannot be rebased.
+   */
+  rebase(authoritativeRevision: number) {
+    this.#assertOpen();
+    if (!Number.isSafeInteger(authoritativeRevision) || authoritativeRevision < 0) {
+      throw new RangeError("Authoritative workout revision must be zero or greater");
+    }
+    if (this.#active) {
+      throw new Error("Cannot rebase while a workout save is in progress");
+    }
+    if (this.#retry) {
+      throw new Error("Cannot rebase an ambiguous workout save");
+    }
+
+    this.#confirmedRevision = authoritativeRevision;
+    this.#revisionConflict = null;
+    if (!this.hasUnsavedChanges) {
+      this.#setStatus("saved");
+      return;
+    }
+    if (!this.#online) {
+      this.#setStatus("unsaved-offline");
+      return;
+    }
+    if (this.#deterministicFailure !== null) {
+      this.#setStatus("error");
+      return;
+    }
+    this.#setStatus("saving");
+    this.#startNext();
   }
 
   flushLatest(snapshot?: Snapshot): Promise<number> {
@@ -137,12 +218,20 @@ export class SessionDraftCoordinator<Snapshot> {
       this.#setStatus("unsaved-offline");
       return Promise.reject(new SessionDraftOfflineError());
     }
+    if (this.#revisionConflict !== null) {
+      this.#setStatus("error");
+      return Promise.reject(this.#revisionConflict);
+    }
+    if (this.#deterministicFailure !== null) {
+      this.#setStatus("error");
+      return Promise.reject(this.#deterministicFailure);
+    }
     if (!this.hasUnsavedChanges) return Promise.resolve(this.#confirmedRevision);
 
     this.#setStatus("saving");
-    this.#startNext();
     return new Promise<number>((resolve, reject) => {
       this.#flushWaiters.add({ resolve, reject });
+      this.#startNext();
     });
   }
 
@@ -151,6 +240,8 @@ export class SessionDraftCoordinator<Snapshot> {
     this.#closed = true;
     this.#pending = null;
     this.#retry = null;
+    this.#revisionConflict = null;
+    this.#deterministicFailure = null;
     this.#rejectFlushWaiters(new SessionDraftCoordinatorClosedError());
   }
 
@@ -161,21 +252,34 @@ export class SessionDraftCoordinator<Snapshot> {
   #setStatus(status: SessionDraftSaveStatus) {
     if (this.#status === status) return;
     this.#status = status;
-    this.#onStatusChange?.(status);
+    try {
+      this.#onStatusChange?.(status);
+    } catch (error) {
+      this.#reportError(error);
+    }
   }
 
   #startNext() {
-    if (this.#closed || !this.#online || this.#active) return;
+    if (
+      this.#closed ||
+      !this.#online ||
+      this.#active ||
+      this.#revisionConflict !== null ||
+      this.#deterministicFailure !== null
+    )
+      return;
 
     const mutation =
       this.#retry ??
-      (this.#pending
+      (this.#pending?.writeToken
         ? {
-            ...this.#pending,
+            snapshot: this.#pending.snapshot,
+            writeToken: this.#pending.writeToken,
             expectedRevision: this.#confirmedRevision,
           }
         : null);
     if (!mutation) {
+      if (this.#pending) return;
       this.#setStatus("saved");
       this.#resolveFlushWaiters();
       return;
@@ -186,7 +290,14 @@ export class SessionDraftCoordinator<Snapshot> {
     this.#active = mutation;
     this.#setStatus("saving");
 
-    void this.#write(mutation).then(
+    let write: Promise<number>;
+    try {
+      write = this.#write(mutation);
+    } catch (error) {
+      this.#settleFailure(mutation, error);
+      return;
+    }
+    void write.then(
       (revision) => this.#settleSuccess(mutation, revision),
       (error: unknown) => this.#settleFailure(mutation, error),
     );
@@ -199,33 +310,87 @@ export class SessionDraftCoordinator<Snapshot> {
     if (this.#active !== mutation) return;
     this.#active = null;
     if (this.#closed) return;
-    if (!Number.isSafeInteger(revision) || revision <= mutation.expectedRevision) {
+    if (
+      !Number.isSafeInteger(revision) ||
+      revision !== mutation.expectedRevision + 1
+    ) {
       this.#settleFailure(
         mutation,
         new Error("Workout autosave returned an invalid revision"),
+        false,
       );
       return;
     }
     this.#confirmedRevision = revision;
 
-    if (!this.#online && this.#pending) {
-      this.#setStatus("unsaved-offline");
+    if (!this.#online) {
+      if (this.#pending) {
+        this.#setStatus("unsaved-offline");
+      } else {
+        this.#setStatus("saved");
+        this.#resolveFlushWaiters();
+      }
       return;
     }
     this.#startNext();
   }
 
-  #settleFailure(mutation: SessionDraftMutation<Snapshot>, error: unknown) {
+  #settleFailure(
+    mutation: SessionDraftMutation<Snapshot>,
+    error: unknown,
+    ambiguousOverride?: boolean,
+  ) {
     if (this.#active === mutation) this.#active = null;
     if (this.#closed) return;
-    this.#retry = mutation;
+    if (this.#classify(this.#isRevisionConflict, error, false)) {
+      this.#revisionConflict = error;
+      this.#retry = null;
+      if (!this.#pending) {
+        let writeToken = mutation.writeToken;
+        try {
+          writeToken = this.#createToken();
+        } catch (tokenError) {
+          this.#reportError(tokenError);
+        }
+        this.#pending = { snapshot: mutation.snapshot, writeToken };
+      }
+    } else if (
+      ambiguousOverride ??
+      this.#classify(this.#isAmbiguousFailure, error, true)
+    ) {
+      this.#retry = mutation;
+    } else {
+      this.#retry = null;
+      this.#pending ??= {
+        snapshot: mutation.snapshot,
+        writeToken: mutation.writeToken,
+      };
+      this.#deterministicFailure = error;
+    }
     this.#setStatus(this.#online ? "error" : "unsaved-offline");
+    this.#reportError(error);
+    this.#rejectFlushWaiters(error);
+  }
+
+  #classify(
+    classifier: (error: unknown) => boolean,
+    error: unknown,
+    fallback: boolean,
+  ) {
+    try {
+      return classifier(error);
+    } catch (classifierError) {
+      this.#reportError(classifierError);
+      return fallback;
+    }
+  }
+
+  #reportError(error: unknown) {
     try {
       this.#onError?.(error);
     } catch {
-      // Reporting must never discard the exact mutation needed for replay.
+      // Reporting must never change save/replay state or strand flush waiters.
     }
-    this.#rejectFlushWaiters(error);
   }
 
   #resolveFlushWaiters() {
