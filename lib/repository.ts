@@ -1149,12 +1149,15 @@ export class LiftLogRepository {
     ]);
     const weekIds = weeks.map((week) => week.id);
     const workouts = await collectAllBatches<
-      Pick<WorkoutRow, "id" | "program_week_id">,
+      Pick<
+        WorkoutRow,
+        "id" | "program_week_id" | "title" | "position" | "estimated_minutes"
+      >,
       string
     >("Could not load workouts", weekIds, (ids, from, to) =>
       this.client
         .from("workouts")
-        .select("id, program_week_id")
+        .select("id, program_week_id, title, position, estimated_minutes")
         .in("program_week_id", [...ids])
         .order("id")
         .range(from, to),
@@ -1183,7 +1186,22 @@ export class LiftLogRepository {
         description: version.description ?? row.description,
         phase: "Plan",
         activeWeek: activeWeekIndex(version, versionWeeks.length),
-        weeks: [],
+        weeks: versionWeeks.map((week) => ({
+          id: week.id,
+          index: week.week_index,
+          label: week.label,
+          workouts: workouts
+            .filter((workout) => workout.program_week_id === week.id)
+            .sort((left, right) => left.position - right.position)
+            .map((workout) => ({
+              id: workout.id,
+              programVersionId: version.id,
+              title: workout.title,
+              dayLabel: `Workout ${workout.position + 1}`,
+              durationMinutes: workout.estimated_minutes ?? 45,
+              sections: [],
+            })),
+        })),
         ownerName,
         createdById: row.created_by_id,
         createdByName,

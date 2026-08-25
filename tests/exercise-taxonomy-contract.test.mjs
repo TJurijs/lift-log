@@ -34,3 +34,32 @@ test("exercise browsing uses three primary disciplines with compact rows and tag
   assert.doesNotMatch(app, /Filter exercises by category/);
   assert.doesNotMatch(app, /className="exercise-grid"/);
 });
+
+test("exercise editing keeps training style and category as separate controlled fields", async () => {
+  const app = await readFile(appPath, "utf8");
+
+  assert.match(app, /const exerciseCategories = \[/);
+  assert.match(
+    app,
+    /function ExerciseModal[\s\S]*aria-label="Training style"[\s\S]*aria-label="Category"/,
+  );
+  assert.match(
+    app,
+    /onSave\(name\.trim\(\), discipline, category, mode, cue\.trim\(\)\)/,
+  );
+  assert.match(app, /discipline: ExerciseDiscipline/);
+  assert.doesNotMatch(app, /placeholder="e\.g\. Weightlifting"/);
+});
+
+test("saving a personal exercise returns to the exercise list", async () => {
+  const app = await readFile(appPath, "utf8");
+
+  assert.match(
+    app,
+    /async function addPersonalExercise[\s\S]*setExerciseDetailTarget\(null\);[\s\S]*setModal\(null\);[\s\S]*saved to your library/,
+  );
+  assert.match(
+    app,
+    /async function updatePersonalExercise[\s\S]*setExerciseDetailTarget\(null\);[\s\S]*setModal\(null\);[\s\S]*updated/,
+  );
+});

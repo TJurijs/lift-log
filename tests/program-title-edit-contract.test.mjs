@@ -25,6 +25,11 @@ test("editable program and workout headers expose persisted name and description
   assert.match(app, /className="editor-title-row"/);
   assert.match(app, /syncQuickWorkoutTitle/);
   assert.match(app, /repository\.updateProgramDescription\(program\.id, nextDescription\)/);
-  assert.match(app, /previous\.contentType === "quick_workout" \? title : previous\.title/);
+  assert.match(app, /const nextProgram: Program = \{/);
+  assert.match(app, /replaceProgramEverywhere\(nextProgram\)/);
+  assert.match(
+    app,
+    /workout\.id === selectedWorkout\.id[\s\S]*\{ \.\.\.workout, title, durationMinutes \}/,
+  );
   assert.match(app, /title=\{isQuickWorkout \? selectedWorkout\?\.title \?\? program\.title : program\.title\}/);
 });

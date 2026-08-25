@@ -1227,7 +1227,7 @@ export default function LiftLogApp({
     durationMinutes: number,
     description: string,
   ) {
-    if (!selectedWorkout) return;
+    if (!selectedWorkout || !program) return;
     const syncQuickWorkoutTitle = program?.contentType === "quick_workout";
     const nextDescription = description.trim();
     if (repository) {
@@ -1243,27 +1243,20 @@ export default function LiftLogApp({
         }
       }
     }
-    setProgram((previous) =>
-      previous
-        ? {
-            ...previous,
-            title:
-              previous.contentType === "quick_workout" ? title : previous.title,
-            description:
-              previous.contentType === "quick_workout"
-                ? nextDescription
-                : previous.description,
-            weeks: previous.weeks.map((week) => ({
-              ...week,
-              workouts: week.workouts.map((workout) =>
-                workout.id === selectedWorkout.id
-                  ? { ...workout, title, durationMinutes }
-                  : workout,
-              ),
-            })),
-          }
-        : previous,
-    );
+    const nextProgram: Program = {
+      ...program,
+      title: syncQuickWorkoutTitle ? title : program.title,
+      description: syncQuickWorkoutTitle ? nextDescription : program.description,
+      weeks: program.weeks.map((week) => ({
+        ...week,
+        workouts: week.workouts.map((workout) =>
+          workout.id === selectedWorkout.id
+            ? { ...workout, title, durationMinutes }
+            : workout,
+        ),
+      })),
+    };
+    replaceProgramEverywhere(nextProgram);
     setModal(null);
     notify("Workout details updated");
   }
@@ -1279,11 +1272,11 @@ export default function LiftLogApp({
       if (nextDescription !== program.description)
         await repository.updateProgramDescription(program.id, nextDescription);
     }
-    setProgram((previous) =>
-      previous
-        ? { ...previous, title: nextTitle, description: nextDescription }
-        : previous,
-    );
+    replaceProgramEverywhere({
+      ...program,
+      title: nextTitle,
+      description: nextDescription,
+    });
     notify("Program details updated");
   }
 
@@ -1790,6 +1783,7 @@ export default function LiftLogApp({
 
   async function addPersonalExercise(
     name: string,
+    discipline: ExerciseDiscipline,
     category: string,
     mode: EntryMode,
     cue: string,
@@ -1800,6 +1794,7 @@ export default function LiftLogApp({
         exercise = await repository.createPersonalExercise({
           name,
           category,
+          discipline,
           mode,
           cue,
         });
@@ -1823,7 +1818,8 @@ export default function LiftLogApp({
       exercise = {
         id: `personal-${Date.now()}`,
         name,
-        category: category || "Custom",
+        category,
+        discipline,
         cue,
         scope: "personal",
         ownerName: viewer.name,
@@ -1837,14 +1833,15 @@ export default function LiftLogApp({
     }));
     setExerciseScope("personal");
     setExerciseEditing(null);
-    setExerciseDetailTarget(exercise);
-    setModal("exercise-details");
+    setExerciseDetailTarget(null);
+    setModal(null);
     notify(`${name} saved to your library`);
   }
 
   async function updatePersonalExercise(
     original: Exercise,
     name: string,
+    discipline: ExerciseDiscipline,
     category: string,
     mode: EntryMode,
     cue: string,
@@ -1853,7 +1850,7 @@ export default function LiftLogApp({
     const input = {
       name,
       category,
-      discipline: original.discipline,
+      discipline,
       tags: original.tags,
       mode,
       cue,
@@ -1861,7 +1858,7 @@ export default function LiftLogApp({
     try {
       const exercise = repository
         ? await repository.updatePersonalExercise(original.id, input)
-        : { ...original, name, category: category || "Custom", cue, defaultMode: mode };
+        : { ...original, name, category, discipline, cue, defaultMode: mode };
       setWorkspace((previous) => ({
         ...previous,
         personalExercises: previous.personalExercises.map((candidate) =>
@@ -1869,8 +1866,8 @@ export default function LiftLogApp({
         ),
       }));
       setExerciseEditing(null);
-      setExerciseDetailTarget(exercise);
-      setModal("exercise-details");
+      setExerciseDetailTarget(null);
+      setModal(null);
       notify(`${name} updated`);
     } catch (error) {
       notify(
@@ -3221,10 +3218,17 @@ export default function LiftLogApp({
             setExerciseEditing(null);
             setModal(exerciseDetailTarget ? "exercise-details" : null);
           }}
-          onSave={(name, category, mode, cue) =>
+          onSave={(name, discipline, category, mode, cue) =>
             exerciseEditing
-              ? updatePersonalExercise(exerciseEditing, name, category, mode, cue)
-              : addPersonalExercise(name, category, mode, cue)
+              ? updatePersonalExercise(
+                  exerciseEditing,
+                  name,
+                  discipline,
+                  category,
+                  mode,
+                  cue,
+                )
+              : addPersonalExercise(name, discipline, category, mode, cue)
           }
         />
       )}
@@ -6435,6 +6439,19 @@ const exerciseTrainingStyles: Array<{
   { value: "functional", label: "Functional", icon: Activity },
 ];
 
+const exerciseCategories = [
+  "General",
+  "Bodybuilding",
+  "Bodyweight",
+  "Cardio",
+  "Conditioning",
+  "Core",
+  "Functional fitness",
+  "Gymnastics",
+  "Mobility",
+  "Strength",
+] as const;
+
 function exerciseTrainingStyleLabel(style: ExerciseDiscipline) {
   return exerciseTrainingStyles.find((item) => item.value === style)?.label ?? "Gym";
 }
@@ -7491,15 +7508,22 @@ function ExerciseModal({
   onClose: () => void;
   onSave: (
     name: string,
+    discipline: ExerciseDiscipline,
     category: string,
     mode: EntryMode,
     cue: string,
   ) => void;
 }) {
   const [name, setName] = useState(exercise?.name ?? "");
-  const [category, setCategory] = useState(exercise?.category ?? "");
+  const [discipline, setDiscipline] = useState<ExerciseDiscipline>(
+    exercise ? inferredExerciseDiscipline(exercise) : "gym",
+  );
+  const [category, setCategory] = useState(exercise?.category ?? "General");
   const [mode, setMode] = useState<EntryMode>(exercise?.defaultMode ?? "sets");
   const [cue, setCue] = useState(exercise?.cue ?? "");
+  const hasLegacyCategory = !exerciseCategories.some(
+    (candidate) => candidate === category,
+  );
   return (
     <ModalShell
       title={exercise ? "Edit exercise" : "Create an exercise"}
@@ -7520,14 +7544,37 @@ function ExerciseModal({
           />
         </label>
         <label className="form-field">
-          <span>Category</span>
-          <input
-            value={category}
-            onChange={(event) => setCategory(event.target.value)}
-            placeholder="e.g. Weightlifting"
-          />
+          <span>Training style</span>
+          <select
+            aria-label="Training style"
+            value={discipline}
+            onChange={(event) =>
+              setDiscipline(event.target.value as ExerciseDiscipline)
+            }
+          >
+            {exerciseTrainingStyles.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="form-field">
+          <span>Category</span>
+          <select
+            aria-label="Category"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+          >
+            {hasLegacyCategory && <option value={category}>{category}</option>}
+            {exerciseCategories.map((candidate) => (
+              <option key={candidate} value={candidate}>
+                {candidate}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="form-field full">
           <span>Default logging</span>
           <select
             value={mode}
@@ -7555,7 +7602,9 @@ function ExerciseModal({
         <button
           className="button primary"
           disabled={!name.trim()}
-          onClick={() => onSave(name.trim(), category.trim(), mode, cue.trim())}
+          onClick={() =>
+            onSave(name.trim(), discipline, category, mode, cue.trim())
+          }
         >
           {exercise ? "Save changes" : "Save exercise"}
         </button>

@@ -32,6 +32,11 @@ test("workspace startup uses program summaries and opens full trees on demand", 
   assert.match(catalogLoader, /collectAllBatches<VersionRow[\s\S]*\.in\("program_id", \[\.\.\.ids\]\)/);
   assert.match(catalogLoader, /collectAllBatches<[\s\S]*WeekRow[\s\S]*\.in\("program_version_id", \[\.\.\.ids\]\)/);
   assert.match(catalogLoader, /collectAllBatches<[\s\S]*WorkoutRow[\s\S]*\.in\("program_week_id", \[\.\.\.ids\]\)/);
+  assert.match(catalogLoader, /title, position, estimated_minutes/);
+  assert.match(
+    catalogLoader,
+    /durationMinutes: workout\.estimated_minutes \?\? 45/,
+  );
   assert.doesNotMatch(catalogLoader, /loadProgramPair\(/);
   assert.match(catalogLoader, /detailsLoaded: false/);
   assert.match(repository, /async loadProgramDetail\([\s\S]*return pair\.activeProgram \?\? pair\.draftProgram/);
