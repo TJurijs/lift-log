@@ -46,8 +46,8 @@ test("finalized Own and Coach programs can prepare fresh calendar cycles", async
   assert.match(primitives, /ready: "Final"[\s\S]*completed: "Completed"/);
   assert.match(
     app,
-    /No workouts available to schedule[\s\S]*Finalize an Own program or workout first/,
-    "the empty scheduler must explain the final-content rule",
+    /No workouts available to schedule[\s\S]*Save an Own program or workout first/,
+    "the empty scheduler must explain the saved-content rule",
   );
 });
 
@@ -59,18 +59,18 @@ test("program assignment is hidden without active coachees", async () => {
   );
 });
 
-test("finalizing a program makes it directly schedulable", async () => {
+test("saving a program makes it directly schedulable", async () => {
   const app = await readFile(appPath, "utf8");
   assert.doesNotMatch(app, /onRemoveAvailable/);
   assert.match(
     app,
-    /await repository\.publishProgram\(program\.versionId\);[\s\S]*?Program finalized\. It is ready to schedule\./,
-    "finalizing must make an Own program ready to schedule",
+    /await repository\.publishProgram\(program\.versionId\);[\s\S]*?Program saved\. It is ready to schedule\./,
+    "saving must make an Own program ready to schedule",
   );
   assert.match(
     app,
-    /<Save size=\{15\} \/>[\s\S]*?Finalize program/,
-    "the editor must clearly describe its finalization action",
+    /<Save size=\{15\} \/>[\s\S]*?Save program/,
+    "the editor must use consistent save language",
   );
   assert.match(
     app,

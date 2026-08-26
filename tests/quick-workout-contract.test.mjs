@@ -40,7 +40,8 @@ test("quick workouts use the shared workout tree and can be scheduled or assigne
     /\.builder-layout\.quick-workout-builder\s*\{[\s\S]*grid-template-columns:\s*minmax\(340px, 1fr\) 260px/,
     "the editor and exercise picker must reclaim the removed selector column",
   );
-  assert.match(app, /Workout finalized\. It is ready to schedule or assign\./);
+  assert.match(app, /Workout saved\. It is ready to schedule or assign\./);
+  assert.match(app, /\{isQuickWorkout \? "Save workout" : "Save program"\}/);
   assert.match(app, /Assign to athletes/);
   assert.match(app, /Assign & schedule/);
   assert.match(app, /assignQuickWorkoutToAthletes/);

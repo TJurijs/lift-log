@@ -2106,25 +2106,6 @@ export default function LiftLogApp({
     notify("Workout details updated");
   }
 
-  async function updateProgramDetails(title: string, description: string) {
-    if (!program) return;
-    const nextTitle = title.trim();
-    const nextDescription = description.trim();
-    if (!nextTitle) return;
-    if (repository) {
-      if (nextTitle !== program.title)
-        await repository.updateProgramTitle(program.id, nextTitle);
-      if (nextDescription !== program.description)
-        await repository.updateProgramDescription(program.id, nextDescription);
-    }
-    replaceProgramEverywhere({
-      ...program,
-      title: nextTitle,
-      description: nextDescription,
-    });
-    notify("Program details updated");
-  }
-
   async function addExerciseToWorkout(
     exercise: Exercise,
     destinationSectionId?: string,
@@ -2775,8 +2756,11 @@ export default function LiftLogApp({
     }
   }
 
-  async function publishProgram(description: string) {
+  async function publishProgram(title: string, description: string) {
     if (!program || programAction) return;
+    const nextTitle = title.trim();
+    const nextDescription = description.trim();
+    if (!nextTitle) return;
     if (!repository) {
       notify("Program saved for the local demo");
       return;
@@ -2784,7 +2768,20 @@ export default function LiftLogApp({
     setProgramAction({ id: program.id, kind: "publish" });
     try {
       requireCapability(capabilitiesForProgram(program), "publish");
-      const nextDescription = description.trim();
+      if (
+        program.contentType === "quick_workout" &&
+        selectedWorkout &&
+        nextTitle !== selectedWorkout.title
+      ) {
+        await repository.updateWorkout(
+          selectedWorkout.id,
+          nextTitle,
+          selectedWorkout.durationMinutes,
+        );
+      }
+      if (nextTitle !== program.title) {
+        await repository.updateProgramTitle(program.id, nextTitle);
+      }
       if (nextDescription !== program.description) {
         await repository.updateProgramDescription(program.id, nextDescription);
       }
@@ -2794,10 +2791,10 @@ export default function LiftLogApp({
       setProgramOwnerId(viewer.id);
       notify(
         program.contentType === "quick_workout"
-          ? "Workout finalized. It is ready to schedule or assign."
+          ? "Workout saved. It is ready to schedule or assign."
           : program.sourceType === "coach"
-          ? "Coach program finalized · the athlete can schedule it"
-          : "Program finalized. It is ready to schedule.",
+          ? "Coach program saved · the athlete can schedule it"
+          : "Program saved. It is ready to schedule.",
       );
     } catch (error) {
       notify(
@@ -3965,7 +3962,9 @@ export default function LiftLogApp({
             }}
             onRemoveItem={removeWorkoutItem}
             onMoveItem={moveItem}
-            onSave={(description) => void publishProgram(description)}
+            onSave={(title, description) =>
+              void publishProgram(title, description)
+            }
             onCreateDraft={createEditableDraft}
             onBack={() => {
               setProgram(null);
@@ -3982,7 +3981,6 @@ export default function LiftLogApp({
                   }
                 : undefined
             }
-            onRenameProgram={updateProgramDetails}
             onEditWorkout={() => setModal("workout-settings")}
             onSchedule={
               capabilitiesForProgram(program).schedule
@@ -4436,7 +4434,7 @@ function PageHeader({
   children,
 }: {
   eyebrow: string;
-  title: string;
+  title: React.ReactNode;
   titleAction?: React.ReactNode;
   description?: string;
   children?: React.ReactNode;
@@ -4446,7 +4444,7 @@ function PageHeader({
       <div>
         <p className="eyebrow">{eyebrow}</p>
         <div className="page-title-row">
-          <h1>{title}</h1>
+          {typeof title === "string" ? <h1>{title}</h1> : title}
           {titleAction}
         </div>
         {description && <p>{description}</p>}
@@ -5548,7 +5546,6 @@ function ProgramView({
   onCreateDraft,
   onBack,
   onAssignProgram,
-  onRenameProgram,
   onEditWorkout,
   onSchedule,
 }: {
@@ -5584,17 +5581,14 @@ function ProgramView({
     destinationSectionId: string,
     destinationPosition: number,
   ) => void;
-  onSave: (description: string) => void;
+  onSave: (title: string, description: string) => void;
   onCreateDraft: () => void;
   onBack: () => void;
   onAssignProgram?: () => void;
-  onRenameProgram: (title: string, description: string) => Promise<void>;
   onEditWorkout: () => void;
   onSchedule?: () => void;
 }) {
   const [pickerQuery, setPickerQuery] = useState("");
-  const [description, setDescription] = useState(program.description);
-  const [renamingProgram, setRenamingProgram] = useState(false);
   const [localWeekAction, setLocalWeekAction] = useState<
     "blank" | "copy" | null
   >(null);
@@ -5610,6 +5604,11 @@ function ProgramView({
   );
   const isDraft = program.versionStatus === "draft";
   const isQuickWorkout = program.contentType === "quick_workout";
+  const headerTitle = isQuickWorkout
+    ? selectedWorkout?.title ?? program.title
+    : program.title;
+  const [title, setTitle] = useState(headerTitle);
+  const [description, setDescription] = useState(program.description);
   const canEdit = capabilities.edit;
   const editable = isDraft && capabilities.edit;
   const additionalWeekCapacity = Math.max(0, 52 - program.weeks.length);
@@ -5623,6 +5622,21 @@ function ProgramView({
     selectedWorkout?.sections.find(
       (section) => section.id === selectedSectionId,
     ) ?? selectedWorkout?.sections[0];
+  useEffect(() => {
+    setTitle(
+      program.contentType === "quick_workout"
+        ? selectedWorkout?.title ?? program.title
+        : program.title,
+    );
+    setDescription(program.description);
+  }, [
+    program.id,
+    program.versionId,
+    program.title,
+    program.description,
+    program.contentType,
+    selectedWorkout?.title,
+  ]);
   function finishWorkoutDrag(event: DragEndEvent) {
     if (mutationPending) return;
     const { active, over } = event;
@@ -5714,122 +5728,117 @@ function ProgramView({
               : "Your program"
             : `Planning for ${program.ownerName}`
         }
-        title={isQuickWorkout ? selectedWorkout?.title ?? program.title : program.title}
-        titleAction={
-          editable ? (
-            <button
-              className="title-edit-button"
-              onClick={
-                isQuickWorkout
-                  ? onEditWorkout
-                  : () => setRenamingProgram(true)
-              }
-              aria-label={`Rename ${isQuickWorkout ? "workout" : "program"}`}
-              title={`Rename ${isQuickWorkout ? "workout" : "program"}`}
-            >
-              <Pencil size={16} />
-            </button>
-          ) : undefined
+        title={
+          <>
+            <span className="program-editor-heading-icon" aria-hidden="true">
+              {isQuickWorkout ? <Activity size={24} /> : <Layers3 size={24} />}
+            </span>
+            {editable ? (
+              <input
+                className="program-editor-title-input"
+                aria-label={`${isQuickWorkout ? "Workout" : "Program"} name`}
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            ) : (
+              <h1>{headerTitle}</h1>
+            )}
+          </>
         }
-        description={
-          program.description ||
-          (isQuickWorkout
-            ? "One session you can schedule for yourself or assign to athletes."
-            : "A finite sequence of weeks. The athlete assigns workouts to calendar dates separately.")
-        }
+        description={!editable ? program.description : undefined}
       >
         <div className="program-editor-header-actions">
-        <button className="button secondary small program-editor-back" onClick={onBack}>
-          <ArrowLeft size={15} />
-          All programs
-        </button>
-        <SourceTag
-          presentation={presentProgramProvenance(program, viewerId)}
-        />
-        <StatusBadge status={isDraft ? "draft" : "ready"} />
-        {onSchedule && (
-          <button className="button secondary small" onClick={onSchedule}>
-            <CalendarPlus size={15} />
-            Schedule
-          </button>
-        )}
-        {onAssignProgram && (
           <button
-            className="button secondary small"
-            disabled={Boolean(action)}
-            onClick={onAssignProgram}
+            className="button secondary small program-editor-back"
+            onClick={onBack}
           >
-            <UserPlus size={15} />
-            Assign to athletes
+            <ArrowLeft size={15} />
+            All programs
           </button>
-        )}
-        {editable ? (
-          <button
-            className="button primary small program-editor-primary-action"
-            disabled={Boolean(action)}
-            onClick={() => onSave(description)}
-          >
-            {action === "publish" ? (
-              <>
-                <LoaderCircle className="button-spinner" size={15} />
-                Saving…
-              </>
-            ) : (
-              <>
-                <Save size={15} />
-                {isQuickWorkout ? "Finalize workout" : "Finalize program"}
-              </>
-            )}
-          </button>
-        ) : (
-          !isDraft &&
-          canEdit && (
+          <SourceTag
+            presentation={presentProgramProvenance(program, viewerId)}
+          />
+          <StatusBadge status={isDraft ? "draft" : "ready"} />
+          {(onSchedule || onAssignProgram) && (
+            <div className="program-editor-secondary-actions">
+              {onSchedule && (
+                <button className="button secondary small" onClick={onSchedule}>
+                  <CalendarPlus size={15} />
+                  Schedule
+                </button>
+              )}
+              {onAssignProgram && (
+                <button
+                  className="button secondary small"
+                  disabled={Boolean(action)}
+                  onClick={onAssignProgram}
+                >
+                  <UserPlus size={15} />
+                  Assign to athletes
+                </button>
+              )}
+            </div>
+          )}
+          {editable ? (
             <button
-              className="button primary small"
-              disabled={Boolean(action)}
-              onClick={onCreateDraft}
+              className="button primary small program-editor-primary-action"
+              disabled={Boolean(action) || !title.trim()}
+              onClick={() => onSave(title, description)}
             >
-              {action === "edit" ? (
+              {action === "publish" ? (
                 <>
                   <LoaderCircle className="button-spinner" size={15} />
-                  Opening…
+                  Saving…
                 </>
               ) : (
                 <>
-                  <Pencil size={15} />
-                  {isQuickWorkout ? "Edit workout" : "Edit program"}
+                  <Save size={15} />
+                  {isQuickWorkout ? "Save workout" : "Save program"}
                 </>
               )}
             </button>
+          ) : (
+            !isDraft &&
+            canEdit && (
+              <button
+                className="button primary small program-editor-primary-action"
+                disabled={Boolean(action)}
+                onClick={onCreateDraft}
+              >
+                {action === "edit" ? (
+                  <>
+                    <LoaderCircle className="button-spinner" size={15} />
+                    Opening…
+                  </>
+                ) : (
+                  <>
+                    <Pencil size={15} />
+                    {isQuickWorkout ? "Edit workout" : "Edit program"}
+                  </>
+                )}
+              </button>
             )
-        )}
+          )}
         </div>
       </PageHeader>
-      <div className="program-summary panel">
-        <div>
-          <span className="program-icon">
-            {isQuickWorkout ? <Activity size={21} /> : <Layers3 size={21} />}
-          </span>
-          <div>
-            <strong>
-              {isQuickWorkout
-                ? "Quick workout"
-                : `${program.weeks.length}-week program`}
-            </strong>
-            <small>
-              {isQuickWorkout
-                ? "One session you can schedule or assign."
-                : "Runs once from first week to last"}
-            </small>
-          </div>
-        </div>
-        {!isQuickWorkout && editable && program.weeks.length > 1 && (
+      {editable && (
+        <label className="form-field program-editor-description-field">
+          <span>Description <em>optional</em></span>
+          <textarea
+            value={description}
+            placeholder={`What is this ${isQuickWorkout ? "workout" : "program"} for?`}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </label>
+      )}
+      {!isQuickWorkout && editable && program.weeks.length > 1 && (
+        <div className="program-editor-week-delete">
           <button className="button danger small" onClick={onDeleteWeek}>
             <Trash2 size={14} />
             Delete week {selectedWeek}
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {!isQuickWorkout && <div className="week-tabs">
         <button
           className="icon-button"
@@ -5952,7 +5961,7 @@ function ProgramView({
                   <div>
                     <div className="editor-title-row">
                       <h2>{selectedWorkout.title}</h2>
-                      {editable && (
+                      {editable && !isQuickWorkout && (
                         <button
                           className="title-edit-button"
                           onClick={onEditWorkout}
@@ -6073,19 +6082,6 @@ function ProgramView({
           )}
         </DndContext>
       </div>
-      {renamingProgram && !isQuickWorkout && (
-        <RenameProgramModal
-          label="program"
-          title={program.title}
-          description={description}
-          onClose={() => setRenamingProgram(false)}
-          onSave={async (title, nextDescription) => {
-            await onRenameProgram(title, nextDescription);
-            setDescription(nextDescription);
-            setRenamingProgram(false);
-          }}
-        />
-      )}
     </>
   );
 }
@@ -8897,80 +8893,6 @@ function WorkoutModal({
   );
 }
 
-function RenameProgramModal({
-  label,
-  title,
-  description,
-  onClose,
-  onSave,
-}: {
-  label: "program" | "workout";
-  title: string;
-  description?: string;
-  onClose: () => void;
-  onSave: (title: string, description: string) => Promise<void>;
-}) {
-  const [nextTitle, setNextTitle] = useState(title);
-  const [nextDescription, setNextDescription] = useState(description ?? "");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  async function save() {
-    setSaving(true);
-    setError("");
-    try {
-      await onSave(nextTitle.trim(), nextDescription.trim());
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : `The ${label} name could not be updated.`,
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <ModalShell
-      title={`${label === "program" ? "Program" : "Workout"} details`}
-      description={`Update the name and description shown for this ${label}.`}
-      onClose={onClose}
-    >
-      <div className="form-grid">
-        <label className="form-field full">
-          <span>{label === "program" ? "Program" : "Workout"} name</span>
-          <input
-            value={nextTitle}
-            onChange={(event) => setNextTitle(event.target.value)}
-          />
-        </label>
-        <label className="form-field full">
-          <span>Description <em>optional</em></span>
-          <textarea
-            value={nextDescription}
-            placeholder={`What is this ${label} for?`}
-            onChange={(event) => setNextDescription(event.target.value)}
-          />
-        </label>
-      </div>
-      {error && <InlineError>{error}</InlineError>}
-      <div className="modal-actions">
-        <button className="button secondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="button primary"
-          disabled={!nextTitle.trim() || saving}
-          onClick={save}
-        >
-          {saving ? "Saving…" : "Save details"}
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
-
 function WorkoutSettingsModal({
   workout,
   description,
@@ -10615,7 +10537,7 @@ function ScheduleModal({
           <LoaderCircle size={24} className="button-spinner" />
           <div>
             <strong>Preparing calendar…</strong>
-            <span>Preparing your finalized workouts for Calendar.</span>
+            <span>Preparing your saved workouts for Calendar.</span>
           </div>
         </div>
       ) : candidates.length ? (
@@ -10696,7 +10618,7 @@ function ScheduleModal({
           <CalendarDays size={26} />
           <h3>No workouts available to schedule</h3>
           <p>
-            Finalize an Own program or workout first. Library content must be
+            Save an Own program or workout first. Library content must be
             copied to Own before you can schedule it.
           </p>
           <button className="button secondary" onClick={onClose}>

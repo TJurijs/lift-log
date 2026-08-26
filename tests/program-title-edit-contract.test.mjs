@@ -13,23 +13,27 @@ test("editable program and workout headers expose persisted name and description
 
   assert.match(repository, /async updateProgramTitle\(programId: string, title: string\)/);
   assert.match(repository, /async updateProgramDescription\(programId: string, description: string\)/);
+  assert.match(app, /className="program-editor-heading-icon"/);
+  assert.match(app, /className="program-editor-title-input"/);
+  assert.match(app, /aria-label=\{`\$\{isQuickWorkout \? "Workout" : "Program"\} name`\}/);
+  assert.match(app, /className="form-field program-editor-description-field"/);
+  assert.match(app, /onClick=\{\(\) => onSave\(title, description\)\}/);
+  assert.match(app, /async function publishProgram\(title: string, description: string\)/);
   assert.match(app, /repository\.updateProgramTitle\(program\.id, nextTitle\)/);
-  assert.match(app, /onRenameProgram=\{updateProgramDetails\}/);
-  assert.match(app, /function RenameProgramModal\(/);
-  assert.match(app, /title=\{`\$\{label === "program" \? "Program" : "Workout"\} details`\}/);
-  assert.match(app, /What is this \$\{label\} for\?/);
-  assert.match(app, /program\?\.contentType === "quick_workout"[\s\S]*program\.description/);
-  assert.match(app, /What is this workout for\?/);
-  assert.match(app, /titleAction=\{/);
-  assert.match(app, /aria-label="Rename workout"/);
-  assert.match(app, /className="editor-title-row"/);
-  assert.match(app, /syncQuickWorkoutTitle/);
   assert.match(app, /repository\.updateProgramDescription\(program\.id, nextDescription\)/);
-  assert.match(app, /const nextProgram: Program = \{/);
-  assert.match(app, /replaceProgramEverywhere\(nextProgram\)/);
   assert.match(
     app,
-    /workout\.id === selectedWorkout\.id[\s\S]*\{ \.\.\.workout, title, durationMinutes \}/,
+    /program\.contentType === "quick_workout"[\s\S]*repository\.updateWorkout\([\s\S]*selectedWorkout\.id,[\s\S]*nextTitle/,
+    "quick-workout names must remain synchronized with their single workout row",
   );
-  assert.match(app, /title=\{isQuickWorkout \? selectedWorkout\?\.title \?\? program\.title : program\.title\}/);
+  assert.doesNotMatch(
+    app,
+    /function RenameProgramModal\(/,
+    "top-level names and descriptions must not require a separate edit modal",
+  );
+  assert.doesNotMatch(
+    app,
+    /className="program-summary panel"/,
+    "the redundant content-type summary card must be removed",
+  );
 });

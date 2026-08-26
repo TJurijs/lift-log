@@ -41,9 +41,11 @@ test("mobile program editing reserves aligned control rails", async () => {
   ]);
 
   assert.match(app, /className="program-editor-header-actions"/);
-  assert.match(styles, /\.program-editor-header-actions\s*\{[^}]*grid-template-columns: auto auto minmax\(0, 1fr\)/s);
+  assert.match(app, /className="program-editor-secondary-actions"/);
+  assert.match(styles, /\.program-editor-header-actions\s*\{[^}]*grid-template-columns: auto minmax\(72px, 1fr\) auto/s);
   assert.match(styles, /\.program-editor-header-actions \.program-editor-back\s*\{[^}]*grid-column: 1;[^}]*grid-row: 1/s);
-  assert.match(styles, /\.program-editor-header-actions \.program-editor-primary-action\s*\{[^}]*grid-column: 2 \/ -1;[^}]*grid-row: 1/s);
+  assert.match(styles, /\.program-editor-secondary-actions\s*\{[^}]*grid-column: 1 \/ -1;[^}]*grid-template-columns: repeat\(auto-fit, minmax\(132px, 1fr\)\)/s);
+  assert.match(styles, /\.program-editor-header-actions \.program-editor-primary-action\s*\{[^}]*grid-column: 1 \/ -1;[^}]*width: 100%/s);
   assert.match(styles, /\.section-title-group\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/s);
   assert.match(styles, /\.section-actions\s*\{[^}]*grid-template-columns: 44px 44px/s);
   assert.match(styles, /\.builder-exercise-preview \.builder-exercise-title-row\s*\{[^}]*padding-right: 96px[^}]*flex-wrap: nowrap/s);
