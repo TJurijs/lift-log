@@ -5622,21 +5622,6 @@ function ProgramView({
     selectedWorkout?.sections.find(
       (section) => section.id === selectedSectionId,
     ) ?? selectedWorkout?.sections[0];
-  useEffect(() => {
-    setTitle(
-      program.contentType === "quick_workout"
-        ? selectedWorkout?.title ?? program.title
-        : program.title,
-    );
-    setDescription(program.description);
-  }, [
-    program.id,
-    program.versionId,
-    program.title,
-    program.description,
-    program.contentType,
-    selectedWorkout?.title,
-  ]);
   function finishWorkoutDrag(event: DragEndEvent) {
     if (mutationPending) return;
     const { active, over } = event;
@@ -7442,6 +7427,36 @@ function completedEntryLabel(
   return parts.join(" · ") || "Completed";
 }
 
+function completedFieldLabel(
+  field: TrackingField,
+  weightUnit: OwnProfile["weightUnit"],
+) {
+  if (field === "reps") return "Reps";
+  if (field === "load") return `Load ${weightUnit}`;
+  if (field === "duration") return "Duration";
+  if (field === "distance") return "Distance";
+  if (field === "rounds") return "Rounds";
+  if (field === "heartRate") return "Avg HR";
+  return "RPE";
+}
+
+function completedFieldValue(
+  entry: CompletedSessionDetail["items"][number]["entries"][number],
+  field: TrackingField,
+  weightUnit: OwnProfile["weightUnit"],
+) {
+  if (field === "reps") return entry.reps;
+  if (field === "load")
+    return entry.loadKg === undefined
+      ? undefined
+      : formatWeight(entry.loadKg, weightUnit);
+  if (field === "duration") return entry.durationMinutes;
+  if (field === "distance") return entry.distanceKm;
+  if (field === "rounds") return entry.rounds;
+  if (field === "heartRate") return entry.heartRate;
+  return entry.rpe;
+}
+
 function CompletedWorkoutView({
   state,
   program,
@@ -7496,7 +7511,15 @@ function CompletedWorkoutView({
             </span>
             <span>
               <small>Session RPE</small>
-              <strong>{state.session.rpe || "—"}</strong>
+              <strong
+                className={
+                  state.session.rpe
+                    ? `rpe-${rpeTone(String(state.session.rpe))}`
+                    : undefined
+                }
+              >
+                {state.session.rpe || "—"}
+              </strong>
             </span>
           </div>
           {state.session.note && (
@@ -7524,16 +7547,54 @@ function CompletedWorkoutView({
                     <span>{modeLabel(item.mode)}</span>
                   </div>
                   {item.entries.length ? (
-                    <div className="calendar-result-entries">
+                    <div
+                      className={cn(
+                        "completed-log-table",
+                        `tracking-${item.fields.length}`,
+                      )}
+                    >
+                      <div className="completed-log-header" aria-hidden>
+                        <span>{item.entries.length > 1 ? "Set" : "Result"}</span>
+                        {item.fields.map((field) => (
+                          <span key={field}>
+                            {completedFieldLabel(field, weightUnit)}
+                          </span>
+                        ))}
+                      </div>
                       {item.entries.map((entry) => (
-                        <div key={entry.position}>
-                          <small>
-                            {item.entries.length > 1
-                              ? `Set ${entry.position + 1}`
-                              : "Result"}
-                          </small>
-                          <strong>{completedEntryLabel(entry, weightUnit)}</strong>
-                          {entry.note && <span>{entry.note}</span>}
+                        <div
+                          className="completed-log-entry"
+                          key={entry.position}
+                          aria-label={completedEntryLabel(entry, weightUnit)}
+                        >
+                          <span className="completed-log-position">
+                            {item.entries.length > 1 ? entry.position + 1 : "—"}
+                          </span>
+                          {item.fields.map((field) => {
+                            const value = completedFieldValue(
+                              entry,
+                              field,
+                              weightUnit,
+                            );
+                            return (
+                              <span
+                                className={cn(
+                                  "completed-log-value",
+                                  field === "rpe" &&
+                                    value !== undefined &&
+                                    `rpe-${rpeTone(String(value))}`,
+                                )}
+                                key={field}
+                              >
+                                {value ?? "—"}
+                              </span>
+                            );
+                          })}
+                          {entry.note && (
+                            <small className="completed-log-note">
+                              {entry.note}
+                            </small>
+                          )}
                         </div>
                       ))}
                     </div>

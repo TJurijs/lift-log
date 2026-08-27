@@ -120,6 +120,27 @@ test("calendar event clicks open plans and immutable completed results", async (
   assert.doesNotMatch(app, /function CalendarWorkoutModal/);
 });
 
+test("completed workout logs mirror the active logging grid and RPE palette", async () => {
+  const [app, styles] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+  ]);
+  const completedView = sourceBetween(
+    app,
+    "function CompletedWorkoutView",
+    "function inferredExerciseDiscipline",
+  );
+
+  assert.match(completedView, /completed-log-header/);
+  assert.match(completedView, /completed-log-entry/);
+  assert.match(completedView, /completed-log-value/);
+  assert.match(completedView, /rpe-\$\{rpeTone\(String\(value\)\)\}/);
+  assert.match(styles, /\.completed-log-value\s*\{[^}]*font-size:\s*16px/s);
+  assert.match(styles, /\.completed-log-value\.rpe-easy/);
+  assert.match(styles, /\.completed-log-value\.rpe-hard/);
+  assert.match(styles, /\.completed-log-value\.rpe-very-hard/);
+});
+
 test("calendar days schedule on a chosen date and allow quick drag rescheduling", async () => {
   const [app, styles] = await Promise.all([
     readFile(appUrl, "utf8"),
