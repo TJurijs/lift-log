@@ -304,11 +304,70 @@ test(
       const week = expectData(
         await athleteA
           .from("program_weeks")
-          .select("id")
+          .select("id,phase_id,week_index,label")
           .eq("program_version_id", draftVersion.id)
           .single(),
-        "load week",
+        "load implicit workout container",
       );
+      assert.equal(week.week_index, 1);
+      assert.equal(week.label, "Program");
+      assert.match(
+        (
+          await athleteA.from("program_weeks").insert({
+            program_version_id: draftVersion.id,
+            phase_id: week.phase_id,
+            week_index: 2,
+            label: "Forbidden second container",
+          })
+        ).error?.message ?? "",
+        /duplicate key|idx_program_weeks_one_per_version/i,
+        "a program version must reject a second internal workout container",
+      );
+
+      const quickWorkoutProgramId = expectData(
+        await athleteA.rpc("create_blank_quick_workout", {
+          target_title: "Integration quick workout",
+        }),
+        "create quick workout with one exercise list",
+      );
+      const quickWorkoutVersion = expectData(
+        await athleteA
+          .from("program_versions")
+          .select("id")
+          .eq("program_id", quickWorkoutProgramId)
+          .eq("status", "draft")
+          .single(),
+        "load quick workout draft",
+      );
+      const quickWorkoutContainer = expectData(
+        await athleteA
+          .from("program_weeks")
+          .select("id,week_index,label")
+          .eq("program_version_id", quickWorkoutVersion.id)
+          .single(),
+        "load quick workout container",
+      );
+      assert.equal(quickWorkoutContainer.week_index, 1);
+      assert.equal(quickWorkoutContainer.label, "Workout");
+      const quickWorkout = expectData(
+        await athleteA
+          .from("workouts")
+          .select("id")
+          .eq("program_week_id", quickWorkoutContainer.id)
+          .single(),
+        "load quick workout content",
+      );
+      const quickWorkoutGroups = expectData(
+        await athleteA
+          .from("workout_sections")
+          .select("title,section_kind,position")
+          .eq("workout_id", quickWorkout.id)
+          .order("position"),
+        "load quick workout groups",
+      );
+      assert.deepEqual(quickWorkoutGroups, [
+        { title: "Exercises", section_kind: "main", position: 0 },
+      ]);
       const athleteWorkout = expectData(
         await athleteA
           .from("workouts")
@@ -329,7 +388,7 @@ test(
           .from("workout_sections")
           .insert({
             workout_id: athleteWorkout.id,
-            title: "Main work",
+            title: "Exercises",
             section_kind: "main",
             notes: "",
             position: 0,
@@ -364,6 +423,22 @@ test(
         }),
         "add prescription",
       );
+      expectData(
+        await athleteA.rpc("reorder_workout_items", {
+          target_workout_id: athleteWorkout.id,
+          ordered_ids: [item.id],
+        }),
+        "reorder the workout exercise list",
+      );
+      const orderedItem = expectData(
+        await athleteA
+          .from("workout_items")
+          .select("position")
+          .eq("id", item.id)
+          .single(),
+        "read ordered workout item",
+      );
+      assert.deepEqual(orderedItem, { position: 0 });
 
       const coachProfile = expectData(
         await coach
@@ -2142,11 +2217,13 @@ test(
       assert.deepEqual(Object.keys(coachSessionDetail.items[0]).sort(), [
         "cue",
         "entries",
+        "exerciseCategory",
         "fields",
         "id",
         "mode",
         "position",
         "title",
+        "videoUrl",
       ]);
       assert.deepEqual(
         Object.keys(coachSessionDetail.items[0].entries[0]).sort(),

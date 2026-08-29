@@ -119,9 +119,10 @@ test("saving a program makes it directly schedulable", async () => {
   assert.doesNotMatch(app, /This is the stable version used by scheduled workouts\./);
   assert.match(
     app,
-    /\{editable && !mobilePickerSectionId && \([\s\S]*?<aside[\s\S]*?className="exercise-picker desktop-exercise-picker panel"/,
-    "the Exercise Library must be hidden outside edit mode",
+    /\{editable && pickerOpen && \([\s\S]*?<ModalShell[\s\S]*?className="exercise-picker-modal"/,
+    "the Exercise Library picker must open only for an editable workout",
   );
+  assert.doesNotMatch(app, /className="exercise-picker desktop-exercise-picker panel"/);
 });
 
 test("available programs visualize every workout's scheduling state", async () => {

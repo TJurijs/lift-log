@@ -12,9 +12,7 @@ const workout: PlannedWorkout = {
   dayLabel: "Day 1",
   durationMinutes: 45,
   sections: [
-    { id: "warmup", title: "Warm up", kind: "warmup", items: [] },
-    { id: "main", title: "Main work", kind: "main", items: [] },
-    { id: "cooldown", title: "Cooldown", kind: "cooldown", items: [] },
+    { id: "exercises", title: "Exercises", kind: "main", items: [] },
   ],
 };
 
@@ -60,40 +58,28 @@ const capabilities: TrainingContentCapabilities = {
 };
 
 describe("mobile program exercise picker", () => {
-  it("opens for the tapped section and adds the selected exercise there", async () => {
+  it("opens one workout-wide picker and adds the selected exercise", async () => {
     const user = userEvent.setup();
     const onAddExercise = vi.fn();
-    const onSelectSection = vi.fn();
 
-    const { container } = render(
+    render(
       <ProgramView
         program={program}
         action={null}
         mutationPending={false}
         viewerId="viewer-1"
         capabilities={capabilities}
-        currentWeek={program.weeks[0]}
-        selectedWeek={1}
+        workouts={[workout]}
         selectedWorkout={workout}
-        selectedSectionId="warmup"
         onSearchExercises={vi.fn().mockResolvedValue([exercise])}
-        onSelectWeek={vi.fn()}
         onSelectWorkout={vi.fn()}
-        onSelectSection={onSelectSection}
-        onAddBlankWeek={vi.fn().mockResolvedValue(true)}
-        onCopyWeek={vi.fn().mockResolvedValue(true)}
-        onDeleteWeek={vi.fn()}
         onAddWorkout={vi.fn()}
         onDeleteWorkout={vi.fn()}
         onReorderWorkouts={vi.fn()}
-        onAddSection={vi.fn()}
-        onEditSection={vi.fn()}
-        onDeleteSection={vi.fn()}
-        onReorderSections={vi.fn()}
         onAddExercise={onAddExercise}
         onEditItem={vi.fn()}
         onRemoveItem={vi.fn()}
-        onMoveItem={vi.fn()}
+        onReorderItems={vi.fn()}
         onSave={vi.fn()}
         onCreateDraft={vi.fn()}
         onBack={vi.fn()}
@@ -103,19 +89,23 @@ describe("mobile program exercise picker", () => {
       />,
     );
 
-    fireEvent.click(container.querySelectorAll(".section-add-exercise")[1]);
+    expect(screen.getAllByRole("button", { name: "Add exercise" })).toHaveLength(1);
+    expect(screen.queryByText("Week 1")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add exercise" }));
 
     expect(
-      screen.getByRole("dialog", { name: "Add to Main work" }),
+      screen.getByRole("dialog", { name: "Add exercise" }),
     ).toBeVisible();
-    expect(onSelectSection).toHaveBeenCalledWith("main");
     expect(document.body.style.overflow).toBe("hidden");
 
     const result = await screen.findByText("Back squat");
+    expect(screen.getByLabelText("Strength exercise")).toBeVisible();
     await user.click(result.closest("button") as HTMLButtonElement);
 
-    expect(onAddExercise).toHaveBeenCalledWith(exercise, "main");
+    expect(onAddExercise).toHaveBeenCalledWith(exercise);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(document.body.style.overflow).toBe("");
   });
+
 });

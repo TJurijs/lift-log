@@ -123,7 +123,7 @@ export const initialPersonalExercises: Exercise[] = [
   {
     id: "tempo-goblet-squat",
     name: "Tempo goblet squat",
-    category: "Personal",
+    category: "General",
     cue: "3 seconds down, pause, stand smoothly.",
     scope: "personal",
     ownerName: "Alex Morgan",
@@ -133,7 +133,7 @@ export const initialPersonalExercises: Exercise[] = [
   {
     id: "hill-carry",
     name: "Hill carry",
-    category: "Personal",
+    category: "General",
     cue: "Walk tall and keep the breathing controlled.",
     scope: "personal",
     ownerName: "Alex Morgan",

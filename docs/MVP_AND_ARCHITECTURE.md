@@ -11,8 +11,8 @@ The athlete owns their programs, schedule, and complete workout history. An acti
 ## MVP flows
 
 1. Sign in with Google through Supabase Auth.
-2. Create a finite program containing one or more explicit weeks.
-3. Build workouts from sections and reusable exercise-library items.
+2. Create a finite program containing an ordered workout sequence.
+3. Build workouts from one reorderable list of reusable exercise-library items.
 4. Log a workout containing any mix of instructions, strength sets, cardio results, and intervals.
 5. Review history in a calendar with session RPE and notes.
 6. Create a personal exercise and reuse it later.
@@ -34,20 +34,17 @@ The athlete owns their programs, schedule, and complete workout history. An acti
 ```text
 Program
   → Program version
-    → Phase (optional)
-      → Week
-        → Workout
-          → Section
-            → Workout item
-              → Prescribed entries
+    → Workout sequence (stored in one internal week container)
+      → Workout
+        → Exercise item
+          → Prescribed entries
 ```
 
-Every MVP program is finite. Weeks are deliberately the planning unit, and a
-selected week can be copied one or many times to build longer programs quickly.
-Each copy becomes independently editable. A workout can have a weekday or only
-a sequence position for flexible scheduling. Sections such as Warm-up, Main
-work, Conditioning, and Cooldown are presentation groups and do not impose
-logging requirements.
+Every MVP program is finite. Workouts have an explicit sequence, while athletes
+choose calendar dates independently when scheduling. A workout is one ordered
+exercise list without structural groups or categories.
+`program_weeks` and `workout_sections` remain single-row internal persistence
+containers so existing ownership and history relationships stay stable.
 
 ## Universal workout items
 

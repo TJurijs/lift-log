@@ -13,21 +13,49 @@ export function programWeekCount(program: Program) {
     : program.weeks.length;
 }
 
+/**
+ * Returns the ordered workout sequence exposed by the product. Program weeks
+ * remain in the wire model only as an internal persistence container.
+ */
+export function programWorkouts(program: Program) {
+  return program.weeks.flatMap((week) => week.workouts);
+}
+
+/**
+ * Returns the single internal workout container for a hydrated program.
+ * Catalog summaries intentionally have no tree and therefore no container.
+ */
+export function implicitProgramWeek(program: Program) {
+  return program.detailsLoaded === false ? undefined : program.weeks[0];
+}
+
 export function programWorkoutCount(program: Program) {
   return program.detailsLoaded === false
     ? program.workoutCount ?? 0
-    : program.weeks.reduce(
-        (total, week) => total + week.workouts.length,
-        0,
-      );
+    : programWorkouts(program).length;
 }
 
 export function programWorkoutIds(program: Program) {
   return program.detailsLoaded === false
     ? program.workoutIds ?? []
-    : program.weeks.flatMap((week) =>
-        week.workouts.map((workout) => workout.id),
-      );
+    : programWorkouts(program).map((workout) => workout.id);
+}
+
+export function reorderProgramWorkoutSequence(
+  source: Program,
+  workoutIds: string[],
+) {
+  const container = implicitProgramWeek(source);
+  if (!container || source.weeks.length !== 1) return source;
+  return {
+    ...source,
+    weeks: [
+      {
+        ...container,
+        workouts: orderByIds(container.workouts, workoutIds),
+      },
+    ],
+  };
 }
 
 export function reorderProgramWorkouts(
@@ -45,61 +73,24 @@ export function reorderProgramWorkouts(
   };
 }
 
-export function reorderProgramSections(
+export function reorderProgramWorkoutItems(
   source: Program,
   workoutId: string,
-  sectionIds: string[],
+  itemIds: string[],
 ) {
   return {
     ...source,
     weeks: source.weeks.map((week) => ({
       ...week,
-      workouts: week.workouts.map((workout) =>
-        workout.id === workoutId
-          ? { ...workout, sections: orderByIds(workout.sections, sectionIds) }
-          : workout,
-      ),
-    })),
-  };
-}
-
-export function moveProgramExercise(
-  source: Program,
-  workoutId: string,
-  itemId: string,
-  destinationSectionId: string,
-  destinationPosition: number,
-) {
-  const workout = source.weeks
-    .flatMap((week) => week.workouts)
-    .find((candidate) => candidate.id === workoutId);
-  const movingItem = workout?.sections
-    .flatMap((section) => section.items)
-    .find((item) => item.id === itemId);
-  if (!movingItem) return source;
-
-  return {
-    ...source,
-    weeks: source.weeks.map((week) => ({
-      ...week,
-      workouts: week.workouts.map((candidate) => {
-        if (candidate.id !== workoutId) return candidate;
-        const withoutMovingItem = candidate.sections.map((section) => ({
-          ...section,
-          items: section.items.filter((item) => item.id !== itemId),
-        }));
+      workouts: week.workouts.map((workout) => {
+        if (workout.id !== workoutId) return workout;
+        const items = workout.sections.flatMap((section) => section.items);
+        const orderedItems = orderByIds(items, itemIds);
+        const section = workout.sections[0];
+        if (!section) return workout;
         return {
-          ...candidate,
-          sections: withoutMovingItem.map((section) => {
-            if (section.id !== destinationSectionId) return section;
-            const nextItems = [...section.items];
-            const insertionIndex = Math.max(
-              0,
-              Math.min(destinationPosition, nextItems.length),
-            );
-            nextItems.splice(insertionIndex, 0, movingItem);
-            return { ...section, items: nextItems };
-          }),
+          ...workout,
+          sections: [{ ...section, items: orderedItems }],
         };
       }),
     })),

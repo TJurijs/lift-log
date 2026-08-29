@@ -12,9 +12,9 @@ test("scale fixtures are deterministic and cover approved load shapes", () => {
   const first = createScaleFixtureManifest();
   const second = createScaleFixtureManifest();
   assert.deepEqual(first, second);
-  assert.equal(first.totalRows, 269097);
+  assert.equal(first.totalRows, 269285);
   assert.deepEqual(first.scenarios.map(({ name, totalRows }) => [name, totalRows]), [
-    ["program-10w-40", 1453], ["program-52w-stress", 7543], ["coach-50x150", 255101], ["exercise-5000", 5000],
+    ["program-40", 1484], ["program-208-stress", 7700], ["coach-50x150", 255101], ["exercise-5000", 5000],
   ]);
   assert.match(first.digest, /^[0-9a-f]{64}$/u);
   assert.equal(deterministicUuid("same"), deterministicUuid("same"));

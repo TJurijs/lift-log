@@ -21,6 +21,17 @@ export interface OwnProfile {
 export type ExerciseScope = "global" | "personal";
 export type ExerciseDiscipline = "weightlifting" | "gym" | "functional";
 export type EntryMode = "none" | "sets" | "result" | "intervals";
+/**
+ * The user-facing way an exercise is performed and logged. EntryMode remains
+ * the compact persistence shape; LoggingFormat distinguishes the two kinds of
+ * single-result exercise without requiring a database enum migration.
+ */
+export type LoggingFormat =
+  | "repetitions"
+  | "duration"
+  | "distance"
+  | "intervals"
+  | "instructions";
 export type TrackingField =
   "reps" | "load" | "duration" | "distance" | "rounds" | "heartRate" | "rpe";
 
@@ -56,12 +67,102 @@ export function trackingFieldsForMode(
   return selected.length || mode === "none" ? selected : [...defaults];
 }
 
+const loggingFormatLabels: Record<LoggingFormat, string> = {
+  repetitions: "Repetitions",
+  duration: "Duration",
+  distance: "Distance",
+  intervals: "Intervals",
+  instructions: "Instructions",
+};
+
+const requiredTrackingFieldsByFormat: Record<
+  LoggingFormat,
+  readonly TrackingField[]
+> = {
+  repetitions: ["reps"],
+  duration: ["duration"],
+  distance: ["distance"],
+  intervals: ["rounds", "duration"],
+  instructions: [],
+};
+
+const optionalTrackingFieldsByFormat: Record<
+  LoggingFormat,
+  readonly TrackingField[]
+> = {
+  repetitions: ["load", "rpe"],
+  duration: ["load", "heartRate", "rpe"],
+  distance: ["duration", "load", "heartRate", "rpe"],
+  intervals: ["distance", "heartRate", "rpe"],
+  instructions: [],
+};
+
+const defaultTrackingFieldsByFormat: Record<
+  LoggingFormat,
+  readonly TrackingField[]
+> = {
+  repetitions: ["reps", "rpe"],
+  duration: ["duration", "rpe"],
+  distance: ["distance", "rpe"],
+  intervals: ["rounds", "duration", "rpe"],
+  instructions: [],
+};
+
+export function loggingFormatLabel(format: LoggingFormat) {
+  return loggingFormatLabels[format];
+}
+
+export function entryModeForLoggingFormat(format: LoggingFormat): EntryMode {
+  if (format === "repetitions") return "sets";
+  if (format === "duration" || format === "distance") return "result";
+  if (format === "intervals") return "intervals";
+  return "none";
+}
+
+export function loggingFormatFor(
+  mode: EntryMode,
+  fields: readonly TrackingField[] = [],
+): LoggingFormat {
+  if (mode === "sets") return "repetitions";
+  if (mode === "intervals") return "intervals";
+  if (mode === "none") return "instructions";
+  return fields.includes("distance") ? "distance" : "duration";
+}
+
+export function requiredTrackingFieldsForLoggingFormat(
+  format: LoggingFormat,
+): TrackingField[] {
+  return [...requiredTrackingFieldsByFormat[format]];
+}
+
+export function optionalTrackingFieldsForLoggingFormat(
+  format: LoggingFormat,
+): TrackingField[] {
+  return [...optionalTrackingFieldsByFormat[format]];
+}
+
+export function trackingFieldsForLoggingFormat(
+  format: LoggingFormat,
+  requested?: readonly TrackingField[],
+): TrackingField[] {
+  if (requested === undefined) return [...defaultTrackingFieldsByFormat[format]];
+  const required = requiredTrackingFieldsByFormat[format];
+  const allowed = [...required, ...optionalTrackingFieldsByFormat[format]];
+  return allowed.filter(
+    (field) => required.includes(field) || requested.includes(field),
+  );
+}
+
 export interface Exercise {
   id: string;
   name: string;
   category: string;
   discipline?: ExerciseDiscipline;
   tags?: string[];
+  sourceProvider?: string;
+  sourceExternalId?: string;
+  sourceUrl?: string;
+  videoUrl?: string;
   cue: string;
   scope: ExerciseScope;
   ownerName?: string;
@@ -99,6 +200,10 @@ export interface Prescription {
 export interface WorkoutItem {
   id: string;
   exerciseId?: string;
+  /** Exercise-library classification used for its visual identity. */
+  category?: string;
+  /** Public movement demo retained from the source exercise. */
+  videoUrl?: string;
   title: string;
   cue: string;
   mode: EntryMode;
@@ -145,6 +250,10 @@ export interface ScheduledWorkout {
 }
 
 export interface ProgramWeek {
+  /**
+   * Internal persistence container. Lift Log exposes the nested workouts as
+   * one ordered program sequence rather than a user-managed calendar week.
+   */
   id: string;
   index: number;
   label: string;
@@ -235,6 +344,12 @@ export interface SchedulableWorkoutCandidate {
   };
 }
 
+export interface FrequentSchedulableWorkoutCandidate
+  extends SchedulableWorkoutCandidate {
+  usageCount: number;
+  lastUsedAt: string;
+}
+
 export interface CalendarCursor {
   plannedDate: string;
   id: string;
@@ -290,6 +405,9 @@ export interface CompletedSessionEntry {
 export interface CompletedSessionItemResult {
   id: string;
   title: string;
+  /** Visual identity captured from the canonical exercise classification. */
+  category?: string;
+  videoUrl?: string;
   cue: string;
   mode: EntryMode;
   fields: TrackingField[];

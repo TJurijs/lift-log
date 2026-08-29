@@ -1,24 +1,24 @@
 import { createHash } from "node:crypto";
 
-export const SCALE_FIXTURE_SCHEMA_VERSION = 1;
+export const SCALE_FIXTURE_SCHEMA_VERSION = 2;
 export const SCALE_FIXTURE_NAMESPACE = "liftlog-scale-v1";
 
 export const SCALE_SCENARIOS = Object.freeze({
-  "program-10w-40": Object.freeze({
+  "program-40": Object.freeze({
     kind: "program-tree",
-    description: "Ten weeks and forty workouts with realistic nested content",
-    weeks: 10,
-    workoutsPerWeek: 4,
-    sectionsPerWorkout: 3,
+    description: "Forty-workout ordered sequence with realistic nested content",
+    weeks: 1,
+    workoutsPerWeek: 40,
+    sectionsPerWorkout: 4,
     itemsPerWorkout: 8,
     prescriptionsPerItem: 3,
   }),
-  "program-52w-stress": Object.freeze({
+  "program-208-stress": Object.freeze({
     kind: "program-tree",
-    description: "Maximum 52-week program tree used for clone and detail stress",
-    weeks: 52,
-    workoutsPerWeek: 4,
-    sectionsPerWorkout: 3,
+    description: "Two-hundred-eight-workout sequence used for clone and detail stress",
+    weeks: 1,
+    workoutsPerWeek: 208,
+    sectionsPerWorkout: 4,
     itemsPerWorkout: 8,
     prescriptionsPerItem: 3,
   }),

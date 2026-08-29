@@ -59,7 +59,7 @@ test("calendar scheduling exposes progress and contextual actions", async () => 
   assert.ok(scheduleModal.includes("plannedDate"));
   assert.match(
     scheduleModal,
-    /setDate\(\(currentDate\) => next\?\.plannedDate \?\? currentDate\)/,
+    /setDate\(\(currentDate\) => candidate\.plannedDate \?\? currentDate\)/,
     "switching workouts must preserve the date chosen from Calendar",
   );
   assert.doesNotMatch(
@@ -129,7 +129,7 @@ test("calendar event clicks open plans and immutable completed results", async (
   assert.ok(/async loadCompletedSessionDetail\s*\(/.test(repository));
   assert.match(
     app,
-    /function openCalendarPlan[\s\S]*openWorkoutPreview\(schedule, "calendar"\)[\s\S]*navigate\("today"\)/,
+    /function openCalendarPlan[\s\S]*openWorkoutPreview\(schedule, "calendar", false\)[\s\S]*setActiveView\("today"\)[\s\S]*pushAppDetailHistory\("workout", "today"\)/,
     "planned calendar events must use the shared full workout preview",
   );
   assert.match(

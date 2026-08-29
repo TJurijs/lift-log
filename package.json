@@ -33,6 +33,7 @@
     "perf:bundle:check": "node scripts/check-performance-budgets.mjs --mode=gate",
     "perf:runtime:report": "node scripts/check-runtime-performance.mjs --mode=report",
     "perf:runtime:check": "node scripts/check-runtime-performance.mjs --mode=gate",
+    "catalog:catalyst:generate": "node scripts/generate-catalyst-exercise-migration.mjs",
     "perf:measure:hosted": "node scripts/measure-hosted-readonly-performance.mjs --data-environment=hosted-dev --output=artifacts/performance/runtime-hosted.json",
     "perf:measure:local": "node scripts/measure-hosted-readonly-performance.mjs --data-environment=local --output=artifacts/performance/runtime-local.json",
     "ci:verify": "npm run lint && npm run typecheck && npm run build:prod && npm run test:legacy && npm run test:behavior && npm run perf:bundle:check",

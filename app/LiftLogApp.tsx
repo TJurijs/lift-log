@@ -63,6 +63,8 @@ import type {
   Exercise,
   ExerciseCursor,
   ExerciseDiscipline,
+  FrequentSchedulableWorkoutCandidate,
+  LoggingFormat,
   OwnProfile,
   OutgoingCoachInvite,
   PendingCoachInvite,
@@ -78,10 +80,17 @@ import type {
   TrackingField,
   ViewName,
   WorkoutItem,
-  WorkoutSection,
   WorkspaceData,
 } from "../lib/domain";
-import { trackingFieldsForMode } from "../lib/domain";
+import {
+  entryModeForLoggingFormat,
+  loggingFormatFor,
+  loggingFormatLabel,
+  optionalTrackingFieldsForLoggingFormat,
+  requiredTrackingFieldsForLoggingFormat,
+  trackingFieldsForLoggingFormat,
+  trackingFieldsForMode,
+} from "../lib/domain";
 import type { AppViewer } from "../lib/auth";
 import {
   LiftLogRepository,
@@ -124,20 +133,26 @@ import {
   type SingleWorkoutStatusSummary,
 } from "../lib/program-progress";
 import {
-  moveProgramExercise,
-  programWeekCount,
   programWorkoutCount,
   programWorkoutIds,
-  reorderProgramSections,
-  reorderProgramWorkouts,
+  programWorkouts,
+  reorderProgramWorkoutItems,
+  reorderProgramWorkoutSequence,
 } from "../lib/program-tree";
 import {
   listUpcomingWorkouts,
   selectNextWorkoutFocus,
 } from "../lib/workout-focus";
-import { parseAppView, updateAppViewUrl } from "../lib/app-route";
+import {
+  appDetailFromHistory,
+  leaveAppDetailHistory,
+  parseAppView,
+  pushAppDetailHistory,
+  updateAppViewUrl,
+} from "../lib/app-route";
 import {
   AsyncButton,
+  DetailNavigation,
   InlineError,
   ModalShell,
   PageHeader,
@@ -147,8 +162,12 @@ import {
   SourceTag,
   StatusBadge,
   Toast,
-  WorkoutSectionHeading,
 } from "./ui-primitives";
+import {
+  ExerciseCategoryIcon,
+  ExerciseCategoryMark,
+} from "./exercise-category-icons";
+import { ExerciseVideoLink } from "./exercise-video-link";
 import { useActiveWorkoutPersistence } from "./features/active-workout/useActiveWorkoutPersistence";
 
 const CalendarView = lazy(() => import("./features/calendar/CalendarView"));
@@ -174,8 +193,6 @@ type ModalName =
   | "workout"
   | "workout-settings"
   | "prescription"
-  | "section"
-  | "delete-section"
   | "delete-exercise"
   | "delete-content"
   | "invite"
@@ -187,7 +204,6 @@ type ModalName =
   | "account"
   | null;
 type ContentDeleteTarget =
-  | { kind: "week"; id: string; label: string }
   | { kind: "workout"; id: string; title: string }
   | { kind: "workout-item"; id: string; title: string }
   | { kind: "program"; program: Program };
@@ -236,12 +252,12 @@ function mergeProgramCatalog(
 type ProgramSourceTab = "own" | "coach";
 type ProgramAction = {
   id: string;
-  kind: "delete" | "publish" | "edit" | "open" | "week";
+  kind: "delete" | "publish" | "edit" | "open";
 } | null;
 type ExerciseLibraryFilters = {
   disciplines: ExerciseDiscipline[];
   categories: string[];
-  modes: EntryMode[];
+  formats: LoggingFormat[];
   tracking: TrackingField[];
 };
 type CompletedWorkoutViewState = {
@@ -272,6 +288,8 @@ type ScheduleCandidate = {
   estimatedMinutes: number;
   quickWorkout: boolean;
   plannedDate?: string;
+  usageCount?: number;
+  lastUsedAt?: string;
 };
 type LazyWorkspaceFeature = "programs" | "exercises" | "calendar" | "coaching";
 
@@ -332,13 +350,20 @@ function prescriptionLabel(
   return parts.join(" · ") || (item.mode === "none" ? "Instructions" : "Open");
 }
 
-function modeLabel(mode: EntryMode) {
-  return {
-    none: "Instructions",
-    sets: "Sets",
-    result: "Single result",
-    intervals: "Intervals",
-  }[mode];
+function modeLabel(mode: EntryMode, fields: readonly TrackingField[] = []) {
+  return loggingFormatLabel(loggingFormatFor(mode, fields));
+}
+
+function entryModesForFormats(formats: readonly LoggingFormat[]) {
+  return [...new Set(formats.map(entryModeForLoggingFormat))];
+}
+
+function trackingFiltersForExerciseSearch(filters: ExerciseLibraryFilters) {
+  const required =
+    filters.formats.length === 1
+      ? requiredTrackingFieldsForLoggingFormat(filters.formats[0])
+      : [];
+  return [...new Set([...filters.tracking, ...required])];
 }
 
 function starterSetLogs(
@@ -423,11 +448,6 @@ export default function LiftLogApp({
   const [newPrescriptionItemId, setNewPrescriptionItemId] = useState<
     string | null
   >(null);
-  const [sectionEditing, setSectionEditing] = useState<WorkoutSection | null>(
-    null,
-  );
-  const [sectionDeleteTarget, setSectionDeleteTarget] =
-    useState<WorkoutSection | null>(null);
   const [exerciseDeleteTarget, setExerciseDeleteTarget] =
     useState<Exercise | null>(null);
   const [contentDeleteTarget, setContentDeleteTarget] =
@@ -516,7 +536,16 @@ export default function LiftLogApp({
       updateAppViewUrl(activeView, "replace");
     }
     const restoreViewFromHistory = () => {
-      setActiveView(parseAppView(window.location.hash));
+      const nextView = parseAppView(window.location.hash);
+      const nextDetail = appDetailFromHistory();
+      setActiveView(nextView);
+      if (!nextDetail) {
+        setDetail(null);
+        setActiveWorkoutVisible(false);
+        if (nextView === "program") setProgram(null);
+      } else if (nextDetail === "workout" && activeSession) {
+        setActiveWorkoutVisible(true);
+      }
       scrollToAppTop();
     };
     window.addEventListener("popstate", restoreViewFromHistory);
@@ -525,7 +554,7 @@ export default function LiftLogApp({
       window.removeEventListener("popstate", restoreViewFromHistory);
       window.removeEventListener("hashchange", restoreViewFromHistory);
     };
-  }, [activeView]);
+  }, [activeSession, activeView]);
   const loadWorkspaceFeature = useCallback(
     (feature: LazyWorkspaceFeature) => {
       if (!repository || loadedWorkspaceFeaturesRef.current.has(feature)) {
@@ -668,6 +697,9 @@ export default function LiftLogApp({
   const [scheduleCandidates, setScheduleCandidates] = useState<
     SchedulableWorkoutCandidate[]
   >([]);
+  const [frequentScheduleCandidates, setFrequentScheduleCandidates] = useState<
+    FrequentSchedulableWorkoutCandidate[]
+  >([]);
   const [scheduleCandidateCursor, setScheduleCandidateCursor] =
     useState<SchedulableWorkoutCursor>();
   const [scheduleCandidatesLoading, setScheduleCandidatesLoading] =
@@ -688,7 +720,6 @@ export default function LiftLogApp({
   const [requestedProgramSource, setProgramSource] =
     useState<ProgramSourceTab>("own");
   const [programAction, setProgramAction] = useState<ProgramAction>(null);
-  const weekMutationRef = useRef(false);
   const builderMutationPendingRef = useRef(false);
   const [builderMutationPending, setBuilderMutationPending] = useState(false);
 
@@ -728,8 +759,8 @@ export default function LiftLogApp({
           scope: exerciseScope,
           disciplines: exerciseFilters.disciplines,
           categories: exerciseFilters.categories,
-          modes: exerciseFilters.modes,
-          tracking: exerciseFilters.tracking,
+          modes: entryModesForFormats(exerciseFilters.formats),
+          tracking: trackingFiltersForExerciseSearch(exerciseFilters),
           limit: 50,
         })
         .then((page) => {
@@ -777,8 +808,8 @@ export default function LiftLogApp({
         scope: exerciseScope,
         disciplines: exerciseFilters.disciplines,
         categories: exerciseFilters.categories,
-        modes: exerciseFilters.modes,
-        tracking: exerciseFilters.tracking,
+        modes: entryModesForFormats(exerciseFilters.formats),
+        tracking: trackingFiltersForExerciseSearch(exerciseFilters),
         limit: 50,
         cursor: exerciseCursor,
       });
@@ -930,7 +961,38 @@ export default function LiftLogApp({
   const assignableOwnPrograms = programCatalog.filter(
     (candidate) => capabilitiesForProgram(candidate).assign,
   );
-  const currentWeek = program?.weeks[selectedWeek - 1] ?? program?.weeks[0];
+  const exerciseCategoriesById = useMemo(
+    () =>
+      new Map(
+        [...workspace.globalExercises, ...workspace.personalExercises].map(
+          (exercise) => [exercise.id, exercise.category] as const,
+        ),
+      ),
+    [workspace.globalExercises, workspace.personalExercises],
+  );
+  const exerciseCategoriesByName = useMemo(
+    () =>
+      new Map(
+        [...workspace.globalExercises, ...workspace.personalExercises].map(
+          (exercise) => [exercise.name.trim().toLowerCase(), exercise.category] as const,
+        ),
+      ),
+    [workspace.globalExercises, workspace.personalExercises],
+  );
+  const exerciseCategoryForItem = useCallback(
+    (item: WorkoutItem) =>
+      item.category ??
+      (item.exerciseId ? exerciseCategoriesById.get(item.exerciseId) : undefined) ??
+      exerciseCategoriesByName.get(item.title.trim().toLowerCase()) ??
+      "General",
+    [exerciseCategoriesById, exerciseCategoriesByName],
+  );
+  const exerciseCategoryForName = useCallback(
+    (name: string) =>
+      exerciseCategoriesByName.get(name.trim().toLowerCase()) ?? "General",
+    [exerciseCategoriesByName],
+  );
+  const programWorkoutSequence = program ? programWorkouts(program) : [];
   const workoutFocus = selectNextWorkoutFocus(
     programCatalog,
     activeSession,
@@ -960,8 +1022,15 @@ export default function LiftLogApp({
       (candidate) => candidate.id === workoutPreviewSchedule?.programId,
     );
   const selectedWorkout =
-    currentWeek?.workouts.find((workout) => workout.id === selectedWorkoutId) ??
-    currentWeek?.workouts[0];
+    programWorkoutSequence.find(
+      (workout) => workout.id === selectedWorkoutId,
+    ) ?? programWorkoutSequence[0];
+  const currentWeek =
+    program?.weeks.find((week) =>
+      week.workouts.some((workout) => workout.id === selectedWorkout?.id),
+    ) ??
+    program?.weeks[selectedWeek - 1] ??
+    program?.weeks[0];
 
   const [setLogs, setSetLogs] = useState<Record<string, SetLog[]>>(() =>
     initialWorkspace.activeSession?.setLogs ??
@@ -1020,23 +1089,33 @@ export default function LiftLogApp({
     nextProgram: Program,
     preferred?: { weekIndex?: number; workoutId?: string; sectionId?: string },
   ) {
+    const preferredWorkoutWeek = preferred?.workoutId
+      ? nextProgram.weeks.find((week) =>
+          week.workouts.some(
+            (workout) => workout.id === preferred.workoutId,
+          ),
+        )
+      : undefined;
     const requestedWeek = Math.min(
-      preferred?.weekIndex ?? nextProgram.activeWeek,
+      preferredWorkoutWeek?.index ?? preferred?.weekIndex ?? nextProgram.activeWeek,
       nextProgram.weeks.at(-1)?.index ?? 1,
     );
     const nextWeek =
       nextProgram.weeks.find((week) => week.index === requestedWeek) ??
       nextProgram.weeks[nextProgram.activeWeek - 1] ??
       nextProgram.weeks[0];
-    const nextWorkout =
-      nextWeek?.workouts.find(
-        (workout) => workout.id === preferred?.workoutId,
-      ) ?? nextWeek?.workouts[0];
+    const nextWorkout = preferred?.workoutId
+      ? nextProgram.weeks
+          .flatMap((week) => week.workouts)
+          .find((workout) => workout.id === preferred.workoutId) ??
+        nextWeek?.workouts[0]
+      : nextWeek?.workouts[0];
     const nextSection =
       nextWorkout?.sections.find(
         (section) => section.id === preferred?.sectionId,
       ) ?? nextWorkout?.sections[0];
     setProgram(nextProgram);
+    pushAppDetailHistory("program", "program");
     setSelectedWeek(nextWeek?.index ?? 1);
     setSelectedWorkoutId(nextWorkout?.id ?? "");
     setSelectedSectionId(nextSection?.id ?? "");
@@ -1203,6 +1282,22 @@ export default function LiftLogApp({
     }
     setActiveView(view);
     updateAppViewUrl(view);
+    scrollToAppTop();
+  }
+
+  function leaveDetail(returnView: ViewName) {
+    setDetail(null);
+    setActiveWorkoutVisible(false);
+    if (!leaveAppDetailHistory()) {
+      setActiveView(returnView);
+      updateAppViewUrl(returnView);
+    }
+    scrollToAppTop();
+  }
+
+  function showActiveWorkout() {
+    pushAppDetailHistory("workout", "today");
+    setActiveWorkoutVisible(true);
     scrollToAppTop();
   }
 
@@ -1421,7 +1516,7 @@ export default function LiftLogApp({
       const workout = detailedSchedule.workout;
       if (!repository) {
         setWorkoutStarted(true);
-        setActiveWorkoutVisible(true);
+        showActiveWorkout();
         return;
       }
       const session = await repository.startOrResumeSession(
@@ -1435,7 +1530,7 @@ export default function LiftLogApp({
       setSessionRpe(session.sessionRpe);
       setSessionNote(session.sessionNote);
       setWorkoutStarted(true);
-      setActiveWorkoutVisible(true);
+      showActiveWorkout();
       setWorkspace((previous) => ({
         ...previous,
         scheduledWorkouts: previous.scheduledWorkouts.map((candidate) =>
@@ -1462,6 +1557,7 @@ export default function LiftLogApp({
   async function openWorkoutPreview(
     schedule: ScheduledWorkout,
     returnView: "today" | "calendar" = "today",
+    recordHistory = true,
   ) {
     try {
       const detailedSchedule = await ensureScheduledWorkoutDetails(schedule);
@@ -1475,6 +1571,7 @@ export default function LiftLogApp({
       setSessionRpe("7");
       setSessionNote("");
       setWorkoutComplete(false);
+      if (recordHistory) pushAppDetailHistory("workout", "today");
       return true;
     } catch (error) {
       notify(
@@ -1584,7 +1681,7 @@ export default function LiftLogApp({
     let workout: PlannedWorkout;
     if (repository) {
       try {
-        workout = await repository.addWorkout(program, currentWeek.id, title);
+        workout = await repository.addWorkout(program, title);
       } catch (error) {
         notify(
           error instanceof Error
@@ -1597,25 +1694,13 @@ export default function LiftLogApp({
       workout = {
         id: `workout-${Date.now()}`,
         title,
-        dayLabel: `Workout ${currentWeek.workouts.length + 1}`,
+        dayLabel: `Workout ${programWorkoutSequence.length + 1}`,
         durationMinutes: 45,
         sections: [
           {
-            id: `section-warmup-${Date.now()}`,
-            title: "Warm up",
-            kind: "warmup",
-            items: [],
-          },
-          {
-            id: `section-main-${Date.now()}`,
-            title: "Main work",
+            id: `section-${Date.now()}`,
+            title: "Exercises",
             kind: "main",
-            items: [],
-          },
-          {
-            id: `section-cooldown-${Date.now()}`,
-            title: "Cooldown",
-            kind: "cooldown",
             items: [],
           },
         ],
@@ -1626,7 +1711,7 @@ export default function LiftLogApp({
         ? {
             ...previous,
             weeks: previous.weeks.map((week) =>
-              week.index === selectedWeek
+              week.id === currentWeek.id
                 ? { ...week, workouts: [...week.workouts, workout] }
                 : week,
             ),
@@ -1634,9 +1719,10 @@ export default function LiftLogApp({
         : previous,
     );
     setSelectedWorkoutId(workout.id);
+    setSelectedWeek(currentWeek.index);
     setSelectedSectionId(workout.sections[0]?.id ?? "");
     setModal(null);
-    notify("Workout added to this week");
+    notify("Workout added to the program");
   }
 
   async function updateWorkoutSettings(
@@ -1680,13 +1766,9 @@ export default function LiftLogApp({
 
   async function addExerciseToWorkout(
     exercise: Exercise,
-    destinationSectionId?: string,
   ) {
     if (!selectedWorkout) return;
-    const targetSection =
-      selectedWorkout.sections.find(
-        (section) => section.id === (destinationSectionId ?? selectedSectionId),
-      ) ?? selectedWorkout.sections.at(-1);
+    const targetSection = selectedWorkout.sections[0];
     if (!targetSection) return;
     setSelectedSectionId(targetSection.id);
     let item: WorkoutItem;
@@ -1705,6 +1787,8 @@ export default function LiftLogApp({
       item = {
         id: `item-${Date.now()}`,
         exerciseId: exercise.id,
+        category: exercise.category,
+        videoUrl: exercise.videoUrl,
         title: exercise.name,
         cue: exercise.cue,
         mode: exercise.defaultMode,
@@ -1714,7 +1798,8 @@ export default function LiftLogApp({
             ? { sets: 3, reps: "8", targetRpe: "7–8" }
             : exercise.defaultMode === "intervals"
               ? { rounds: 5, workSeconds: 60, restSeconds: 60 }
-              : exercise.defaultMode === "result"
+              : exercise.defaultMode === "result" &&
+                  exercise.defaultFields.includes("duration")
                 ? { durationMinutes: 20 }
                 : {},
       };
@@ -1723,37 +1808,33 @@ export default function LiftLogApp({
       previous
         ? {
             ...previous,
-            weeks: previous.weeks.map((week) =>
-              week.index !== selectedWeek
-                ? week
-                : {
-                    ...week,
-                    workouts: week.workouts.map((workout) =>
-                      workout.id !== selectedWorkout.id
-                        ? workout
-                        : {
-                            ...workout,
-                            sections: workout.sections.length
-                              ? workout.sections.map((section) =>
-                                  section.id === targetSection.id
-                                    ? {
-                                        ...section,
-                                        items: [...section.items, item],
-                                      }
-                                    : section,
-                                )
-                              : [
-                                  {
-                                    id: `section-${Date.now()}`,
-                                    title: "Main work",
-                                    kind: "main",
-                                    items: [item],
-                                  },
-                                ],
-                          },
-                    ),
-                  },
-            ),
+            weeks: previous.weeks.map((week) => ({
+              ...week,
+              workouts: week.workouts.map((workout) =>
+                workout.id !== selectedWorkout.id
+                  ? workout
+                  : {
+                      ...workout,
+                      sections: workout.sections.length
+                        ? workout.sections.map((section) =>
+                            section.id === targetSection.id
+                              ? {
+                                  ...section,
+                                  items: [...section.items, item],
+                                }
+                              : section,
+                          )
+                        : [
+                            {
+                              id: `section-${Date.now()}`,
+                              title: "Main work",
+                              kind: "main",
+                              items: [item],
+                            },
+                          ],
+                    },
+              ),
+            })),
           }
         : previous,
     );
@@ -1789,88 +1870,6 @@ export default function LiftLogApp({
     notify(`${nextItem.title} prescription saved`);
   }
 
-  async function addBlankWeek() {
-    if (!program || !repository || programAction || weekMutationRef.current)
-      return false;
-    if (program.weeks.length >= 52) {
-      notify("A program can contain up to 52 weeks");
-      return false;
-    }
-    weekMutationRef.current = true;
-    setProgramAction({ id: program.id, kind: "week" });
-    try {
-      await repository.addProgramWeek(program.versionId);
-      const refreshed = await repository.loadEditableProgram(
-        program.athleteId,
-        program.id,
-      );
-      const lastWeek = refreshed.weeks.at(-1);
-      selectProgram(refreshed, { weekIndex: lastWeek?.index });
-      notify("Blank week added");
-      return true;
-    } catch (error) {
-      notify(
-        error instanceof Error ? error.message : "The week could not be added",
-      );
-      return false;
-    } finally {
-      weekMutationRef.current = false;
-      setProgramAction(null);
-    }
-  }
-
-  async function copyCurrentWeek(count: number) {
-    if (
-      !program ||
-      !currentWeek ||
-      !repository ||
-      programAction ||
-      weekMutationRef.current
-    )
-      return false;
-    const availableSlots = Math.max(0, 52 - program.weeks.length);
-    const copyCount = Math.min(Math.max(Math.trunc(count), 1), availableSlots);
-    if (!copyCount) {
-      notify("A program can contain up to 52 weeks");
-      return false;
-    }
-    weekMutationRef.current = true;
-    setProgramAction({ id: program.id, kind: "week" });
-    try {
-      await repository.duplicateWeekTimes(currentWeek.id, copyCount);
-      const refreshed = await repository.loadEditableProgram(
-        program.athleteId,
-        program.id,
-      );
-      const lastWeek = refreshed.weeks.at(-1);
-      selectProgram(refreshed, { weekIndex: lastWeek?.index });
-      notify(
-        copyCount === 1
-          ? `${currentWeek.label} copied`
-          : `${currentWeek.label} copied ${copyCount} times`,
-      );
-      return true;
-    } catch (error) {
-      notify(
-        error instanceof Error ? error.message : "The week could not be copied",
-      );
-      return false;
-    } finally {
-      weekMutationRef.current = false;
-      setProgramAction(null);
-    }
-  }
-
-  function deleteWeek() {
-    if (!currentWeek || !repository) return;
-    setContentDeleteTarget({
-      kind: "week",
-      id: currentWeek.id,
-      label: currentWeek.label || `Week ${currentWeek.index}`,
-    });
-    setModal("delete-content");
-  }
-
   function deleteSelectedWorkout() {
     if (!selectedWorkout || !repository) return;
     setContentDeleteTarget({
@@ -1879,119 +1878,6 @@ export default function LiftLogApp({
       title: selectedWorkout.title,
     });
     setModal("delete-content");
-  }
-
-  async function addSection(title: string, kind: WorkoutSection["kind"]) {
-    if (!selectedWorkout || !repository) return;
-    try {
-      const sectionId = await repository.addWorkoutSection(
-        selectedWorkout.id,
-        title,
-        kind ?? "custom",
-      );
-      await reloadCurrentProgram();
-      setSelectedSectionId(sectionId);
-      setSectionEditing(null);
-      setModal(null);
-      notify(`${title} section added`);
-    } catch (error) {
-      throw error instanceof Error
-        ? error
-        : new Error("The section could not be added");
-    }
-  }
-
-  async function updateSection(title: string, kind: WorkoutSection["kind"]) {
-    if (!sectionEditing || !repository) return;
-    try {
-      await repository.updateWorkoutSection(
-        sectionEditing.id,
-        title,
-        kind ?? "custom",
-      );
-      await reloadCurrentProgram();
-      setSectionEditing(null);
-      setModal(null);
-      notify("Section updated");
-    } catch (error) {
-      throw error instanceof Error
-        ? error
-        : new Error("The section could not be updated");
-    }
-  }
-
-  async function deleteSection(sectionId: string, deleteItems: boolean) {
-    const section = selectedWorkout?.sections.find(
-      (candidate) => candidate.id === sectionId,
-    );
-    if (!section || section.kind === "main") {
-      throw new Error("Main work must remain in every workout");
-    }
-    const mainSection = selectedWorkout?.sections.find(
-      (candidate) => candidate.kind === "main",
-    );
-    if (!mainSection) throw new Error("This workout needs a Main work section");
-    try {
-      if (repository) {
-        await repository.deleteWorkoutSection(sectionId, deleteItems);
-        await reloadCurrentProgram();
-      } else if (selectedWorkout) {
-        setProgram((previous) =>
-          previous
-            ? {
-                ...previous,
-                weeks: previous.weeks.map((week) => ({
-                  ...week,
-                  workouts: week.workouts.map((workout) =>
-                    workout.id !== selectedWorkout.id
-                      ? workout
-                      : {
-                          ...workout,
-                          sections: workout.sections
-                            .filter((candidate) => candidate.id !== sectionId)
-                            .map((candidate) =>
-                              candidate.id === mainSection.id && !deleteItems
-                                ? {
-                                    ...candidate,
-                                    items: [...candidate.items, ...section.items],
-                                  }
-                                : candidate,
-                            ),
-                        },
-                  ),
-                })),
-              }
-            : previous,
-        );
-      }
-      setSelectedSectionId(mainSection.id);
-      setSectionDeleteTarget(null);
-      setModal(null);
-      notify(
-        deleteItems
-          ? "Section and its exercises deleted"
-          : "Section deleted · exercises moved to Main work",
-      );
-    } catch (error) {
-      if (
-        repository &&
-        program &&
-        error instanceof Error &&
-        error.message.includes("Published program content is immutable")
-      ) {
-        selectProgram(
-          await repository.loadEditableProgram(program.athleteId, program.id),
-          { weekIndex: selectedWeek },
-        );
-        setSectionDeleteTarget(null);
-        setModal(null);
-        notify("Opened the editable program copy. Delete the section there.");
-        return;
-      }
-      throw error instanceof Error
-        ? error
-        : new Error("The section could not be deleted");
-    }
   }
 
   async function reorderWorkouts(workoutIds: string[]) {
@@ -2008,16 +1894,12 @@ export default function LiftLogApp({
       workoutId: selectedWorkoutId,
       sectionId: selectedSectionId,
     };
-    const optimisticProgram = reorderProgramWorkouts(
-      snapshot,
-      currentWeek.id,
-      workoutIds,
-    );
+    const optimisticProgram = reorderProgramWorkoutSequence(snapshot, workoutIds);
     builderMutationPendingRef.current = true;
     setBuilderMutationPending(true);
     replaceProgramEverywhere(optimisticProgram);
     try {
-      await repository.reorderWorkouts(currentWeek.id, workoutIds);
+      await repository.reorderWorkouts(snapshot, workoutIds);
     } catch (error) {
       await restoreProgramAfterBuilderFailure(snapshot, selection);
       notify(
@@ -2031,11 +1913,7 @@ export default function LiftLogApp({
     }
   }
 
-  async function moveItem(
-    itemId: string,
-    destinationSectionId: string,
-    destinationPosition: number,
-  ) {
+  async function reorderWorkoutItems(itemIds: string[]) {
     if (
       !program ||
       !selectedWorkout ||
@@ -2049,23 +1927,16 @@ export default function LiftLogApp({
       workoutId: selectedWorkoutId,
       sectionId: selectedSectionId,
     };
-    const optimisticProgram = moveProgramExercise(
+    const optimisticProgram = reorderProgramWorkoutItems(
       snapshot,
       selectedWorkout.id,
-      itemId,
-      destinationSectionId,
-      destinationPosition,
+      itemIds,
     );
     builderMutationPendingRef.current = true;
     setBuilderMutationPending(true);
-    setSelectedSectionId(destinationSectionId);
     replaceProgramEverywhere(optimisticProgram);
     try {
-      await repository.moveWorkoutItem(
-        itemId,
-        destinationSectionId,
-        destinationPosition,
-      );
+      await repository.reorderWorkoutItems(selectedWorkout.id, itemIds);
     } catch (error) {
       await restoreProgramAfterBuilderFailure(snapshot, selection);
       notify(
@@ -2079,69 +1950,28 @@ export default function LiftLogApp({
     }
   }
 
-  async function reorderSections(sectionIds: string[]) {
-    if (
-      !program ||
-      !selectedWorkout ||
-      !repository ||
-      builderMutationPendingRef.current
-    )
-      return;
-    const snapshot = program;
-    const selection = {
-      weekIndex: selectedWeek,
-      workoutId: selectedWorkoutId,
-      sectionId: selectedSectionId,
-    };
-    const optimisticProgram = reorderProgramSections(
-      snapshot,
-      selectedWorkout.id,
-      sectionIds,
-    );
-    builderMutationPendingRef.current = true;
-    setBuilderMutationPending(true);
-    replaceProgramEverywhere(optimisticProgram);
-    try {
-      await repository.reorderWorkoutSections(selectedWorkout.id, sectionIds);
-    } catch (error) {
-      await restoreProgramAfterBuilderFailure(snapshot, selection);
-      notify(
-        error instanceof Error
-          ? error.message
-          : "Sections could not be reordered",
-      );
-    } finally {
-      builderMutationPendingRef.current = false;
-      setBuilderMutationPending(false);
-    }
-  }
-
   function removeItemFromProgram(itemId: string) {
     if (!selectedWorkout) return;
     setProgram((previous) =>
       previous
         ? {
             ...previous,
-            weeks: previous.weeks.map((week) =>
-              week.index !== selectedWeek
-                ? week
-                : {
-                    ...week,
-                    workouts: week.workouts.map((workout) =>
-                      workout.id !== selectedWorkout.id
-                        ? workout
-                        : {
-                            ...workout,
-                            sections: workout.sections.map((section) => ({
-                              ...section,
-                              items: section.items.filter(
-                                (item) => item.id !== itemId,
-                              ),
-                            })),
-                          },
-                    ),
-                  },
-            ),
+            weeks: previous.weeks.map((week) => ({
+              ...week,
+              workouts: week.workouts.map((workout) =>
+                workout.id !== selectedWorkout.id
+                  ? workout
+                  : {
+                      ...workout,
+                      sections: workout.sections.map((section) => ({
+                        ...section,
+                        items: section.items.filter(
+                          (item) => item.id !== itemId,
+                        ),
+                      })),
+                    },
+              ),
+            })),
           }
         : previous,
     );
@@ -2184,6 +2014,7 @@ export default function LiftLogApp({
     discipline: ExerciseDiscipline,
     category: string,
     mode: EntryMode,
+    fields: TrackingField[],
     cue: string,
   ) {
     let exercise: Exercise;
@@ -2194,6 +2025,7 @@ export default function LiftLogApp({
           category,
           discipline,
           mode,
+          fields,
           cue,
         });
       } catch (error) {
@@ -2205,7 +2037,6 @@ export default function LiftLogApp({
         return;
       }
     } else {
-      const fields = trackingFieldsForMode(mode);
       exercise = {
         id: `personal-${Date.now()}`,
         name,
@@ -2215,7 +2046,7 @@ export default function LiftLogApp({
         scope: "personal",
         ownerName: viewer.name,
         defaultMode: mode,
-        defaultFields: fields,
+        defaultFields: trackingFieldsForMode(mode, fields),
       };
     }
     setWorkspace((previous) => ({
@@ -2236,6 +2067,7 @@ export default function LiftLogApp({
     discipline: ExerciseDiscipline,
     category: string,
     mode: EntryMode,
+    fields: TrackingField[],
     cue: string,
   ) {
     if (original.scope !== "personal") return;
@@ -2244,9 +2076,12 @@ export default function LiftLogApp({
       category,
       discipline,
       tags: original.tags,
+      sourceProvider: original.sourceProvider,
+      sourceExternalId: original.sourceExternalId,
+      sourceUrl: original.sourceUrl,
+      videoUrl: original.videoUrl,
       mode,
-      fields:
-        mode === original.defaultMode ? original.defaultFields : undefined,
+      fields,
       cue,
     };
     try {
@@ -2304,6 +2139,10 @@ export default function LiftLogApp({
             category: exercise.category,
             discipline: exercise.discipline,
             tags: exercise.tags,
+            sourceProvider: exercise.sourceProvider,
+            sourceExternalId: exercise.sourceExternalId,
+            sourceUrl: exercise.sourceUrl,
+            videoUrl: exercise.videoUrl,
             mode: exercise.defaultMode,
             fields: exercise.defaultFields,
             cue: exercise.cue,
@@ -2889,9 +2728,7 @@ export default function LiftLogApp({
               dayLabel: "Workout",
               durationMinutes: 45,
               sections: [
-                { id: `warmup-${now}`, title: "Warm up", kind: "warmup", items: [] },
-                { id: `main-${now}`, title: "Main work", kind: "main", items: [] },
-                { id: `cooldown-${now}`, title: "Cooldown", kind: "cooldown", items: [] },
+                { id: `exercises-${now}`, title: "Exercises", kind: "main", items: [] },
               ],
             }],
           }],
@@ -2969,13 +2806,6 @@ export default function LiftLogApp({
   }
 
   async function confirmContentDeletion(target: ContentDeleteTarget) {
-    if (target.kind === "week") {
-      if (!repository) throw new Error("The week could not be deleted.");
-      await repository.deleteProgramWeek(target.id);
-      await reloadCurrentProgram();
-      notify("Week deleted");
-      return;
-    }
     if (target.kind === "workout") {
       if (!repository) throw new Error("The workout could not be deleted.");
       await repository.deleteWorkout(target.id);
@@ -2998,12 +2828,18 @@ export default function LiftLogApp({
     setScheduleCandidatesError("");
     try {
       if (repository) {
-        const page = await repository.listSchedulableWorkouts({
-          limit: 50,
-          ...(reset || !scheduleCandidateCursor
-            ? {}
-            : { cursor: scheduleCandidateCursor }),
-        });
+        const [page, frequent] = await Promise.all([
+          repository.listSchedulableWorkouts({
+            limit: 50,
+            ...(reset || !scheduleCandidateCursor
+              ? {}
+              : { cursor: scheduleCandidateCursor }),
+          }),
+          reset
+            ? repository.listFrequentSchedulableWorkouts(6).catch(() => [])
+            : Promise.resolve(null),
+        ]);
+        if (frequent) setFrequentScheduleCandidates(frequent);
         setScheduleCandidates((current) =>
           reset
             ? page.items
@@ -3064,6 +2900,26 @@ export default function LiftLogApp({
         ),
       );
       setScheduleCandidates(demoCandidates);
+      setFrequentScheduleCandidates(
+        demoCandidates
+          .filter(
+            (candidate) =>
+              candidate.isQuickWorkout &&
+              (candidate.latestOccurrence?.sequenceNumber ?? 0) > 0,
+          )
+          .sort(
+            (left, right) =>
+              (right.latestOccurrence?.sequenceNumber ?? 0) -
+                (left.latestOccurrence?.sequenceNumber ?? 0) ||
+              left.workoutTitle.localeCompare(right.workoutTitle),
+          )
+          .slice(0, 6)
+          .map((candidate) => ({
+            ...candidate,
+            usageCount: candidate.latestOccurrence?.sequenceNumber ?? 1,
+            lastUsedAt: candidate.latestOccurrence?.plannedDate ?? "1970-01-01",
+          })),
+      );
       setScheduleCandidateCursor(undefined);
     } catch (error) {
       setScheduleCandidatesError(
@@ -3293,7 +3149,11 @@ export default function LiftLogApp({
   }
 
   async function openCalendarPlan(schedule: ScheduledWorkout) {
-    if (await openWorkoutPreview(schedule, "calendar")) navigate("today");
+    if (await openWorkoutPreview(schedule, "calendar", false)) {
+      setActiveView("today");
+      pushAppDetailHistory("workout", "today");
+      scrollToAppTop();
+    }
   }
 
   async function openCalendarResults(
@@ -3311,7 +3171,9 @@ export default function LiftLogApp({
       error: "",
       returnView,
     });
-    navigate("today");
+    setActiveView("today");
+    pushAppDetailHistory("workout-log", "today");
+    scrollToAppTop();
     if (!repository) return;
     try {
       const detail = await repository.loadCompletedSessionDetail(
@@ -3448,7 +3310,16 @@ export default function LiftLogApp({
         coachingRequestCount={workspace.pendingCoachInvites.length}
       />
 
-      <section className="app-content">
+      <section
+        className={cn(
+          "app-content",
+          (completedWorkoutView ||
+            showingWorkoutPreview ||
+            (activeSession && activeWorkoutVisible) ||
+            (activeView === "program" && program)) &&
+            "has-detail-navigation",
+        )}
+      >
         {viewer.isTest && (
           <div className="test-data-banner">
             <FlaskConical size={15} />
@@ -3504,6 +3375,7 @@ export default function LiftLogApp({
             state={completedWorkoutView}
             viewerId={viewer.id}
             weightUnit={workspace.profile.weightUnit}
+            exerciseCategoryForName={exerciseCategoryForName}
             program={
               programCatalog.find(
                 (candidate) =>
@@ -3513,8 +3385,7 @@ export default function LiftLogApp({
             onBack={() => {
               completedWorkoutRequestRef.current += 1;
               const returnView = completedWorkoutView.returnView;
-              setDetail(null);
-              navigate(returnView);
+              leaveDetail(returnView);
             }}
           />
         )}
@@ -3534,6 +3405,7 @@ export default function LiftLogApp({
                 : todayWorkout!
             }
             weightUnit={workspace.profile.weightUnit}
+            exerciseCategoryForItem={exerciseCategoryForItem}
             timing={showingWorkoutPreview ? "future" : workoutFocus!.timing}
             plannedDate={
               showingWorkoutPreview
@@ -3592,11 +3464,10 @@ export default function LiftLogApp({
               showingWorkoutPreview
                 ? () => {
                     const returnView = workoutPreviewReturnView;
-                    setDetail(null);
-                    navigate(returnView);
+                    leaveDetail(returnView);
                   }
                 : activeSession
-                ? () => setActiveWorkoutVisible(false)
+                ? () => leaveDetail("today")
                 : undefined
             }
             backLabel={
@@ -3667,7 +3538,7 @@ export default function LiftLogApp({
                 schedule.id ===
                   (todaySchedule?.id ?? activeSession.scheduledWorkoutId)
               ) {
-                setActiveWorkoutVisible(true);
+                showActiveWorkout();
                 return;
               }
               void startWorkout(schedule);
@@ -3678,7 +3549,7 @@ export default function LiftLogApp({
                 schedule.id ===
                   (todaySchedule?.id ?? activeSession.scheduledWorkoutId)
               ) {
-                setActiveWorkoutVisible(true);
+                showActiveWorkout();
                 return;
               }
               openWorkoutPreview(schedule);
@@ -3707,47 +3578,21 @@ export default function LiftLogApp({
             mutationPending={builderMutationPending}
             viewerId={viewer.id}
             capabilities={capabilitiesForProgram(program)}
-            currentWeek={currentWeek}
-            selectedWeek={selectedWeek}
+            workouts={programWorkoutSequence}
             selectedWorkout={selectedWorkout}
-            selectedSectionId={selectedSectionId}
             onSearchExercises={searchBuilderExercises}
-            onSelectWeek={(week) => {
-              setSelectedWeek(week);
-              setSelectedWorkoutId(
-                program.weeks[week - 1].workouts[0]?.id ?? "",
-              );
-              setSelectedSectionId(
-                program.weeks[week - 1].workouts[0]?.sections[0]?.id ?? "",
-              );
-            }}
             onSelectWorkout={(id) => {
               setSelectedWorkoutId(id);
-              const workout = currentWeek.workouts.find(
-                (item) => item.id === id,
+              const workoutWeek = program.weeks.find((week) =>
+                week.workouts.some((item) => item.id === id),
               );
+              const workout = workoutWeek?.workouts.find((item) => item.id === id);
+              if (workoutWeek) setSelectedWeek(workoutWeek.index);
               setSelectedSectionId(workout?.sections[0]?.id ?? "");
             }}
-            onSelectSection={setSelectedSectionId}
-            onAddBlankWeek={addBlankWeek}
-            onCopyWeek={copyCurrentWeek}
-            onDeleteWeek={deleteWeek}
             onAddWorkout={() => setModal("workout")}
             onDeleteWorkout={deleteSelectedWorkout}
             onReorderWorkouts={reorderWorkouts}
-            onAddSection={() => {
-              setSectionEditing(null);
-              setModal("section");
-            }}
-            onEditSection={(section) => {
-              setSectionEditing(section);
-              setModal("section");
-            }}
-            onDeleteSection={(section) => {
-              setSectionDeleteTarget(section);
-              setModal("delete-section");
-            }}
-            onReorderSections={reorderSections}
             onAddExercise={addExerciseToWorkout}
             onEditItem={(item) => {
               setPrescriptionItem(item);
@@ -3755,7 +3600,7 @@ export default function LiftLogApp({
               setModal("prescription");
             }}
             onRemoveItem={removeWorkoutItem}
-            onMoveItem={moveItem}
+            onReorderItems={reorderWorkoutItems}
             onSave={(title, description) =>
               void publishProgram(title, description)
             }
@@ -3764,8 +3609,8 @@ export default function LiftLogApp({
               setProgram(null);
               if (program.athleteId !== viewer.id) {
                 setCoachMode("coach");
-                setActiveView("coaching");
               }
+              leaveDetail(program.athleteId !== viewer.id ? "coaching" : "program");
             }}
             onAssignProgram={
               capabilitiesForProgram(program).assign
@@ -3782,11 +3627,13 @@ export default function LiftLogApp({
               <ProgramWorkoutDetails
                 workout={workout}
                 weightUnit={workspace.profile.weightUnit}
+                exerciseCategoryForItem={exerciseCategoryForItem}
               />
             )}
             renderWorkoutItem={(item) => (
               <WorkoutLogItem
                 item={item}
+                category={exerciseCategoryForItem(item)}
                 active={false}
                 weightUnit={workspace.profile.weightUnit}
                 showSetControls={false}
@@ -3991,7 +3838,7 @@ export default function LiftLogApp({
             setExerciseEditing(null);
             setModal(exerciseDetailTarget ? "exercise-details" : null);
           }}
-          onSave={(name, discipline, category, mode, cue) =>
+          onSave={(name, discipline, category, mode, fields, cue) =>
             exerciseEditing
               ? updatePersonalExercise(
                   exerciseEditing,
@@ -3999,9 +3846,17 @@ export default function LiftLogApp({
                   discipline,
                   category,
                   mode,
+                  fields,
                   cue,
                 )
-              : addPersonalExercise(name, discipline, category, mode, cue)
+              : addPersonalExercise(
+                  name,
+                  discipline,
+                  category,
+                  mode,
+                  fields,
+                  cue,
+                )
           }
         />
       )}
@@ -4071,28 +3926,6 @@ export default function LiftLogApp({
           onSave={savePrescription}
         />
       )}
-      {modal === "section" && (
-        <SectionModal
-          section={sectionEditing}
-          onClose={() => {
-            setSectionEditing(null);
-            setModal(null);
-          }}
-          onSave={sectionEditing ? updateSection : addSection}
-        />
-      )}
-      {modal === "delete-section" && sectionDeleteTarget && (
-        <DeleteSectionModal
-          section={sectionDeleteTarget}
-          onClose={() => {
-            setSectionDeleteTarget(null);
-            setModal(null);
-          }}
-          onDelete={(deleteItems) =>
-            deleteSection(sectionDeleteTarget.id, deleteItems)
-          }
-        />
-      )}
       {modal === "invite" && (
         <InviteModal
           onClose={() => setModal(null)}
@@ -4147,6 +3980,7 @@ export default function LiftLogApp({
         <ScheduleModal
           key={`${scheduleEditingId ?? "new"}:${scheduleInitialDate ?? "today"}`}
           candidates={scheduleCandidates}
+          frequentCandidates={frequentScheduleCandidates}
           schedules={workspace.scheduledWorkouts}
           editingId={scheduleEditingId}
           initialDate={scheduleInitialDate}
@@ -4477,6 +4311,7 @@ function TodayView({
   viewerId,
   workout,
   weightUnit,
+  exerciseCategoryForItem,
   timing,
   plannedDate,
   workoutStarted,
@@ -4513,6 +4348,7 @@ function TodayView({
   viewerId: string;
   workout: PlannedWorkout;
   weightUnit: OwnProfile["weightUnit"];
+  exerciseCategoryForItem: (item: WorkoutItem) => string;
   timing: "active" | "overdue" | "today" | "future";
   plannedDate?: string;
   workoutStarted: boolean;
@@ -4561,21 +4397,18 @@ function TodayView({
   const workoutBelongsToProgram =
     !workout.programVersionId ||
     workout.programVersionId === program?.versionId;
-  const workoutWeek = workoutBelongsToProgram
-    ? program?.weeks.find((week) =>
-        week.workouts.some((item) => item.id === workout.id),
-      )
-    : undefined;
-  const workoutIndex =
-    workoutWeek?.workouts.findIndex((item) => item.id === workout.id) ?? -1;
+  const orderedWorkouts = workoutBelongsToProgram
+    ? program?.weeks.flatMap((week) => week.workouts) ?? []
+    : [];
+  const workoutIndex = orderedWorkouts.findIndex(
+    (item) => item.id === workout.id,
+  );
   const isQuickWorkout = program?.contentType === "quick_workout";
   const planDescription = isQuickWorkout
     ? undefined
-    : workoutWeek
-      ? `Week ${workoutWeek.index} of ${program?.title} · ${program?.phase} phase`
-      : workoutBelongsToProgram && program
-        ? `${workout.dayLabel} · scheduled workout`
-        : `${workout.dayLabel} · scheduled from an earlier plan version`;
+    : workoutBelongsToProgram && program
+      ? program.title
+      : "Scheduled from an earlier program version";
   const timingLabel =
     timing === "active"
       ? plannedDate
@@ -4588,6 +4421,13 @@ function TodayView({
           : `Next workout · ${dateLabel}`;
   return (
     <>
+      {onBack && (
+        <DetailNavigation
+          backLabel={backLabel}
+          title={workout.title}
+          onBack={onBack}
+        />
+      )}
       <PageHeader
         eyebrow={viewMode ? `Workout preview · ${dateLabel}` : timingLabel}
         title={
@@ -4608,7 +4448,7 @@ function TodayView({
           />
         )}
         {onBack && (
-          <button className="button secondary workout-back-action" onClick={onBack}>
+          <button className="button secondary workout-back-action desktop-detail-action" onClick={onBack}>
             <ArrowLeft size={15} />
             <span className="workout-action-full">{backLabel}</span>
             <span className="workout-action-compact">Workouts</span>
@@ -4725,8 +4565,8 @@ function TodayView({
             <div>
               {!isQuickWorkout && (
                 <p className="eyebrow">
-                  {workoutWeek
-                    ? `Session ${workoutIndex + 1} of ${workoutWeek.workouts.length}`
+                  {workoutIndex >= 0
+                    ? `Session ${workoutIndex + 1} of ${orderedWorkouts.length}`
                     : "Scheduled session"}
                 </p>
               )}
@@ -4744,13 +4584,12 @@ function TodayView({
               <Clock3 size={14} />~ {workout.durationMinutes} min
             </span>
           </div>
-          {workout.sections.map((section) => (
-            <section className="workout-section" key={section.id}>
-              <WorkoutSectionHeading title={section.title} itemCount={section.items.length} />
-              {section.items.map((item) => (
+          <section className="workout-section workout-exercise-sequence">
+            {workout.sections.flatMap((section) => section.items).map((item) => (
+              <div className="workout-sequence-item" key={item.id}>
                 <WorkoutLogItem
-                  key={item.id}
                   item={item}
+                  category={exerciseCategoryForItem(item)}
                   active={workoutStarted}
                   weightUnit={weightUnit}
                   setLogs={setLogs[item.id] ?? emptySetLogs}
@@ -4760,9 +4599,9 @@ function TodayView({
                   onRemoveSet={onRemoveSet}
                   onUpdateResult={onUpdateResult}
                 />
-              ))}
-            </section>
-          ))}
+              </div>
+            ))}
+          </section>
           {!workoutStarted && !workoutComplete && allowStart && (
             <AsyncButton
               className="button primary full"
@@ -5037,6 +4876,7 @@ function workoutLogFields(item: Pick<WorkoutItem, "mode" | "fields">) {
 
 const WorkoutLogItem = memo(function WorkoutLogItem({
   item,
+  category,
   active,
   weightUnit = "kg",
   showSetControls = true,
@@ -5049,6 +4889,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
   onUpdateResult,
 }: {
   item: WorkoutItem;
+  category?: string;
   active: boolean;
   weightUnit?: OwnProfile["weightUnit"];
   showSetControls?: boolean;
@@ -5081,9 +4922,12 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
   if (item.mode === "none")
     return (
       <div className="instruction-item">
-        <span className="instruction-dot" />
+        <ExerciseCategoryMark category={category ?? item.category} compact />
         <div>
-          <strong>{item.title}</strong>
+          <span className="exercise-title-with-video">
+            <strong>{item.title}</strong>
+            <ExerciseVideoLink url={item.videoUrl} exerciseName={item.title} />
+          </span>
           <small>{note}</small>
         </div>
       </div>
@@ -5095,12 +4939,18 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
           {builderPreview ? (
             <>
               <div className="builder-exercise-title-row">
+                <ExerciseCategoryMark category={category ?? item.category} compact />
                 <strong>{item.title}</strong>
+                <ExerciseVideoLink url={item.videoUrl} exerciseName={item.title} />
               </div>
               {prescriptionSummary}
             </>
           ) : (
-            <strong>{item.title}</strong>
+            <div className="exercise-name-with-icon">
+              <ExerciseCategoryMark category={category ?? item.category} compact />
+              <strong>{item.title}</strong>
+              <ExerciseVideoLink url={item.videoUrl} exerciseName={item.title} />
+            </div>
           )}
           <small>{note}</small>
         </div>
@@ -5417,22 +5267,20 @@ function ResultInput({
 function ProgramWorkoutDetails({
   workout,
   weightUnit,
+  exerciseCategoryForItem,
 }: {
   workout: PlannedWorkout;
   weightUnit: OwnProfile["weightUnit"];
+  exerciseCategoryForItem: (item: WorkoutItem) => string;
 }) {
   return (
     <div className="program-workout-details">
-      {workout.sections.map((section) => (
-        <section className="workout-section" key={section.id}>
-          <WorkoutSectionHeading
-            title={section.title}
-            itemCount={section.items.length}
-          />
-          {section.items.map((item) => (
+      <section className="workout-section workout-exercise-sequence">
+        {workout.sections.flatMap((section) => section.items).map((item) => (
+          <div className="workout-sequence-item" key={item.id}>
             <WorkoutLogItem
-              key={item.id}
               item={item}
+              category={exerciseCategoryForItem(item)}
               active={false}
               weightUnit={weightUnit}
               showSetControls={false}
@@ -5443,9 +5291,9 @@ function ProgramWorkoutDetails({
               onRemoveSet={() => undefined}
               onUpdateResult={() => undefined}
             />
-          ))}
-        </section>
-      ))}
+          </div>
+        ))}
+      </section>
     </div>
   );
 }
@@ -5500,7 +5348,6 @@ function ProgramRow({
 }) {
   const isQuickWorkout = program.contentType === "quick_workout";
   const objectLabel = isQuickWorkout ? "Workout" : "Program";
-  const weekCount = programWeekCount(program);
   const workoutCount = programWorkoutCount(program);
   const runStatus = deriveProgramRunStatus(
     program.versionStatus === "draft",
@@ -5582,10 +5429,7 @@ function ProgramRow({
               {singleWorkoutDetail && <span>{singleWorkoutDetail}</span>}
             </>
           ) : (
-            <>
-              <span>{formatWorkoutCount(workoutCount)}</span>
-              <span>{weekCount} {weekCount === 1 ? "week" : "weeks"}</span>
-            </>
+            <span>{formatWorkoutCount(workoutCount)}</span>
           )}
         </span>
         {showProgress && workoutStates && (
@@ -6131,12 +5975,14 @@ function CompletedWorkoutView({
   program,
   viewerId,
   weightUnit,
+  exerciseCategoryForName,
   onBack,
 }: {
   state: CompletedWorkoutViewState;
   program?: Program;
   viewerId: string;
   weightUnit: OwnProfile["weightUnit"];
+  exerciseCategoryForName: (name: string) => string;
   onBack: () => void;
 }) {
   const dateLabel = new Date(`${state.session.date}T12:00:00`).toLocaleDateString(
@@ -6145,6 +5991,11 @@ function CompletedWorkoutView({
   );
   return (
     <>
+      <DetailNavigation
+        backLabel={state.returnView === "calendar" ? "Calendar" : "Coaching"}
+        title="Workout log"
+        onBack={onBack}
+      />
       <PageHeader
         eyebrow={`Workout results · ${dateLabel}`}
         title="Workout results"
@@ -6156,7 +6007,7 @@ function CompletedWorkoutView({
           />
         )}
         <StatusBadge status="completed" />
-        <button className="button secondary" onClick={onBack}>
+        <button className="button secondary desktop-detail-action" onClick={onBack}>
           <ArrowLeft size={15} />
           {state.returnView === "calendar" ? "Calendar" : "Coaching"}
         </button>
@@ -6209,11 +6060,21 @@ function CompletedWorkoutView({
               {state.detail.items.map((item) => (
                 <section className="calendar-detail-section" key={item.id}>
                   <div className="calendar-result-heading">
-                    <div>
-                      <strong>{item.title}</strong>
+                    <ExerciseCategoryMark
+                      category={item.category ?? exerciseCategoryForName(item.title)}
+                      compact
+                    />
+                    <div className="calendar-result-copy">
+                      <span className="exercise-title-with-video">
+                        <strong>{item.title}</strong>
+                        <ExerciseVideoLink
+                          url={item.videoUrl}
+                          exerciseName={item.title}
+                        />
+                      </span>
                       {item.cue && <small>{item.cue}</small>}
                     </div>
-                    <span>{modeLabel(item.mode)}</span>
+                    <span>{modeLabel(item.mode, item.fields)}</span>
                   </div>
                   {item.entries.length ? (
                     <div
@@ -6332,11 +6193,12 @@ const exerciseFilterCategories = [
   "Weightlifting",
   ...exerciseCategories,
 ] as const;
-const exerciseModeOptions: EntryMode[] = [
-  "sets",
-  "result",
+const exerciseFormatOptions: LoggingFormat[] = [
+  "repetitions",
+  "duration",
+  "distance",
   "intervals",
-  "none",
+  "instructions",
 ];
 const exerciseTrackingOptions: TrackingField[] = [
   "reps",
@@ -6349,7 +6211,7 @@ const exerciseTrackingOptions: TrackingField[] = [
 ];
 
 function emptyExerciseLibraryFilters(): ExerciseLibraryFilters {
-  return { disciplines: [], categories: [], modes: [], tracking: [] };
+  return { disciplines: [], categories: [], formats: [], tracking: [] };
 }
 
 function toggleExerciseFilterValue<T extends string>(
@@ -6370,14 +6232,17 @@ function filterCompleteExerciseLibrary(
   return exercises.filter(
     (exercise) =>
       (!normalizedQuery ||
-        `${exercise.name} ${exercise.category} ${modeLabel(exercise.defaultMode)} ${exercise.defaultFields.map(trackingFieldLabel).join(" ")}`
+        `${exercise.name} ${exercise.category} ${modeLabel(exercise.defaultMode, exercise.defaultFields)} ${exercise.defaultFields.map(trackingFieldLabel).join(" ")}`
           .toLowerCase()
           .includes(normalizedQuery)) &&
       (!filters.disciplines.length ||
         filters.disciplines.includes(inferredExerciseDiscipline(exercise))) &&
       (!filters.categories.length ||
         filters.categories.includes(exercise.category)) &&
-      (!filters.modes.length || filters.modes.includes(exercise.defaultMode)) &&
+      (!filters.formats.length ||
+        filters.formats.includes(
+          loggingFormatFor(exercise.defaultMode, exercise.defaultFields),
+        )) &&
       filters.tracking.every((field) =>
         exercise.defaultFields.includes(field),
       ),
@@ -6398,6 +6263,73 @@ function trackingFieldLabel(field: TrackingField) {
     heartRate: "Heart rate",
     rpe: "RPE",
   }[field];
+}
+
+function FormatTrackingFields({
+  format,
+  value,
+  onChange,
+}: {
+  format: LoggingFormat;
+  value: TrackingField[];
+  onChange: (fields: TrackingField[]) => void;
+}) {
+  const required = requiredTrackingFieldsForLoggingFormat(format);
+  const optional = optionalTrackingFieldsForLoggingFormat(format);
+  const available = [...required, ...optional];
+  if (!available.length) {
+    return (
+      <div className="format-tracking-empty full">
+        No values to enter—show instructions only.
+      </div>
+    );
+  }
+  return (
+    <fieldset className="format-tracking-field full">
+      <legend>
+        Track during workout <em>choose only what matters</em>
+      </legend>
+      <div
+        className={cn(
+          "format-tracking-options",
+          `tracking-${available.length}`,
+        )}
+      >
+        {available.map((field) => {
+          const isRequired = required.includes(field);
+          const checked = isRequired || value.includes(field);
+          return (
+            <label
+              className={cn(
+                "format-tracking-option",
+                checked && "selected",
+                isRequired && "required",
+              )}
+              key={field}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={isRequired}
+                onChange={(event) =>
+                  onChange(
+                    trackingFieldsForLoggingFormat(
+                      format,
+                      event.target.checked
+                        ? [...value, field]
+                        : value.filter((candidate) => candidate !== field),
+                    ),
+                  )
+                }
+              />
+              <span>{trackingFieldLabel(field)}</span>
+              {isRequired && <small>Required</small>}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
 }
 
 function ExercisesHome({
@@ -6548,7 +6480,7 @@ export function ExercisesView({
   const activeFilterCount =
     filters.disciplines.length +
     filters.categories.length +
-    filters.modes.length +
+    filters.formats.length +
     filters.tracking.length;
   function resetFilters() {
     setPage(0);
@@ -6568,11 +6500,11 @@ export function ExercisesView({
       categories: toggleExerciseFilterValue(filters.categories, value),
     });
   }
-  function toggleMode(value: EntryMode) {
+  function toggleFormat(value: LoggingFormat) {
     setPage(0);
     onFilters({
       ...filters,
-      modes: toggleExerciseFilterValue(filters.modes, value),
+      formats: toggleExerciseFilterValue(filters.formats, value),
     });
   }
   function toggleTracking(value: TrackingField) {
@@ -6616,8 +6548,8 @@ export function ExercisesView({
             {filters.categories.map((category) => (
               <button className="filter-tag-category" key={category} onClick={() => toggleCategory(category)}>Category: {category} <X size={12} /></button>
             ))}
-            {filters.modes.map((mode) => (
-              <button className="filter-tag-logging" key={mode} onClick={() => toggleMode(mode)}>Logging: {modeLabel(mode)} <X size={12} /></button>
+            {filters.formats.map((format) => (
+              <button className="filter-tag-logging" key={format} onClick={() => toggleFormat(format)}>Format: {loggingFormatLabel(format)} <X size={12} /></button>
             ))}
             {filters.tracking.map((field) => (
               <button className="filter-tag-tracking" key={field} onClick={() => toggleTracking(field)}>Tracking: {trackingFieldLabel(field)} <X size={12} /></button>
@@ -6641,15 +6573,18 @@ export function ExercisesView({
               <span>Category</span>
               <div className="library-filter-chip-row">
                 {exerciseFilterCategories.map((category) => (
-                  <button className={cn("filter-tag-category", filters.categories.includes(category) && "active")} key={category} onClick={() => toggleCategory(category)}>{category}</button>
+                  <button className={cn("filter-tag-category", filters.categories.includes(category) && "active")} key={category} onClick={() => toggleCategory(category)}>
+                    <ExerciseCategoryIcon category={category} size={12} />
+                    {category}
+                  </button>
                 ))}
               </div>
             </div>
             <div>
-              <span>Logging</span>
+              <span>Format</span>
               <div className="library-filter-chip-row">
-                {exerciseModeOptions.map((mode) => (
-                  <button className={cn("filter-tag-logging", filters.modes.includes(mode) && "active")} key={mode} onClick={() => toggleMode(mode)}>{modeLabel(mode)}</button>
+                {exerciseFormatOptions.map((format) => (
+                  <button className={cn("filter-tag-logging", filters.formats.includes(format) && "active")} key={format} onClick={() => toggleFormat(format)}>{loggingFormatLabel(format)}</button>
                 ))}
               </div>
             </div>
@@ -6682,9 +6617,6 @@ export function ExercisesView({
           <article className="exercise-list-row" key={exercise.id}>
             {(() => {
               const style = inferredExerciseDiscipline(exercise);
-              const StyleIcon = exerciseTrainingStyles.find(
-                (item) => item.value === style,
-              )?.icon ?? Dumbbell;
               return (
             <button
               className="exercise-list-main"
@@ -6692,20 +6624,14 @@ export function ExercisesView({
               aria-label={`Open ${exercise.name}`}
             >
               <span className="exercise-list-identity">
-                <span
-                  className={cn("exercise-style-icon", style)}
-                  title={exerciseTrainingStyleLabel(style)}
-                  aria-label={exerciseTrainingStyleLabel(style)}
-                >
-                  <StyleIcon size={15} />
-                </span>
+                <ExerciseCategoryMark category={exercise.category} />
                 <strong>{exercise.name}</strong>
               </span>
               <span className="exercise-list-parameters">
                 {!(style === "weightlifting" && exercise.category === "Weightlifting") && (
                   <span className="exercise-parameter-tag category">{exercise.category}</span>
                 )}
-                <span className="exercise-parameter-tag logging">{modeLabel(exercise.defaultMode)}</span>
+                <span className="exercise-parameter-tag logging">{modeLabel(exercise.defaultMode, exercise.defaultFields)}</span>
                 {exercise.defaultFields.length ? exercise.defaultFields.map((field) => (
                   <span className="exercise-parameter-tag tracking" key={field}>{trackingFieldLabel(field)}</span>
                 )) : <span className="exercise-parameter-tag tracking">No tracking</span>}
@@ -6714,6 +6640,11 @@ export function ExercisesView({
               );
             })()}
             <div className="exercise-list-actions">
+              <ExerciseVideoLink
+                url={exercise.videoUrl}
+                exerciseName={exercise.name}
+                size={15}
+              />
               {exercise.scope === "global" ? (
                 <button
                   className="icon-button"
@@ -7541,6 +7472,7 @@ function ExerciseModal({
     discipline: ExerciseDiscipline,
     category: string,
     mode: EntryMode,
+    fields: TrackingField[],
     cue: string,
   ) => void;
 }) {
@@ -7549,7 +7481,15 @@ function ExerciseModal({
     exercise ? inferredExerciseDiscipline(exercise) : "gym",
   );
   const [category, setCategory] = useState(exercise?.category ?? "General");
-  const [mode, setMode] = useState<EntryMode>(exercise?.defaultMode ?? "sets");
+  const initialFormat = exercise
+    ? loggingFormatFor(exercise.defaultMode, exercise.defaultFields)
+    : "repetitions";
+  const [format, setFormat] = useState<LoggingFormat>(initialFormat);
+  const [trackingFields, setTrackingFields] = useState<TrackingField[]>(() =>
+    exercise
+      ? trackingFieldsForLoggingFormat(initialFormat, exercise.defaultFields)
+      : trackingFieldsForLoggingFormat(initialFormat),
+  );
   const [cue, setCue] = useState(exercise?.cue ?? "");
   const hasLegacyCategory = !exerciseCategories.some(
     (candidate) => candidate === category,
@@ -7590,7 +7530,7 @@ function ExerciseModal({
           </select>
         </label>
         <label className="form-field">
-          <span>Category</span>
+          <span>Category <em>icon and search</em></span>
           <select
             aria-label="Category"
             value={category}
@@ -7605,17 +7545,27 @@ function ExerciseModal({
           </select>
         </label>
         <label className="form-field full">
-          <span>Default logging</span>
+          <span>Format</span>
           <select
-            value={mode}
-            onChange={(event) => setMode(event.target.value as EntryMode)}
+            value={format}
+            onChange={(event) => {
+              const nextFormat = event.target.value as LoggingFormat;
+              setFormat(nextFormat);
+              setTrackingFields(trackingFieldsForLoggingFormat(nextFormat));
+            }}
           >
-            <option value="sets">Sets</option>
-            <option value="result">Single result</option>
+            <option value="repetitions">Repetitions</option>
+            <option value="duration">Duration</option>
+            <option value="distance">Distance</option>
             <option value="intervals">Intervals</option>
-            <option value="none">Instructions only</option>
+            <option value="instructions">Instructions only</option>
           </select>
         </label>
+        <FormatTrackingFields
+          format={format}
+          value={trackingFields}
+          onChange={setTrackingFields}
+        />
         <label className="form-field full">
           <span>Default cue</span>
           <textarea
@@ -7633,7 +7583,14 @@ function ExerciseModal({
           className="button primary"
           disabled={!name.trim()}
           onClick={() =>
-            onSave(name.trim(), discipline, category, mode, cue.trim())
+            onSave(
+              name.trim(),
+              discipline,
+              category,
+              entryModeForLoggingFormat(format),
+              trackingFieldsForLoggingFormat(format, trackingFields),
+              cue.trim(),
+            )
           }
         >
           {exercise ? "Save changes" : "Save exercise"}
@@ -7689,8 +7646,8 @@ function ExerciseDetailsModal({
             </div>
           )}
           <div>
-            <dt>Logging</dt>
-            <dd>{modeLabel(exercise.defaultMode)}</dd>
+            <dt>Format</dt>
+            <dd>{modeLabel(exercise.defaultMode, exercise.defaultFields)}</dd>
           </div>
           <div>
             <dt>Tracking</dt>
@@ -7708,6 +7665,11 @@ function ExerciseDetailsModal({
         <button className="button secondary" disabled={copying} onClick={onClose}>
           Close
         </button>
+        <ExerciseVideoLink
+          url={exercise.videoUrl}
+          exerciseName={exercise.name}
+          size={16}
+        />
         {onCopy && (
           <button className="button primary" disabled={copying} onClick={onCopy}>
             {copying ? (
@@ -7875,177 +7837,6 @@ function WorkoutSettingsModal({
   );
 }
 
-function SectionModal({
-  section,
-  onClose,
-  onSave,
-}: {
-  section: WorkoutSection | null;
-  onClose: () => void;
-  onSave: (title: string, kind: WorkoutSection["kind"]) => Promise<void>;
-}) {
-  const labels: Record<NonNullable<WorkoutSection["kind"]>, string> = {
-    warmup: "Warm-up",
-    main: "Main work",
-    conditioning: "Conditioning",
-    cooldown: "Cool-down",
-    custom: "Custom section",
-  };
-  const [kind, setKind] = useState<NonNullable<WorkoutSection["kind"]>>(
-    section?.kind ?? "warmup",
-  );
-  const [title, setTitle] = useState(
-    section?.title ?? labels[section?.kind ?? "warmup"],
-  );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const mainLocked = section?.kind === "main";
-  async function save() {
-    setSaving(true);
-    setError("");
-    try {
-      await onSave(title.trim(), kind);
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : `The section could not be ${section ? "updated" : "added"}.`,
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <ModalShell
-      title={section ? "Edit workout section" : "Add workout section"}
-      description={
-        section
-          ? "Rename the section or change how it is categorised."
-          : "Separate warm-up, main work, conditioning and cool-down while keeping one workout."
-      }
-      onClose={onClose}
-    >
-      <div className="form-grid">
-        <label className="form-field">
-          <span>Section type</span>
-          <select
-            value={kind}
-            disabled={mainLocked}
-            onChange={(event) => {
-              const next = event.target.value as NonNullable<
-                WorkoutSection["kind"]
-              >;
-              setKind(next);
-              setTitle(labels[next]);
-            }}
-          >
-            <option value="warmup">Warm-up</option>
-            {section && <option value="main">Main work</option>}
-            <option value="conditioning">Conditioning</option>
-            <option value="cooldown">Cool-down</option>
-            <option value="custom">Custom</option>
-          </select>
-        </label>
-        <label className="form-field">
-          <span>Section name</span>
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </label>
-      </div>
-      {mainLocked && (
-        <p className="form-info">
-          Main work is required in every workout and cannot be changed to another
-          section type.
-        </p>
-      )}
-      {error && <InlineError>{error}</InlineError>}
-      <div className="modal-actions">
-        <button className="button secondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="button primary"
-          disabled={!title.trim() || saving}
-          onClick={save}
-        >
-          {saving ? "Saving…" : section ? "Save section" : "Add section"}
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
-
-function DeleteSectionModal({
-  section,
-  onClose,
-  onDelete,
-}: {
-  section: WorkoutSection;
-  onClose: () => void;
-  onDelete: (deleteItems: boolean) => Promise<void>;
-}) {
-  const [saving, setSaving] = useState<"move" | "delete" | null>(null);
-  const [error, setError] = useState("");
-  const itemCount = section.items.length;
-
-  async function remove(deleteItems: boolean) {
-    setSaving(deleteItems ? "delete" : "move");
-    setError("");
-    try {
-      await onDelete(deleteItems);
-    } catch (deleteError) {
-      setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : "The section could not be deleted.",
-      );
-      setSaving(null);
-    }
-  }
-
-  return (
-    <ModalShell
-      title={`Delete ${section.title}?`}
-      description={
-        itemCount
-          ? `This section contains ${itemCount} ${itemCount === 1 ? "exercise" : "exercises"}. Choose what to do with them.`
-          : "This empty section will be removed."
-      }
-      onClose={onClose}
-      dismissible={!saving}
-    >
-      {error && <InlineError>{error}</InlineError>}
-      <div className="modal-actions">
-        <button className="button secondary" disabled={Boolean(saving)} onClick={onClose}>
-          Cancel
-        </button>
-        {itemCount > 0 && (
-          <button
-            className="button secondary"
-            disabled={Boolean(saving)}
-            onClick={() => void remove(false)}
-          >
-            {saving === "move" ? "Moving…" : "Move to Main work"}
-          </button>
-        )}
-        <button
-          className="button danger"
-          disabled={Boolean(saving)}
-          onClick={() => void remove(true)}
-        >
-          {saving === "delete"
-            ? "Deleting…"
-            : itemCount > 0
-              ? "Delete section & exercises"
-              : "Delete section"}
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
-
 function DeleteExerciseModal({
   exercise,
   onClose,
@@ -8115,17 +7906,10 @@ function DeleteContentModal({
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
   const content = (() => {
-    if (target.kind === "week") {
-      return {
-        title: `Delete ${target.label}?`,
-        description: "Every workout in this week will be removed from the draft program.",
-        label: "Delete week",
-      };
-    }
     if (target.kind === "workout") {
       return {
         title: `Delete ${target.title}?`,
-        description: "This workout will be removed from its program week.",
+        description: "This workout will be removed from the program.",
         label: "Delete workout",
       };
     }
@@ -8260,9 +8044,10 @@ function PrescriptionModal({
   onClose: () => void;
   onSave: (item: WorkoutItem) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<EntryMode>(item.mode);
+  const initialFormat = loggingFormatFor(item.mode, item.fields);
+  const [format, setFormat] = useState<LoggingFormat>(initialFormat);
   const [trackingFields, setTrackingFields] = useState<TrackingField[]>(() =>
-    workoutLogFields(item),
+    trackingFieldsForLoggingFormat(initialFormat, workoutLogFields(item)),
   );
   const [entries, setEntries] = useState<PrescriptionDraftEntry[]>(() =>
     prescriptionDraftEntries(item.mode, item.prescription, weightUnit),
@@ -8286,6 +8071,7 @@ function PrescriptionModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const mode = entryModeForLoggingFormat(format);
   const entryCount = entries.length;
   const entryLabel = mode === "intervals" ? "Per round" : "Per set";
   const setPlanFields: PerEntryField[] = (["reps", "load", "rpe"] as const).filter(
@@ -8333,16 +8119,17 @@ function PrescriptionModal({
       });
     }
   }
-  function resetForMode(nextMode: EntryMode) {
-    setMode(nextMode);
-    setTrackingFields(trackingFieldsForMode(nextMode));
+  function resetForFormat(nextFormat: LoggingFormat) {
+    const nextMode = entryModeForLoggingFormat(nextFormat);
+    setFormat(nextFormat);
+    setTrackingFields(trackingFieldsForLoggingFormat(nextFormat));
     setEntries(prescriptionDraftEntries(nextMode, item.prescription, weightUnit));
     setPerEntry({ reps: false, load: false, rpe: false, work: false, rest: false });
   }
   async function save() {
     setSaving(true);
     setError("");
-    const nextFields = trackingFieldsForMode(mode, trackingFields);
+    const nextFields = trackingFieldsForLoggingFormat(format, trackingFields);
     const savedEntries: PrescriptionEntry[] = entries.map((entry) => ({
       reps: nextFields.includes("reps")
         ? entry.reps.trim() || undefined
@@ -8425,15 +8212,23 @@ function PrescriptionModal({
         <label className="form-field full">
           <span>Format</span>
           <select
-            value={mode}
-            onChange={(event) => resetForMode(event.target.value as EntryMode)}
+            value={format}
+            onChange={(event) =>
+              resetForFormat(event.target.value as LoggingFormat)
+            }
           >
-            <option value="sets">Sets × reps</option>
-            <option value="result">Time / distance</option>
+            <option value="repetitions">Repetitions</option>
+            <option value="duration">Duration</option>
+            <option value="distance">Distance</option>
             <option value="intervals">Intervals</option>
-            <option value="none">Instructions only</option>
+            <option value="instructions">Instructions only</option>
           </select>
         </label>
+        <FormatTrackingFields
+          format={format}
+          value={trackingFields}
+          onChange={setTrackingFields}
+        />
         {mode === "sets" && (
           <>
             <label className="form-field">
@@ -9177,10 +8972,10 @@ function AssignProgramModal({
                   <div>
                     <strong>{selectedProgram.title}</strong>
                     <small>
-                      {programWeekCount(selectedProgram)}{" "}
-                      {programWeekCount(selectedProgram) === 1 ? "week" : "weeks"} ·{" "}
                       {programWorkoutCount(selectedProgram)}{" "}
-                      workouts
+                      {programWorkoutCount(selectedProgram) === 1
+                        ? "workout"
+                        : "workouts"}
                     </small>
                   </div>
                   <Check size={16} />
@@ -9387,7 +9182,7 @@ function ProgramModal({
       description={
         kind === "workout"
           ? "Create one session, then schedule it for yourself or assign it to athletes."
-          : "Start with one empty week. Workouts are ordered here and scheduled later by the athlete."
+          : "Add workouts in training order. Athletes schedule each session on the dates that suit them."
       }
       onClose={onClose}
     >
@@ -9404,13 +9199,6 @@ function ProgramModal({
             }
           />
         </label>
-        {kind === "program" && <div className="form-info full">
-          <CalendarDays size={16} />
-          <span>
-            Start with Week 1, then use the + week tab to add a blank week or
-            copy any week as many times as you need.
-          </span>
-        </div>}
       </div>
       {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
@@ -9431,6 +9219,7 @@ function ProgramModal({
 
 function ScheduleModal({
   candidates,
+  frequentCandidates,
   schedules,
   editingId,
   initialDate,
@@ -9443,6 +9232,7 @@ function ScheduleModal({
   onSave,
 }: {
   candidates: SchedulableWorkoutCandidate[];
+  frequentCandidates: FrequentSchedulableWorkoutCandidate[];
   schedules: ScheduledWorkout[];
   editingId: string | null;
   initialDate: string | null;
@@ -9480,7 +9270,11 @@ function ScheduleModal({
       }];
     }
 
-    return candidates.flatMap((candidate): ScheduleCandidate[] => {
+    const toScheduleCandidate = (
+      candidate:
+        | SchedulableWorkoutCandidate
+        | FrequentSchedulableWorkoutCandidate,
+    ): ScheduleCandidate | null => {
       const latest = candidate.latestOccurrence;
       if (
         !candidate.isQuickWorkout &&
@@ -9489,14 +9283,14 @@ function ScheduleModal({
           latest.status === "completed" ||
           (latest.status === "planned" && Boolean(latest.plannedDate)))
       ) {
-        return [];
+        return null;
       }
       const reusableOccurrence =
         latest?.status === "planned" && !latest.plannedDate
           ? latest
           : undefined;
-      return [{
-        id: `${candidate.assignmentId ?? candidate.programId}:${candidate.workoutId}`,
+      return {
+        id: `${candidate.assignmentId ?? `program:${candidate.programId}`}:${candidate.programVersionId}:${candidate.workoutId}`,
         scheduleId: reusableOccurrence?.id,
         programId: candidate.programId,
         assignmentId: candidate.assignmentId,
@@ -9508,14 +9302,30 @@ function ScheduleModal({
         estimatedMinutes: candidate.estimatedMinutes,
         quickWorkout: candidate.isQuickWorkout,
         plannedDate: reusableOccurrence?.plannedDate,
-      }];
+        ...("usageCount" in candidate && candidate.usageCount !== undefined
+          ? {
+              usageCount: candidate.usageCount,
+              lastUsedAt: candidate.lastUsedAt,
+            }
+          : {}),
+      };
+    };
+
+    const merged = [...frequentCandidates, ...candidates];
+    const seen = new Set<string>();
+    return merged.flatMap((candidate): ScheduleCandidate[] => {
+      const mapped = toScheduleCandidate(candidate);
+      if (!mapped || seen.has(mapped.id)) return [];
+      seen.add(mapped.id);
+      return [mapped];
     });
-  }, [candidates, editingId, schedules]);
+  }, [candidates, editingId, frequentCandidates, schedules]);
 
   const initial =
     availableCandidates.find((candidate) => candidate.scheduleId === editingId) ??
     availableCandidates[0];
   const [candidateId, setCandidateId] = useState(initial?.id ?? "");
+  const [workoutQuery, setWorkoutQuery] = useState("");
   const [date, setDate] = useState(
     initial?.plannedDate ?? initialDate ?? localDateOnly(),
   );
@@ -9539,6 +9349,56 @@ function ScheduleModal({
       ? "unschedule"
       : "reschedule"
     : "add";
+  const normalizedWorkoutQuery = workoutQuery.trim().toLocaleLowerCase();
+  const frequentChoices = availableCandidates.filter(
+    (candidate) => (candidate.usageCount ?? 0) > 0,
+  );
+  const frequentChoiceIds = new Set(
+    frequentChoices.map((candidate) => candidate.id),
+  );
+  const otherChoices = availableCandidates.filter(
+    (candidate) => !frequentChoiceIds.has(candidate.id),
+  );
+  const matchingChoices = availableCandidates.filter((candidate) =>
+    `${candidate.programTitle} ${candidate.workoutTitle}`
+      .toLocaleLowerCase()
+      .includes(normalizedWorkoutQuery),
+  );
+
+  function selectCandidate(candidate: ScheduleCandidate) {
+    setCandidateId(candidate.id);
+    setDate((currentDate) => candidate.plannedDate ?? currentDate);
+  }
+
+  function workoutChoice(candidate: ScheduleCandidate) {
+    const active = candidate.id === effectiveCandidateId;
+    return (
+      <button
+        type="button"
+        className={cn("schedule-workout-choice", active && "active")}
+        aria-pressed={active}
+        disabled={saving}
+        key={candidate.id}
+        onClick={() => selectCandidate(candidate)}
+      >
+        <span className="schedule-workout-choice-copy">
+          <strong>{candidate.workoutTitle}</strong>
+          {!candidate.quickWorkout && <small>{candidate.programTitle}</small>}
+        </span>
+        <span className="schedule-workout-choice-meta">
+          <small>{formatDuration(candidate.estimatedMinutes)}</small>
+          {candidate.usageCount !== undefined && (
+            <small className="schedule-workout-usage">
+              Used {candidate.usageCount} {candidate.usageCount === 1 ? "time" : "times"}
+            </small>
+          )}
+        </span>
+        <span className="schedule-workout-choice-check" aria-hidden="true">
+          {active && <Check size={15} />}
+        </span>
+      </button>
+    );
+  }
 
   async function save(
     nextDate: string | null,
@@ -9592,28 +9452,67 @@ function ScheduleModal({
       ) : availableCandidates.length ? (
         <>
           <div className="form-grid">
-            <label className="form-field full">
-              <span>Workout</span>
-              <select
-                value={effectiveCandidateId}
-                disabled={Boolean(editingId) || saving}
-                onChange={(event) => {
-                  const next = availableCandidates.find(
-                    (candidate) => candidate.id === event.target.value,
-                  );
-                  setCandidateId(event.target.value);
-                  setDate((currentDate) => next?.plannedDate ?? currentDate);
-                }}
-              >
-                {availableCandidates.map((candidate) => (
-                  <option value={candidate.id} key={candidate.id}>
-                    {candidate.quickWorkout
-                      ? candidate.workoutTitle
-                      : `${candidate.programTitle} · ${candidate.workoutTitle}`}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {editingId ? (
+              <div className="form-field full">
+                <span>Workout</span>
+                <div className="schedule-workout-current">
+                  <strong>{selected?.workoutTitle}</strong>
+                  {!selected?.quickWorkout && <small>{selected?.programTitle}</small>}
+                </div>
+              </div>
+            ) : (
+              <div className="form-field full schedule-workout-picker">
+                <span>Workout</span>
+                <label className="search-field schedule-workout-search">
+                  <Search size={16} />
+                  <input
+                    aria-label="Search workouts"
+                    placeholder="Search workouts"
+                    value={workoutQuery}
+                    disabled={saving}
+                    onChange={(event) => setWorkoutQuery(event.target.value)}
+                  />
+                </label>
+                <div className="schedule-workout-choice-list">
+                  {normalizedWorkoutQuery ? (
+                    <div className="schedule-workout-choice-group">
+                      <div className="schedule-workout-choice-heading">
+                        <span>Results</span>
+                        <small>{matchingChoices.length}</small>
+                      </div>
+                      {matchingChoices.length ? (
+                        matchingChoices.map(workoutChoice)
+                      ) : (
+                        <div className="schedule-workout-no-results">
+                          No workouts match “{workoutQuery.trim()}”.
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      {frequentChoices.length > 0 && (
+                        <div className="schedule-workout-choice-group">
+                          <div className="schedule-workout-choice-heading">
+                            <span>Most used</span>
+                            <small>Quick workouts</small>
+                          </div>
+                          {frequentChoices.map(workoutChoice)}
+                        </div>
+                      )}
+                      {otherChoices.length > 0 && (
+                        <div className="schedule-workout-choice-group">
+                          <div className="schedule-workout-choice-heading">
+                            <span>All workouts</span>
+                            <small>{otherChoices.length}</small>
+                          </div>
+                          {otherChoices.map(workoutChoice)}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
             <label className="form-field full">
               <span>Date</span>
               <input

@@ -50,7 +50,11 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   assert.match(app, /workout-preview-actions\$\{workoutStarted \? " started"/);
   assert.match(app, /className="workout-action-compact">Planned</);
   assert.match(app, /const \[activeWorkoutVisible, setActiveWorkoutVisible\]/);
-  assert.match(app, /activeSession\s*\?\s*\(\) => setActiveWorkoutVisible\(false\)/);
+  assert.match(
+    app,
+    /if \(view === "today" && activeSession && activeWorkoutVisible\)[\s\S]*?setActiveWorkoutVisible\(false\)/,
+  );
+  assert.match(app, /activeSession\s*\?\s*\(\) => leaveDetail\("today"\)/);
   assert.match(app, /view === "today" && activeSession && activeWorkoutVisible[\s\S]*?setActiveWorkoutVisible\(false\)/);
   assert.match(app, /activeScheduleId === schedule\.id[\s\S]*?"Resume workout"/);
   assert.match(app, /viewScheduledPlan\(workoutPreviewSchedule\)/);
@@ -80,9 +84,9 @@ test("new scheduling uses a bounded server page and offers only eligible workout
     readFile(repositoryUrl, "utf8"),
   ]);
   const scheduler = app.slice(app.indexOf("function ScheduleModal"));
-  const optionList = scheduler.slice(
-    scheduler.indexOf("{availableCandidates.map"),
-    scheduler.indexOf("</select>"),
+  const choiceLabel = scheduler.slice(
+    scheduler.indexOf("function workoutChoice"),
+    scheduler.indexOf("async function save"),
   );
 
   assert.match(
@@ -100,12 +104,12 @@ test("new scheduling uses a bounded server page and offers only eligible workout
     "a program workout already planned, active, or completed must not be offered again",
   );
   assert.match(
-    scheduler,
-    /candidate\.quickWorkout[\s\S]*candidate\.workoutTitle[\s\S]*candidate\.programTitle.*candidate\.workoutTitle/,
+    choiceLabel,
+    /candidate\.workoutTitle[\s\S]*!candidate\.quickWorkout && <small>\{candidate\.programTitle\}<\/small>/,
     "quick workouts use only their name while program options use program and workout names",
   );
   assert.doesNotMatch(
-    optionList,
+    choiceLabel,
     /scheduleLabel|slotLabel/,
     "the compact picker label must omit version, week, and slot metadata",
   );

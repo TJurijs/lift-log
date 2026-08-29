@@ -126,8 +126,8 @@ Do not use one generic “status” to collapse publication, availability, sched
 
 ### Workout and logging invariants
 
-- New workouts start with Warm up, Main work, and Cool-down.
-- Main work always exists and cannot be deleted. Deleting another section must either delete its exercises with confirmation or move them to Main work.
+- New workouts use one ordered exercise list. Exercises have no required section or category metadata.
+- Exercise order is workout-wide and can be changed without moving exercises between containers.
 - Exercise identity, prescription, and performed result are separate snapshots.
 - `entry_mode` is `none`, `sets`, `result`, or `intervals`; tracking fields decide which inputs actually apply.
 - Planned RPE and actual RPE are distinct. RPE uses whole numbers and consistent labels/colors/help.
@@ -275,7 +275,7 @@ Keep the nine-person UX fixture. Add a separate deterministic local/staging scal
 - 1,000+ accounts;
 - coaches with 10, 100, and 250 athletes;
 - accounts with 10, 100, and 250 programs;
-- programs with up to 52 weeks and realistic workouts/items;
+- programs with up to 208 ordered workouts and realistic groups/items;
 - programs with multiple historical versions;
 - 1,001 and 5,000 scheduled occurrences;
 - 1,001 and 5,000 completed sessions;
@@ -446,7 +446,7 @@ Do not deploy to production as part of this review. A dev deployment should happ
 Use the existing personas deliberately, plus isolated generated users for concurrency/scale tests.
 
 1. Authenticate, recover from workspace-load failure, switch test persona, and sign out without leaking cached account data.
-2. Create a program and quick workout; rename; add/copy/delete weeks; add/reorder/delete workouts, sections, and exercises; prescribe; save; publish.
+2. Create a program and quick workout; rename; add/reorder/delete workouts and exercises within the standard groups; prescribe; save; publish.
 3. Browse Library/Own/Coach content with correct source, object type, lifecycle, availability, actions, and permissions.
 4. Make published content available, schedule every occurrence, reschedule, remove, skip, restore, complete, and repeat a finite program.
 5. Open the same workout detail from Next, Calendar, Programs, and Coaching with correct Back behavior and navigation highlight.

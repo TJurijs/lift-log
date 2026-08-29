@@ -14,7 +14,7 @@ async function readAppSource() {
   ]);
   return `${app}\n${programView}`;
 }
-test("program creation always starts a finite one-week program", async () => {
+test("program creation presents an ordered workout sequence instead of a week plan", async () => {
   const app = await readAppSource();
   const programModal = app.slice(
     app.indexOf("function ProgramModal"),
@@ -31,34 +31,31 @@ test("program creation always starts a finite one-week program", async () => {
     programModal,
     /Repeating|repeating|Fixed number of weeks/,
   );
-  assert.match(programModal, /Start with Week 1/);
-  assert.match(programModal, /copy any week as many times as you need/);
+  assert.match(
+    programModal,
+    /Add workouts in training order\. Athletes schedule each session on the dates that suit them\./,
+  );
+  assert.doesNotMatch(programModal, /Week 1|week as many times|Duplicate week/);
 });
 
-test("the week controls offer direct blank and current-week copy actions", async () => {
-  const app = await readAppSource();
+test("the program editor exposes one workout sequence with explicit reorder mode", async () => {
+  const programView = await readFile(programViewPath, "utf8");
 
-  assert.match(app, /aria-label="Add blank week"/);
-  assert.match(app, /aria-label=\{`Duplicate Week \$\{selectedWeek\}`\}/);
-  assert.doesNotMatch(app, /Extend this program/);
-  assert.doesNotMatch(app, /week-create-menu/);
+  assert.match(programView, /workouts: PlannedWorkout\[\]/);
+  assert.match(programView, />Workout sequence</);
+  assert.match(programView, /workouts\.map\(\(workout, index\) =>/);
+  assert.match(programView, /aria-pressed=\{reorderingWorkouts\}/);
+  assert.match(programView, /\{reorderingWorkouts \? "Done" : "Reorder"\}/);
   assert.match(
-    app,
-    /repository\.duplicateWeekTimes\(currentWeek\.id, copyCount\)/,
+    programView,
+    /onReorderWorkouts\(arrayMove\(ids, from, to\)\)/,
   );
-  assert.match(app, /52 - program\.weeks\.length/);
-  assert.match(
-    app,
-    /duplicateWeekTimes\(currentWeek\.id, copyCount\)[\s\S]*const lastWeek = refreshed\.weeks\.at\(-1\)[\s\S]*selectProgram\(refreshed, \{ weekIndex: lastWeek\?\.index \}\)/,
+  assert.doesNotMatch(
+    programView,
+    /currentWeek|selectedWeek|onSelectWeek|onAddBlankWeek|onCopyWeek|onDeleteWeek/,
   );
-});
-
-test("the compact week controls retain progress feedback", async () => {
-  const app = await readAppSource();
-
-  assert.match(app, /localWeekAction === "blank"/);
-  assert.match(app, /localWeekAction === "copy"/);
-  assert.match(app, /runWeekAction\("copy", \(\) => onCopyWeek\(1\)\)/);
-  assert.match(app, /weekMutationRef\.current/);
-  assert.match(app, /localWeekActionRef\.current/);
+  assert.doesNotMatch(
+    programView,
+    /Add blank week|Duplicate Week|week-tabs|week-create-menu/,
+  );
 });

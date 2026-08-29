@@ -1,11 +1,8 @@
 import {
   Activity,
   ArrowLeft,
-  ArrowRight,
-  BicepsFlexed,
   CalendarPlus,
   ChevronRight,
-  Copy,
   Dumbbell,
   Layers3,
   LoaderCircle,
@@ -22,8 +19,6 @@ import {
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
-  useDraggable,
-  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -36,27 +31,31 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
-  EntryMode,
   Exercise,
-  ExerciseDiscipline,
   PlannedWorkout,
   Program,
   WorkoutItem,
-  WorkoutSection,
+} from "../../../lib/domain";
+import {
+  loggingFormatFor,
+  loggingFormatLabel,
 } from "../../../lib/domain";
 import type { TrainingContentCapabilities } from "../../../lib/capabilities";
 import { cn } from "../../../lib/presentation";
 import { presentProgramProvenance } from "../../../lib/provenance";
+import { ExerciseCategoryMark } from "../../exercise-category-icons";
+import { ExerciseVideoLink } from "../../exercise-video-link";
 import {
+  DetailNavigation,
   ModalShell,
   PageHeader,
   SourceTag,
   StatusBadge,
 } from "../../ui-primitives";
 
-type ProgramActionKind = "delete" | "publish" | "edit" | "open" | "week";
+type ProgramActionKind = "delete" | "publish" | "edit" | "open";
 
 export interface ProgramViewProps {
   program: Program;
@@ -64,32 +63,17 @@ export interface ProgramViewProps {
   mutationPending: boolean;
   viewerId: string;
   capabilities: TrainingContentCapabilities;
-  currentWeek: Program["weeks"][number];
-  selectedWeek: number;
+  workouts: PlannedWorkout[];
   selectedWorkout?: PlannedWorkout;
-  selectedSectionId: string;
   onSearchExercises: (query: string) => Promise<Exercise[]>;
-  onSelectWeek: (week: number) => void;
   onSelectWorkout: (id: string) => void;
-  onSelectSection: (id: string) => void;
-  onAddBlankWeek: () => Promise<boolean>;
-  onCopyWeek: (count: number) => Promise<boolean>;
-  onDeleteWeek: () => void;
   onAddWorkout: () => void;
   onDeleteWorkout: () => void;
   onReorderWorkouts: (ids: string[]) => void;
-  onAddSection: () => void;
-  onEditSection: (section: WorkoutSection) => void;
-  onDeleteSection: (section: WorkoutSection) => void;
-  onReorderSections: (ids: string[]) => void;
-  onAddExercise: (exercise: Exercise, sectionId?: string) => void;
+  onAddExercise: (exercise: Exercise) => void;
   onEditItem: (item: WorkoutItem) => void;
   onRemoveItem: (id: string) => void;
-  onMoveItem: (
-    itemId: string,
-    destinationSectionId: string,
-    destinationPosition: number,
-  ) => void;
+  onReorderItems: (ids: string[]) => void;
   onSave: (title: string, description: string) => void;
   onCreateDraft: () => void;
   onBack: () => void;
@@ -100,62 +84,27 @@ export interface ProgramViewProps {
   renderWorkoutItem: (item: WorkoutItem) => ReactNode;
 }
 
-function modeLabel(mode: EntryMode) {
-  return {
-    none: "Instructions",
-    sets: "Sets",
-    result: "Single result",
-    intervals: "Intervals",
-  }[mode];
-}
-
-function inferredExerciseDiscipline(exercise: Exercise): ExerciseDiscipline {
-  if (exercise.discipline) return exercise.discipline;
-  if (exercise.category === "Weightlifting") return "weightlifting";
-  if (
-    ["Functional fitness", "Gymnastics", "Conditioning", "Cardio"].includes(
-      exercise.category,
-    )
-  ) {
-    return "functional";
-  }
-  return "gym";
-}
-
-const exerciseTrainingStyles: Array<{
-  value: ExerciseDiscipline;
-  label: string;
-  icon: typeof Activity;
-}> = [
-  { value: "weightlifting", label: "Weightlifting", icon: Dumbbell },
-  { value: "gym", label: "Gym", icon: BicepsFlexed },
-  { value: "functional", label: "Functional", icon: Activity },
-];
-
 const programMobileExercisePickerCss = `
-.section-add-exercise{display:none}
+.exercise-picker-modal{max-height:min(78dvh,680px);display:grid;grid-template-rows:auto auto minmax(0,1fr);overflow:hidden}
+.exercise-picker-modal .modal-heading{margin-bottom:10px}
+.exercise-picker-modal .search-field{margin-bottom:10px}
+.exercise-picker-modal .picker-results{min-height:0;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+.exercise-picker-modal .picker-results::-webkit-scrollbar{display:none}
+.exercise-picker-modal .picker-result-row{grid-template-columns:minmax(0,1fr) 30px;border:1px solid var(--line);border-radius:9px}
+.exercise-picker-modal .picker-result-main{padding:9px 10px;grid-template-columns:34px minmax(0,1fr) 20px}
+.exercise-picker-modal .picker-results strong{font-size:10px}
+.exercise-picker-modal .picker-results small{font-size:8px}
+.exercise-reorder-row{min-height:28px;display:flex;justify-content:flex-end;align-items:center}
+.workout-reorder-toggle{width:auto!important;margin:0!important}
 @media(max-width:700px){
-  .exercise-drop-empty,.desktop-exercise-picker{display:none}
-  .section-add-exercise{width:100%;min-height:48px;margin-top:8px;border:1px dashed var(--line-light);border-radius:10px;display:flex;align-items:center;justify-content:center;gap:8px;background:transparent;color:var(--text-soft);font-size:12px;font-weight:700;cursor:pointer}
-  .section-add-exercise svg{color:var(--accent)}
-  .section-add-exercise:focus-visible{border-color:var(--accent);outline:0}
   .modal-backdrop:has(.exercise-picker-modal){padding:10px;place-items:end center}
-  .exercise-picker-modal{max-height:min(78dvh,680px);display:grid;grid-template-rows:auto auto minmax(0,1fr);overflow:hidden}
-  .exercise-picker-modal .modal-heading{margin-bottom:10px}
   .exercise-picker-modal .picker-results{min-height:0;grid-template-columns:1fr;grid-auto-rows:minmax(56px,auto);gap:5px;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
-  .exercise-picker-modal .picker-results::-webkit-scrollbar{display:none}
-  .exercise-picker-modal .picker-result-row{grid-template-columns:minmax(0,1fr)}
-  .exercise-picker-modal .picker-drag-handle,.exercise-picker-modal .picker-help{display:none}
   .exercise-picker-modal .picker-result-main{padding:8px 10px;grid-template-columns:34px minmax(0,1fr) 20px}
   .exercise-picker-modal .picker-results strong{font-size:12px}
   .exercise-picker-modal .picker-results small{font-size:10px}
+  .exercise-picker-modal .picker-help{display:none}
+  .exercise-reorder-row{min-height:34px}
 }`;
-
-function exerciseTrainingStyleLabel(style: ExerciseDiscipline) {
-  return (
-    exerciseTrainingStyles.find((item) => item.value === style)?.label ?? "Gym"
-  );
-}
 
 export default function ProgramView({
   program,
@@ -163,28 +112,17 @@ export default function ProgramView({
   mutationPending,
   viewerId,
   capabilities,
-  currentWeek,
-  selectedWeek,
+  workouts,
   selectedWorkout,
-  selectedSectionId,
   onSearchExercises,
-  onSelectWeek,
   onSelectWorkout,
-  onSelectSection,
-  onAddBlankWeek,
-  onCopyWeek,
-  onDeleteWeek,
   onAddWorkout,
   onDeleteWorkout,
   onReorderWorkouts,
-  onAddSection,
-  onEditSection,
-  onDeleteSection,
-  onReorderSections,
   onAddExercise,
   onEditItem,
   onRemoveItem,
-  onMoveItem,
+  onReorderItems,
   onSave,
   onCreateDraft,
   onBack,
@@ -198,13 +136,9 @@ export default function ProgramView({
   const [pickerResults, setPickerResults] = useState<Exercise[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerError, setPickerError] = useState("");
-  const [mobilePickerSectionId, setMobilePickerSectionId] = useState<
-    string | null
-  >(null);
-  const [localWeekAction, setLocalWeekAction] = useState<
-    "blank" | "copy" | null
-  >(null);
-  const localWeekActionRef = useRef(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [reorderingWorkouts, setReorderingWorkouts] = useState(false);
+  const [reorderingExercises, setReorderingExercises] = useState(false);
   const dragSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 7 } }),
     useSensor(TouchSensor, {
@@ -223,8 +157,8 @@ export default function ProgramView({
   const [description, setDescription] = useState(program.description);
   const canEdit = capabilities.edit;
   const editable = isDraft && capabilities.edit;
-  const additionalWeekCapacity = Math.max(0, 52 - program.weeks.length);
   const dragEnabled = editable && !mutationPending;
+  const exerciseDragEnabled = dragEnabled && reorderingExercises;
   useEffect(() => {
     let active = true;
     const timer = window.setTimeout(() => {
@@ -251,38 +185,28 @@ export default function ProgramView({
       window.clearTimeout(timer);
     };
   }, [onSearchExercises, pickerQuery]);
-  const selectedTargetSection =
-    selectedWorkout?.sections.find(
-      (section) => section.id === selectedSectionId,
-    ) ?? selectedWorkout?.sections[0];
-  const pickerTargetSection =
-    selectedWorkout?.sections.find(
-      (section) => section.id === mobilePickerSectionId,
-    ) ?? selectedTargetSection;
+  const workoutItems = selectedWorkout?.sections.flatMap((section) => section.items) ?? [];
 
-  function openMobileExercisePicker(sectionId: string) {
+  function openExercisePicker() {
     setPickerQuery("");
-    setMobilePickerSectionId(sectionId);
-    onSelectSection(sectionId);
+    setPickerOpen(true);
   }
 
-  function closeMobileExercisePicker() {
-    setMobilePickerSectionId(null);
+  function closeExercisePicker() {
+    setPickerOpen(false);
   }
 
   function addExerciseFromPicker(exercise: Exercise) {
-    const destinationSectionId = pickerTargetSection?.id;
-    if (!destinationSectionId) return;
-    setMobilePickerSectionId(null);
-    onSelectSection(destinationSectionId);
-    onAddExercise(exercise, destinationSectionId);
+    if (!selectedWorkout?.sections[0]) return;
+    setPickerOpen(false);
+    onAddExercise(exercise);
   }
 
   function finishWorkoutDrag(event: DragEndEvent) {
     if (mutationPending) return;
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const ids = currentWeek.workouts.map((item) => item.id);
+    const ids = workouts.map((item) => item.id);
     const from = ids.indexOf(String(active.id));
     const to = ids.indexOf(String(over.id));
     if (from >= 0 && to >= 0) onReorderWorkouts(arrayMove(ids, from, to));
@@ -292,73 +216,13 @@ export default function ProgramView({
     if (mutationPending || !selectedWorkout || !event.over) return;
     const activeData = event.active.data.current;
     const overData = event.over.data.current;
-    if (activeData?.type === "library-exercise") {
-      const destinationSectionId = String(overData?.sectionId ?? "");
-      if (
-        !selectedWorkout.sections.some(
-          (section) => section.id === destinationSectionId,
-        )
-      )
-        return;
-      const exercise = pickerResults.find(
-        (candidate) => candidate.id === String(activeData.exerciseId),
-      );
-      if (!exercise) return;
-      onSelectSection(destinationSectionId);
-      onAddExercise(exercise, destinationSectionId);
-      return;
-    }
-    if (activeData?.type === "section") {
-      const sectionIds = selectedWorkout.sections.map((section) => section.id);
-      const targetSectionId = String(overData?.sectionId ?? "");
-      const from = sectionIds.indexOf(String(activeData.sectionId));
-      const to = sectionIds.indexOf(targetSectionId);
-      if (from >= 0 && to >= 0 && from !== to)
-        onReorderSections(arrayMove(sectionIds, from, to));
-      return;
-    }
-    if (activeData?.type !== "item") return;
-    const destinationSectionId = String(overData?.sectionId ?? "");
-    const destinationSection = selectedWorkout.sections.find(
-      (section) => section.id === destinationSectionId,
-    );
-    if (!destinationSection) return;
-    const itemId = String(activeData.itemId);
-    const sourceSectionId = String(activeData.sectionId);
-    const destinationIds = destinationSection.items
-      .map((item) => item.id)
-      .filter((id) => id !== itemId);
-    const overItemId =
-      overData?.type === "item" ? String(overData.itemId) : null;
-    let destinationPosition = overItemId
-      ? destinationIds.indexOf(overItemId)
-      : destinationIds.length;
-    if (destinationPosition < 0) destinationPosition = destinationIds.length;
-    if (sourceSectionId === destinationSectionId) {
-      const originalIds = destinationSection.items.map((item) => item.id);
-      const from = originalIds.indexOf(itemId);
-      const overIndex = overItemId ? originalIds.indexOf(overItemId) : -1;
-      if (from >= 0 && overIndex >= 0) destinationPosition = overIndex;
-      if (from === destinationPosition) return;
-    }
-    onMoveItem(itemId, destinationSectionId, destinationPosition);
-    onSelectSection(destinationSectionId);
+    if (activeData?.type !== "item" || overData?.type !== "item") return;
+    const ids = workoutItems.map((item) => item.id);
+    const from = ids.indexOf(String(activeData.itemId));
+    const to = ids.indexOf(String(overData.itemId));
+    if (from >= 0 && to >= 0 && from !== to) onReorderItems(arrayMove(ids, from, to));
   }
 
-  async function runWeekAction(
-    kind: "blank" | "copy",
-    mutation: () => Promise<boolean>,
-  ) {
-    if (localWeekActionRef.current || action) return;
-    localWeekActionRef.current = true;
-    setLocalWeekAction(kind);
-    try {
-      await mutation();
-    } finally {
-      localWeekActionRef.current = false;
-      setLocalWeekAction(null);
-    }
-  }
   const exercisePickerBody = selectedWorkout?.sections.length ? (
     <>
       <label className="search-field">
@@ -383,7 +247,7 @@ export default function ProgramView({
           </div>
         )}
         {pickerResults.map((exercise) => (
-          <DraggableExercisePickerRow
+          <ExercisePickerRow
             key={exercise.id}
             exercise={exercise}
             disabled={!dragEnabled}
@@ -395,16 +259,40 @@ export default function ProgramView({
         )}
       </div>
       <small className="picker-help">
-        Drag an exercise into any section, or select it to add it to the active
-        section. Then prescribe sets, weight or time.
+        Select an exercise, then prescribe sets, weight or time.
       </small>
     </>
   ) : (
-    <div className="empty-inline">Add a workout section first.</div>
+    <div className="empty-inline">This workout is not ready for exercises.</div>
   );
+  const mobileSaveAction = editable ? (
+    <button
+      type="button"
+      className="detail-navigation-primary"
+      disabled={Boolean(action) || !title.trim()}
+      onClick={() => onSave(title, description)}
+    >
+      {action === "publish" ? "Saving…" : "Save"}
+    </button>
+  ) : !isDraft && canEdit ? (
+    <button
+      type="button"
+      className="detail-navigation-primary"
+      disabled={Boolean(action)}
+      onClick={onCreateDraft}
+    >
+      {action === "edit" ? "Opening…" : "Edit"}
+    </button>
+  ) : undefined;
   return (
     <>
       <style>{programMobileExercisePickerCss}</style>
+      <DetailNavigation
+        backLabel={program.athleteId === viewerId ? "Programs" : "Coaching"}
+        title={isQuickWorkout ? "Workout" : "Program"}
+        onBack={onBack}
+        action={mobileSaveAction}
+      />
       <PageHeader
         eyebrow={
           program.athleteId === viewerId
@@ -419,11 +307,17 @@ export default function ProgramView({
               {isQuickWorkout ? <Activity size={24} /> : <Layers3 size={24} />}
             </span>
             {editable ? (
-              <input
+              <textarea
                 className="program-editor-title-input"
                 aria-label={`${isQuickWorkout ? "Workout" : "Program"} name`}
                 value={title}
-                onChange={(event) => setTitle(event.target.value)}
+                rows={1}
+                onChange={(event) =>
+                  setTitle(event.target.value.replace(/[\r\n]+/g, " "))
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.preventDefault();
+                }}
               />
             ) : (
               <h1>{headerTitle}</h1>
@@ -434,7 +328,7 @@ export default function ProgramView({
       >
         <div className="program-editor-header-actions">
           <button
-            className="button secondary small program-editor-back"
+            className="button secondary small program-editor-back desktop-detail-action"
             onClick={onBack}
           >
             <ArrowLeft size={15} />
@@ -466,7 +360,7 @@ export default function ProgramView({
           )}
           {editable ? (
             <button
-              className="button primary small program-editor-primary-action"
+              className="button primary small program-editor-primary-action desktop-detail-action"
               disabled={Boolean(action) || !title.trim()}
               onClick={() => onSave(title, description)}
             >
@@ -486,7 +380,7 @@ export default function ProgramView({
             !isDraft &&
             canEdit && (
               <button
-                className="button primary small program-editor-primary-action"
+                className="button primary small program-editor-primary-action desktop-detail-action"
                 disabled={Boolean(action)}
                 onClick={onCreateDraft}
               >
@@ -518,84 +412,6 @@ export default function ProgramView({
           />
         </label>
       )}
-      {!isQuickWorkout && editable && program.weeks.length > 1 && (
-        <div className="program-editor-week-delete">
-          <button className="button danger small" onClick={onDeleteWeek}>
-            <Trash2 size={14} />
-            Delete week {selectedWeek}
-          </button>
-        </div>
-      )}
-      {!isQuickWorkout && (
-        <div className="week-tabs">
-          <button
-            className="icon-button"
-            aria-label="Previous program week"
-            onClick={() => onSelectWeek(Math.max(1, selectedWeek - 1))}
-            disabled={selectedWeek === 1}
-          >
-            <ArrowLeft size={16} />
-          </button>
-          <div>
-            {program.weeks.map((week) => (
-              <button
-                key={week.index}
-                className={selectedWeek === week.index ? "active" : ""}
-                onClick={() => onSelectWeek(week.index)}
-              >
-                <small>Week</small>
-                <strong>{week.index}</strong>
-              </button>
-            ))}
-            {editable && (
-              <>
-                <button
-                  className="week-add"
-                  disabled={Boolean(action) || additionalWeekCapacity === 0}
-                  onClick={() => void runWeekAction("blank", onAddBlankWeek)}
-                  title="Add blank week"
-                  aria-label="Add blank week"
-                >
-                  {localWeekAction === "blank" ? (
-                    <LoaderCircle className="button-spinner" size={17} />
-                  ) : (
-                    <Plus size={18} />
-                  )}
-                </button>
-                <button
-                  className="week-add"
-                  disabled={
-                    !currentWeek.workouts.length ||
-                    Boolean(action) ||
-                    additionalWeekCapacity === 0
-                  }
-                  onClick={() =>
-                    void runWeekAction("copy", () => onCopyWeek(1))
-                  }
-                  title={`Duplicate Week ${selectedWeek}`}
-                  aria-label={`Duplicate Week ${selectedWeek}`}
-                >
-                  {localWeekAction === "copy" ? (
-                    <LoaderCircle className="button-spinner" size={17} />
-                  ) : (
-                    <Copy size={17} />
-                  )}
-                </button>
-              </>
-            )}
-          </div>
-          <button
-            className="icon-button"
-            aria-label="Next program week"
-            onClick={() =>
-              onSelectWeek(Math.min(program.weeks.length, selectedWeek + 1))
-            }
-            disabled={selectedWeek === program.weeks.length}
-          >
-            <ArrowRight size={16} />
-          </button>
-        </div>
-      )}
       <div
         className={`builder-layout${isQuickWorkout ? " quick-workout-builder" : ""}`}
       >
@@ -603,11 +419,19 @@ export default function ProgramView({
           <aside className="workout-list panel">
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">
-                  {isQuickWorkout ? "Quick workout" : `Week ${selectedWeek}`}
-                </p>
-                <h3>{isQuickWorkout ? "Session" : currentWeek.label}</h3>
+                <p className="eyebrow">Workout sequence</p>
+                <h3>{`${workouts.length} ${workouts.length === 1 ? "workout" : "workouts"}`}</h3>
               </div>
+              {editable && workouts.length > 1 && (
+                <button
+                  type="button"
+                  className="text-button workout-reorder-toggle"
+                  aria-pressed={reorderingWorkouts}
+                  onClick={() => setReorderingWorkouts((current) => !current)}
+                >
+                  {reorderingWorkouts ? "Done" : "Reorder"}
+                </button>
+              )}
             </div>
             <DndContext
               sensors={dragSensors}
@@ -615,17 +439,17 @@ export default function ProgramView({
               onDragEnd={finishWorkoutDrag}
             >
               <SortableContext
-                items={currentWeek.workouts.map((workout) => workout.id)}
+                items={workouts.map((workout) => workout.id)}
                 strategy={verticalListSortingStrategy}
               >
                 <div className="workout-list-items">
-                  {currentWeek.workouts.map((workout, index) => (
+                  {workouts.map((workout, index) => (
                     <SortableWorkoutRow
                       key={workout.id}
                       workout={workout}
                       index={index}
                       selected={selectedWorkout?.id === workout.id}
-                      editable={dragEnabled}
+                      editable={dragEnabled && reorderingWorkouts}
                       onSelect={() => onSelectWorkout(workout.id)}
                     />
                   ))}
@@ -682,45 +506,40 @@ export default function ProgramView({
                   </div>
                 </div>
                 {editable ? (
-                  <SortableContext
-                    items={selectedWorkout.sections.map(
-                      (section) => `section:${section.id}`,
+                  <div className="builder-section-list exercise-group-list">
+                    {workoutItems.length > 1 && (
+                      <div className="exercise-reorder-row">
+                        <button
+                          className="text-button workout-reorder-toggle"
+                          type="button"
+                          disabled={mutationPending}
+                          aria-pressed={reorderingExercises}
+                          onClick={() => setReorderingExercises((value) => !value)}
+                        >
+                          {reorderingExercises ? "Done" : "Reorder"}
+                        </button>
+                      </div>
                     )}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="builder-section-list">
-                      {selectedWorkout.sections.map((section) => (
-                        <SortableBuilderSection
-                          key={section.id}
-                          section={section}
-                          selected={selectedTargetSection?.id === section.id}
-                          editable={editable}
-                          dragEnabled={dragEnabled}
-                          canDelete={section.kind !== "main"}
-                          onSelect={() => onSelectSection(section.id)}
-                          onEdit={() => onEditSection(section)}
-                          onDelete={() => onDeleteSection(section)}
-                          onAddExercise={() =>
-                            openMobileExercisePicker(section.id)
-                          }
-                          onEditItem={onEditItem}
-                          onRemoveItem={onRemoveItem}
-                          renderWorkoutItem={renderWorkoutItem}
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
+                    <SortableExerciseList
+                      items={workoutItems}
+                      editable={editable && !mutationPending}
+                      dragEnabled={exerciseDragEnabled}
+                      onEditItem={onEditItem}
+                      onRemoveItem={onRemoveItem}
+                      renderWorkoutItem={renderWorkoutItem}
+                    />
+                    <button
+                      className="button secondary full"
+                      type="button"
+                      disabled={mutationPending}
+                      onClick={openExercisePicker}
+                    >
+                      <Plus size={15} />
+                      Add exercise
+                    </button>
+                  </div>
                 ) : (
                   renderWorkoutDetails(selectedWorkout)
-                )}
-                {editable && (
-                  <button
-                    className="button secondary add-section-button"
-                    onClick={onAddSection}
-                  >
-                    <Plus size={15} />
-                    Add section
-                  </button>
                 )}
               </>
             ) : (
@@ -731,25 +550,11 @@ export default function ProgramView({
               </div>
             )}
           </section>
-          {editable && !mobilePickerSectionId && (
-            <aside
-              className="exercise-picker desktop-exercise-picker panel"
-              aria-busy={mutationPending || pickerLoading}
-            >
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Exercise library</p>
-                  <h3>{`Add to ${pickerTargetSection?.title ?? "section"}`}</h3>
-                </div>
-              </div>
-              {exercisePickerBody}
-            </aside>
-          )}
-          {editable && mobilePickerSectionId && (
+          {editable && pickerOpen && (
             <ModalShell
-              title={`Add to ${pickerTargetSection?.title ?? "section"}`}
+              title="Add exercise"
               description="Choose an exercise, then set its prescription."
-              onClose={closeMobileExercisePicker}
+              onClose={closeExercisePicker}
               className="exercise-picker-modal"
             >
               {exercisePickerBody}
@@ -761,7 +566,7 @@ export default function ProgramView({
   );
 }
 
-function DraggableExercisePickerRow({
+function ExercisePickerRow({
   exercise,
   disabled,
   onAdd,
@@ -770,54 +575,29 @@ function DraggableExercisePickerRow({
   disabled: boolean;
   onAdd: () => void;
 }) {
-  const style = inferredExerciseDiscipline(exercise);
-  const StyleIcon =
-    exerciseTrainingStyles.find((item) => item.value === style)?.icon ??
-    Dumbbell;
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({
-      id: `picker:${exercise.id}`,
-      data: { type: "library-exercise", exerciseId: exercise.id },
-      disabled,
-    });
   return (
-    <div
-      ref={setNodeRef}
-      className={cn("picker-result-row", isDragging && "dragging")}
-      style={{ transform: CSS.Translate.toString(transform) }}
-    >
-      <button
-        className="drag-handle picker-drag-handle"
-        type="button"
-        disabled={disabled}
-        aria-label={`Drag ${exercise.name} into a workout section`}
-        title="Drag into any section"
-        {...attributes}
-        {...listeners}
-      >
-        ⠿
-      </button>
+    <div className="picker-result-row">
       <button
         className="picker-result-main"
         type="button"
         disabled={disabled}
         onClick={onAdd}
       >
-        <span
-          className={cn("exercise-style-icon", style)}
-          title={exerciseTrainingStyleLabel(style)}
-          aria-label={exerciseTrainingStyleLabel(style)}
-        >
-          <StyleIcon size={15} />
-        </span>
+        <ExerciseCategoryMark category={exercise.category} />
         <div>
           <strong>{exercise.name}</strong>
           <small>
-            {exercise.category} · {modeLabel(exercise.defaultMode)}
+            {exercise.category} · {loggingFormatLabel(
+              loggingFormatFor(exercise.defaultMode, exercise.defaultFields),
+            )}
           </small>
         </div>
         <Plus size={15} />
       </button>
+      <ExerciseVideoLink
+        url={exercise.videoUrl}
+        exerciseName={exercise.name}
+      />
     </div>
   );
 }
@@ -879,150 +659,33 @@ function SortableWorkoutRow({
   );
 }
 
-function SortableBuilderSection({
-  section,
-  selected,
-  editable,
-  dragEnabled,
-  canDelete,
-  onSelect,
-  onEdit,
-  onDelete,
-  onAddExercise,
-  onEditItem,
-  onRemoveItem,
-  renderWorkoutItem,
-}: {
-  section: WorkoutSection;
-  selected: boolean;
-  editable: boolean;
-  dragEnabled: boolean;
-  canDelete: boolean;
-  onSelect: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onAddExercise: () => void;
-  onEditItem: (item: WorkoutItem) => void;
-  onRemoveItem: (id: string) => void;
-  renderWorkoutItem: (item: WorkoutItem) => ReactNode;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: `section:${section.id}`,
-    data: { type: "section", sectionId: section.id },
-    disabled: !dragEnabled,
-  });
-  return (
-    <div
-      ref={setNodeRef}
-      className={cn(
-        "builder-section",
-        selected && "selected",
-        isDragging && "dragging",
-      )}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-    >
-      <div className="builder-section-heading">
-        {dragEnabled ? (
-          <button
-            className="drag-handle section-drag-handle"
-            type="button"
-            aria-label={`Drag ${section.title} section to reorder`}
-            title="Drag section to reorder"
-            {...attributes}
-            {...listeners}
-          >
-            ⠿
-          </button>
-        ) : (
-          <span className="drag-handle-placeholder" aria-hidden />
-        )}
-        <div className="section-title-group">
-          <button className="section-title-button" onClick={onSelect}>
-            <span>{section.title}</span>
-            <small>{section.kind ?? "custom"}</small>
-          </button>
-          {editable && (
-            <div className="section-actions">
-              <button
-                className="section-action"
-                onClick={onEdit}
-                aria-label={`Edit ${section.title}`}
-                title="Edit section"
-              >
-                <Pencil size={12} />
-              </button>
-              {canDelete && (
-                <button
-                  className="section-action danger"
-                  onClick={onDelete}
-                  aria-label={`Delete ${section.title}`}
-                  title={`Delete ${section.title} section`}
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-      <SortableExerciseList
-        section={section}
-        editable={editable}
-        dragEnabled={dragEnabled}
-        onAddExercise={onAddExercise}
-        onEditItem={onEditItem}
-        onRemoveItem={onRemoveItem}
-        renderWorkoutItem={renderWorkoutItem}
-      />
-    </div>
-  );
-}
-
 function SortableExerciseList({
-  section,
+  items,
   editable,
   dragEnabled,
-  onAddExercise,
   onEditItem,
   onRemoveItem,
   renderWorkoutItem,
 }: {
-  section: WorkoutSection;
+  items: WorkoutItem[];
   editable: boolean;
   dragEnabled: boolean;
-  onAddExercise: () => void;
   onEditItem: (item: WorkoutItem) => void;
   onRemoveItem: (id: string) => void;
   renderWorkoutItem: (item: WorkoutItem) => ReactNode;
 }) {
-  const { setNodeRef, isOver } = useDroppable({
-    id: `item-list:${section.id}`,
-    data: { type: "item-list", sectionId: section.id },
-    disabled: !dragEnabled,
-  });
   return (
     <SortableContext
-      items={section.items.map((item) => `item:${item.id}`)}
+      items={items.map((item) => `item:${item.id}`)}
       strategy={verticalListSortingStrategy}
     >
-      <div
-        ref={setNodeRef}
-        className={cn("builder-item-list", isOver && "drop-target")}
-      >
-        {section.items.length ? (
-          section.items.map((item, index) => (
+      <div className="builder-item-list">
+        {items.length ? (
+          items.map((item, index) => (
             <SortableExerciseItem
               key={item.id}
               item={item}
               index={index}
-              sectionId={section.id}
               editable={editable}
               dragEnabled={dragEnabled}
               onEdit={() => onEditItem(item)}
@@ -1032,20 +695,8 @@ function SortableExerciseList({
           ))
         ) : (
           <div className="empty-inline exercise-drop-empty">
-            {editable
-              ? "Drop an exercise here"
-              : "No items in this section yet."}
+            No exercises yet.
           </div>
-        )}
-        {editable && (
-          <button
-            className="section-add-exercise"
-            type="button"
-            onClick={onAddExercise}
-          >
-            <Plus size={17} />
-            Add exercise
-          </button>
         )}
       </div>
     </SortableContext>
@@ -1055,7 +706,6 @@ function SortableExerciseList({
 function SortableExerciseItem({
   item,
   index,
-  sectionId,
   editable,
   dragEnabled,
   onEdit,
@@ -1064,7 +714,6 @@ function SortableExerciseItem({
 }: {
   item: WorkoutItem;
   index: number;
-  sectionId: string;
   editable: boolean;
   dragEnabled: boolean;
   onEdit: () => void;
@@ -1080,7 +729,7 @@ function SortableExerciseItem({
     isDragging,
   } = useSortable({
     id: `item:${item.id}`,
-    data: { type: "item", itemId: item.id, sectionId },
+    data: { type: "item", itemId: item.id },
     disabled: !dragEnabled,
   });
   return (
@@ -1089,23 +738,22 @@ function SortableExerciseItem({
       className={cn(
         "builder-item",
         "builder-exercise-preview",
+        dragEnabled && "drag-enabled",
         isDragging && "dragging",
       )}
       style={{ transform: CSS.Transform.toString(transform), transition }}
     >
-      {dragEnabled ? (
+      {dragEnabled && (
         <button
           className="drag-handle"
           type="button"
-          aria-label={`Drag ${item.title} to reorder or move section`}
-          title="Drag to reorder or move section"
+          aria-label={`Drag ${item.title} to reorder`}
+          title="Drag to reorder"
           {...attributes}
           {...listeners}
         >
           ⠿
         </button>
-      ) : (
-        <span className="drag-handle-placeholder" aria-hidden />
       )}
       <div className="builder-exercise-preview-content">
         {renderWorkoutItem(item)}

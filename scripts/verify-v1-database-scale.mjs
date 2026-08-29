@@ -31,7 +31,7 @@ const databaseUrl =
 const parsedDatabaseUrl = assertLoopbackPostgresUrl(databaseUrl);
 const databaseDescription = describeLocalDatabase(parsedDatabaseUrl);
 
-const programShape = SCALE_SCENARIOS["program-10w-40"];
+const programShape = SCALE_SCENARIOS["program-40"];
 const rosterShape = SCALE_SCENARIOS["coach-50x150"];
 const exerciseShape = SCALE_SCENARIOS["exercise-5000"];
 const anchorDate = rosterShape.anchorDate;
@@ -77,7 +77,7 @@ function buildProgramContent() {
   const sections = [];
   const items = [];
   const prescriptions = [];
-  const sectionKinds = ["warmup", "main", "cooldown"];
+  const sectionKinds = ["warmup", "main", "conditioning", "cooldown"];
 
   for (let weekIndex = 1; weekIndex <= programShape.weeks; weekIndex += 1) {
     const weekId = deterministicUuid(`database-scale:week:${weekIndex}`);
@@ -95,14 +95,15 @@ function buildProgramContent() {
     ) {
       const workoutKey = `${weekIndex}:${workoutPosition}`;
       const workoutId = deterministicUuid(`database-scale:workout:${workoutKey}`);
+      const sequencePosition = workouts.length;
       workouts.push({
         id: workoutId,
         program_week_id: weekId,
-        title: `Scale week ${weekIndex} session ${workoutPosition + 1}`,
-        day_of_week: workoutPosition + 1,
+        title: `Scale session ${sequencePosition + 1}`,
+        day_of_week: null,
         position: workoutPosition,
         estimated_minutes: 75,
-        schedule_label: `Day ${workoutPosition + 1}`,
+        schedule_label: `Workout ${sequencePosition + 1}`,
       });
 
       const workoutSections = Array.from(
@@ -114,7 +115,7 @@ function buildProgramContent() {
           sections.push({
             id: sectionId,
             workout_id: workoutId,
-            title: ["Warm up", "Main work", "Cooldown"][sectionPosition],
+            title: ["Warm up", "Main work", "Functional", "Cooldown"][sectionPosition],
             section_kind: sectionKinds[sectionPosition] ?? "custom",
             notes: "Scale verification content",
             position: sectionPosition,
@@ -135,7 +136,7 @@ function buildProgramContent() {
           id: itemId,
           section_id: workoutSections[sectionPosition],
           source_exercise_id: sourceExerciseId,
-          snapshot_name: `Scale movement ${weekIndex}-${workoutPosition + 1}-${itemIndex + 1}`,
+          snapshot_name: `Scale movement ${sequencePosition + 1}-${itemIndex + 1}`,
           snapshot_cue: "Move with repeatable technique",
           entry_mode: "sets",
           tracking_fields: ["reps", "load", "rpe"],
@@ -330,8 +331,8 @@ async function seedAccountsAndContent(transaction) {
       ${ids.program}::uuid,
       ${ids.coach}::uuid,
       ${ids.coach}::uuid,
-      'ZZ scale 10-week program',
-      'Forty-workout database scale verification program',
+      'ZZ scale 40-workout sequence',
+      'Forty-workout ordered database scale verification program',
       'fixed_weeks',
       true,
       'self',
@@ -348,8 +349,8 @@ async function seedAccountsAndContent(transaction) {
       ${ids.coach}::uuid,
       1,
       'draft',
-      'ZZ scale 10-week program',
-      'Forty-workout database scale verification program'
+      'ZZ scale 40-workout sequence',
+      'Forty-workout ordered database scale verification program'
     )
   `;
   await transaction`

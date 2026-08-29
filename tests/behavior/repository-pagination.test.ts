@@ -11,6 +11,10 @@ function exerciseRows(count: number) {
     category: "Strength",
     discipline: "gym",
     tags: [],
+    source_provider: "catalyst-athletics",
+    source_external_id: String(index),
+    source_url: `https://www.catalystathletics.com/exercise/${index}/Exercise/`,
+    video_url: `https://www.youtube.com/watch?v=${index}`,
     cue: "Move well",
     default_entry_mode: "sets",
     default_tracking_fields: ["reps"],
@@ -51,6 +55,12 @@ describe("repository keyset pagination", () => {
     expect(first.items).toHaveLength(50);
     expect(second.items).toHaveLength(50);
     expect(first.items[0]?.id).toBe("exercise-00000");
+    expect(first.items[0]).toMatchObject({
+      sourceProvider: "catalyst-athletics",
+      sourceExternalId: "0",
+      sourceUrl: "https://www.catalystathletics.com/exercise/0/Exercise/",
+      videoUrl: "https://www.youtube.com/watch?v=0",
+    });
     expect(second.items[0]?.id).toBe("exercise-00050");
     expect(first.hasMore).toBe(true);
     expect(second.hasMore).toBe(true);

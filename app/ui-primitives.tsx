@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  ChevronLeft,
   CircleHelp,
   CircleUserRound,
   Info,
@@ -149,6 +150,34 @@ export function PageHeader({
       </div>
       {children && <div className="page-actions">{children}</div>}
     </header>
+  );
+}
+
+export function DetailNavigation({
+  backLabel,
+  title,
+  onBack,
+  action,
+}: {
+  backLabel: string;
+  title: string;
+  onBack: () => void;
+  action?: ReactNode;
+}) {
+  return (
+    <nav className="detail-navigation" aria-label={`${title} navigation`}>
+      <button
+        type="button"
+        className="detail-navigation-back"
+        onClick={onBack}
+        aria-label={`Back to ${backLabel}`}
+      >
+        <ChevronLeft size={25} strokeWidth={2.15} />
+        <span>{backLabel}</span>
+      </button>
+      <strong title={title}>{title}</strong>
+      <div className="detail-navigation-action">{action}</div>
+    </nav>
   );
 }
 

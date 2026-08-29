@@ -19,6 +19,7 @@ function workoutPayload(
   item: Record<string, unknown> = {
     id: "item-1",
     sourceExerciseId: "exercise-1",
+    exerciseCategory: "Weightlifting",
     name: "Snatch",
     cue: "Stay over the bar",
     entryMode: "sets",
@@ -352,7 +353,14 @@ describe("v1 bounded repository RPCs", () => {
           workouts: [
             {
               sections: [
-                { items: [{ prescription: { reps: "2", targetRpe: "8" } }] },
+                {
+                  items: [
+                    {
+                      category: "Weightlifting",
+                      prescription: { reps: "2", targetRpe: "8" },
+                    },
+                  ],
+                },
               ],
             },
           ],
@@ -436,6 +444,62 @@ describe("v1 bounded repository RPCs", () => {
         entries: [{ distance: 0.1, loadKg: 48, targetRpe: "8" }],
       },
     });
+  });
+
+  it("loads a bounded frequent-workout list with usage metadata", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [
+        {
+          kind: "assignment",
+          program_id: "program-1",
+          assignment_id: "assignment-1",
+          program_version_id: "version-1",
+          workout_id: "workout-1",
+          program_title: "Daily strength",
+          workout_title: "Full body",
+          content_type: "quick_workout",
+          is_quick_workout: true,
+          week_index: 1,
+          week_label: "Week 1",
+          workout_position: 0,
+          schedule_label: "Workout 1",
+          estimated_minutes: 45,
+          usage_count: "4",
+          last_used_at: "2026-08-28T18:30:00Z",
+          latest_occurrence_id: "schedule-4",
+          latest_planned_date: null,
+          latest_status: "planned",
+          latest_sequence_number: 4,
+        },
+      ],
+      error: null,
+    });
+    const { repository, from } = repositoryWithRpc(rpc);
+
+    await expect(repository.listFrequentSchedulableWorkouts(99)).resolves.toEqual([
+      expect.objectContaining({
+        kind: "assignment",
+        programId: "program-1",
+        assignmentId: "assignment-1",
+        programVersionId: "version-1",
+        workoutId: "workout-1",
+        workoutTitle: "Full body",
+        contentType: "quick_workout",
+        isQuickWorkout: true,
+        usageCount: 4,
+        lastUsedAt: "2026-08-28T18:30:00Z",
+        latestOccurrence: {
+          id: "schedule-4",
+          plannedDate: undefined,
+          status: "planned",
+          sequenceNumber: 4,
+        },
+      }),
+    ]);
+    expect(rpc).toHaveBeenCalledWith("list_frequent_schedulable_workouts", {
+      page_limit: 12,
+    });
+    expect(from).not.toHaveBeenCalled();
   });
 
   it("uses exact bounded cursor arguments for scheduling, calendar, history, exercise, and coach lists", async () => {

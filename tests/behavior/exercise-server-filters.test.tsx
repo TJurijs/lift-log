@@ -36,7 +36,7 @@ describe("server-backed exercise filters", () => {
         filters={{
           disciplines: ["functional"],
           categories: [],
-          modes: [],
+          formats: [],
           tracking: [],
         }}
         global={[backSquat]}
@@ -72,7 +72,7 @@ describe("server-backed exercise filters", () => {
     expect(onFilters).toHaveBeenLastCalledWith({
       disciplines: [],
       categories: [],
-      modes: [],
+      formats: [],
       tracking: [],
     });
     expect(screen.getByText("Back squat")).toBeVisible();
@@ -134,7 +134,7 @@ describe("server-backed exercise filters", () => {
       disciplines: ["functional"],
       categories: ["Bodybuilding"],
       modes: ["intervals"],
-      tracking: ["heartRate"],
+      tracking: ["heartRate", "rounds", "duration"],
       limit: 50,
     };
     await waitFor(() =>

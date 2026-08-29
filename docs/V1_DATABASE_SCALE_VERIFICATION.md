@@ -10,7 +10,7 @@ not exactly `localhost`, `127.0.0.1`, or `::1`.
 The runner builds this deterministic fixture:
 
 - one coach and 50 active athlete relationships;
-- one immutable 10-week program containing 40 workouts, 120 sections, 320
+- one immutable ordered program containing 40 workouts, 160 groups, 320
   workout items, and 960 prescribed entries;
 - 50 shared assignment rows that all reference the same published version;
 - 150 completed sessions for each athlete (7,500 total), with one representative

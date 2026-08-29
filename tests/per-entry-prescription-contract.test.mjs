@@ -26,7 +26,10 @@ test("prescriptions support shared defaults and per-entry set or round targets",
   assert.match(app, /type="checkbox"/);
   assert.match(app, /className="prescription-modal"/);
   assert.match(app, /<span>Format<\/span>/);
-  assert.match(app, /<option value="sets">Sets × reps<\/option>/);
+  assert.match(app, /<option value="repetitions">Repetitions<\/option>/);
+  assert.match(app, /<option value="duration">Duration<\/option>/);
+  assert.match(app, /<option value="distance">Distance<\/option>/);
+  assert.match(app, /function FormatTrackingFields/);
   assert.match(app, /\{saving \? "Saving…" : "Save"\}/);
   assert.match(
     styles,

@@ -19,6 +19,7 @@ import type {
   Exercise,
   ExerciseCursor,
   ExerciseWorkspaceData,
+  FrequentSchedulableWorkoutCandidate,
   OwnProfile,
   OutgoingCoachInvite,
   PendingCoachInvite,
@@ -41,6 +42,7 @@ import type {
 } from "./domain";
 import { trackingFieldsForMode } from "./domain";
 import { recordClientPerformance } from "./performance";
+import { implicitProgramWeek } from "./program-tree";
 import { BoundedQueryCache } from "./query-cache";
 import { activeWeekForDate, localDateOnly } from "./date-only";
 
@@ -56,6 +58,10 @@ interface ExerciseRow {
   category: string;
   discipline?: "weightlifting" | "gym" | "functional" | null;
   tags?: string[] | null;
+  source_provider?: string | null;
+  source_external_id?: string | null;
+  source_url?: string | null;
+  video_url?: string | null;
   cue: string;
   default_entry_mode: EntryMode;
   default_tracking_fields: TrackingField[];
@@ -131,6 +137,8 @@ interface SessionItemRow {
 
 interface CompletedSessionItemRow extends SessionItemRow {
   snapshot_name: string;
+  snapshot_category: string;
+  snapshot_video_url: string | null;
   snapshot_cue: string;
   tracking_fields: TrackingField[];
 }
@@ -172,6 +180,10 @@ export interface CreateExerciseInput {
   category: string;
   discipline?: Exercise["discipline"];
   tags?: string[];
+  sourceProvider?: string;
+  sourceExternalId?: string;
+  sourceUrl?: string;
+  videoUrl?: string;
   mode: EntryMode;
   fields?: TrackingField[];
   cue: string;
@@ -360,6 +372,94 @@ function parseSessionRow(value: unknown): SessionRow | null {
   };
 }
 
+function parseSchedulableWorkoutCandidate(
+  row: JsonRecord,
+): SchedulableWorkoutCandidate | null {
+  const kind = jsonString(row, "kind");
+  const programId = jsonString(row, "program_id", "programId");
+  const versionId = jsonString(
+    row,
+    "program_version_id",
+    "programVersionId",
+  );
+  const workoutId = jsonString(row, "workout_id", "workoutId");
+  const programTitle = jsonString(row, "program_title", "programTitle");
+  const workoutTitle = jsonString(row, "workout_title", "workoutTitle");
+  if (
+    (kind !== "program" && kind !== "assignment") ||
+    !programId ||
+    !versionId ||
+    !workoutId ||
+    !programTitle ||
+    !workoutTitle
+  ) {
+    return null;
+  }
+  const latestStatus = jsonNullableString(
+    row,
+    "latest_status",
+    "latestStatus",
+  );
+  const latestId = jsonNullableString(
+    row,
+    "latest_occurrence_id",
+    "latestOccurrenceId",
+  );
+  const normalizedLatestStatus: ScheduledWorkout["status"] | undefined =
+    latestStatus === "planned" ||
+    latestStatus === "in_progress" ||
+    latestStatus === "completed" ||
+    latestStatus === "skipped"
+      ? latestStatus
+      : undefined;
+  const latestOccurrence =
+    latestId && normalizedLatestStatus
+      ? {
+          id: latestId,
+          plannedDate:
+            jsonNullableString(
+              row,
+              "latest_planned_date",
+              "latestPlannedDate",
+            ) ?? undefined,
+          status: normalizedLatestStatus,
+          sequenceNumber:
+            jsonInteger(
+              row,
+              "latest_sequence_number",
+              "latestSequenceNumber",
+            ) ?? 0,
+        }
+      : undefined;
+  const contentType =
+    jsonString(row, "content_type", "contentType") === "quick_workout"
+      ? "quick_workout"
+      : "program";
+  return {
+    kind,
+    programId,
+    assignmentId:
+      jsonNullableString(row, "assignment_id", "assignmentId") ?? undefined,
+    programVersionId: versionId,
+    workoutId,
+    programTitle,
+    workoutTitle,
+    contentType,
+    isQuickWorkout:
+      jsonBoolean(row, "is_quick_workout", "isQuickWorkout") ??
+      contentType === "quick_workout",
+    weekIndex: jsonInteger(row, "week_index", "weekIndex") ?? 1,
+    weekLabel: jsonString(row, "week_label", "weekLabel") ?? "Week 1",
+    workoutPosition:
+      jsonInteger(row, "workout_position", "workoutPosition") ?? 0,
+    scheduleLabel:
+      jsonString(row, "schedule_label", "scheduleLabel") ?? "",
+    estimatedMinutes:
+      jsonInteger(row, "estimated_minutes", "estimatedMinutes") ?? 45,
+    latestOccurrence,
+  };
+}
+
 const entryModes = new Set<EntryMode>([
   "none",
   "sets",
@@ -401,6 +501,20 @@ function parseCoachCompletedSessionDetail(
       {
         id,
         title,
+        category:
+          jsonNullableString(
+            item,
+            "exerciseCategory",
+            "exercise_category",
+            "snapshot_category",
+          ) ?? undefined,
+        videoUrl:
+          jsonNullableString(
+            item,
+            "videoUrl",
+            "video_url",
+            "snapshot_video_url",
+          ) ?? undefined,
         cue: jsonString(item, "cue", "snapshot_cue") ?? "",
         mode: modeValue as EntryMode,
         fields,
@@ -595,6 +709,10 @@ function mapExercise(row: ExerciseRow, ownerName: string): Exercise {
     category: row.category,
     discipline: row.discipline ?? undefined,
     tags: row.tags ?? [],
+    sourceProvider: row.source_provider ?? undefined,
+    sourceExternalId: row.source_external_id ?? undefined,
+    sourceUrl: row.source_url ?? undefined,
+    videoUrl: row.video_url ?? undefined,
     cue: row.cue,
     scope: row.scope,
     ownerName: row.scope === "personal" ? ownerName : undefined,
@@ -690,6 +808,15 @@ function parseWorkoutPayload(
                 "sourceExerciseId",
                 "source_exercise_id",
               ) ?? undefined,
+            category:
+              jsonNullableString(
+                item,
+                "category",
+                "exerciseCategory",
+                "exercise_category",
+              ) ?? undefined,
+            videoUrl:
+              jsonNullableString(item, "videoUrl", "video_url") ?? undefined,
             title: jsonString(item, "name", "snapshotName", "snapshot_name") ??
               "Exercise",
             cue: jsonString(item, "cue", "snapshotCue", "snapshot_cue") ?? "",
@@ -1540,105 +1667,10 @@ export class LiftLogRepository {
       fail("Could not load workouts available to schedule", result.error);
     const rows = jsonRecords(result.data);
     const visibleRows = rows.slice(0, limit);
-    const items = visibleRows.flatMap(
-      (row): SchedulableWorkoutCandidate[] => {
-        const kind = jsonString(row, "kind");
-        const programId = jsonString(row, "program_id", "programId");
-        const versionId = jsonString(
-          row,
-          "program_version_id",
-          "programVersionId",
-        );
-        const workoutId = jsonString(row, "workout_id", "workoutId");
-        const programTitle = jsonString(
-          row,
-          "program_title",
-          "programTitle",
-        );
-        const workoutTitle = jsonString(
-          row,
-          "workout_title",
-          "workoutTitle",
-        );
-        if (
-          (kind !== "program" && kind !== "assignment") ||
-          !programId ||
-          !versionId ||
-          !workoutId ||
-          !programTitle ||
-          !workoutTitle
-        ) {
-          return [];
-        }
-        const latestStatus = jsonNullableString(
-          row,
-          "latest_status",
-          "latestStatus",
-        );
-        const latestId = jsonNullableString(
-          row,
-          "latest_occurrence_id",
-          "latestOccurrenceId",
-        );
-        const normalizedLatestStatus: ScheduledWorkout["status"] | undefined =
-          latestStatus === "planned" ||
-          latestStatus === "in_progress" ||
-          latestStatus === "completed" ||
-          latestStatus === "skipped"
-            ? latestStatus
-            : undefined;
-        const latestOccurrence =
-          latestId && normalizedLatestStatus
-            ? {
-                id: latestId,
-                plannedDate:
-                  jsonNullableString(
-                    row,
-                    "latest_planned_date",
-                    "latestPlannedDate",
-                  ) ?? undefined,
-                status: normalizedLatestStatus,
-                sequenceNumber:
-                  jsonInteger(
-                    row,
-                    "latest_sequence_number",
-                    "latestSequenceNumber",
-                  ) ?? 0,
-              }
-            : undefined;
-        const contentType =
-          jsonString(row, "content_type", "contentType") === "quick_workout"
-            ? "quick_workout"
-            : "program";
-        return [
-          {
-            kind,
-            programId,
-            assignmentId:
-              jsonNullableString(row, "assignment_id", "assignmentId") ??
-              undefined,
-            programVersionId: versionId,
-            workoutId,
-            programTitle,
-            workoutTitle,
-            contentType,
-            isQuickWorkout:
-              jsonBoolean(row, "is_quick_workout", "isQuickWorkout") ??
-              contentType === "quick_workout",
-            weekIndex: jsonInteger(row, "week_index", "weekIndex") ?? 1,
-            weekLabel:
-              jsonString(row, "week_label", "weekLabel") ?? "Week 1",
-            workoutPosition:
-              jsonInteger(row, "workout_position", "workoutPosition") ?? 0,
-            scheduleLabel:
-              jsonString(row, "schedule_label", "scheduleLabel") ?? "",
-            estimatedMinutes:
-              jsonInteger(row, "estimated_minutes", "estimatedMinutes") ?? 45,
-            latestOccurrence,
-          },
-        ];
-      },
-    );
+    const items = visibleRows.flatMap((row): SchedulableWorkoutCandidate[] => {
+      const candidate = parseSchedulableWorkoutCandidate(row);
+      return candidate ? [candidate] : [];
+    });
     const last = visibleRows.at(-1);
     const nextCursor =
       rows.length > limit && last
@@ -1656,6 +1688,32 @@ export class LiftLogRepository {
       hasMore: Boolean(nextCursor?.programTitle && nextCursor.id),
       ...(nextCursor?.programTitle && nextCursor.id ? { nextCursor } : {}),
     };
+  }
+
+  async listFrequentSchedulableWorkouts(
+    limit = 6,
+  ): Promise<FrequentSchedulableWorkoutCandidate[]> {
+    const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 12);
+    const result = await this.client.rpc("list_frequent_schedulable_workouts", {
+      page_limit: boundedLimit,
+    });
+    if (result.error)
+      fail("Could not load frequently used workouts", result.error);
+    return jsonRecords(result.data).flatMap(
+      (row): FrequentSchedulableWorkoutCandidate[] => {
+        const candidate = parseSchedulableWorkoutCandidate(row);
+        const usageCount = jsonInteger(row, "usage_count", "usageCount");
+        const lastUsedAt = jsonString(row, "last_used_at", "lastUsedAt");
+        if (
+          !candidate?.isQuickWorkout ||
+          usageCount === undefined ||
+          usageCount < 1 ||
+          !lastUsedAt
+        )
+          return [];
+        return [{ ...candidate, usageCount, lastUsedAt }];
+      },
+    );
   }
 
   async listCompletedSessionSummaries(
@@ -1729,6 +1787,16 @@ export class LiftLogRepository {
                 ? (jsonString(row, "discipline") as Exercise["discipline"])
                 : undefined,
             tags: jsonStringArray(jsonField(row, "tags")),
+            source_provider:
+              jsonNullableString(row, "source_provider", "sourceProvider"),
+            source_external_id:
+              jsonNullableString(
+                row,
+                "source_external_id",
+                "sourceExternalId",
+              ),
+            source_url: jsonNullableString(row, "source_url", "sourceUrl"),
+            video_url: jsonNullableString(row, "video_url", "videoUrl"),
             cue: jsonString(row, "cue") ?? "",
             default_entry_mode: parseEntryMode(
               jsonField(row, "default_entry_mode", "defaultEntryMode"),
@@ -2277,22 +2345,6 @@ export class LiftLogRepository {
     });
   }
 
-  async addProgramWeek(versionId: string) {
-    const result = await this.client.rpc("add_program_week", {
-      target_version_id: versionId,
-    });
-    if (result.error || !result.data)
-      fail("Could not add a program week", result.error);
-    return String(result.data);
-  }
-
-  async deleteProgramWeek(weekId: string) {
-    const result = await this.client.rpc("delete_program_week", {
-      target_week_id: weekId,
-    });
-    if (result.error) fail("Could not delete the program week", result.error);
-  }
-
   async deleteWorkout(workoutId: string) {
     const result = await this.client.rpc("delete_program_workout", {
       target_workout_id: workoutId,
@@ -2300,75 +2352,23 @@ export class LiftLogRepository {
     if (result.error) fail("Could not delete the workout", result.error);
   }
 
-  async addWorkoutSection(workoutId: string, title: string, kind: string) {
-    const result = await this.client.rpc("add_workout_section", {
-      target_workout_id: workoutId,
-      target_title: title,
-      target_kind: kind,
-    });
-    if (result.error || !result.data)
-      fail("Could not add the workout section", result.error);
-    return String(result.data);
-  }
-
-  async deleteWorkoutSection(sectionId: string, deleteItems: boolean) {
-    const result = await this.client.rpc("delete_workout_section", {
-      target_section_id: sectionId,
-      delete_items: deleteItems,
-    });
-    if (result.error)
-      fail("Could not delete the workout section", result.error);
-  }
-
-  async updateWorkoutSection(
-    sectionId: string,
-    title: string,
-    kind: NonNullable<WorkoutSection["kind"]>,
-  ) {
-    const result = await this.client.rpc("update_workout_section", {
-      target_section_id: sectionId,
-      target_title: title,
-      target_kind: kind,
-    });
-    if (result.error)
-      fail("Could not update the workout section", result.error);
-  }
-
-  async reorderWorkoutSections(workoutId: string, sectionIds: string[]) {
-    const result = await this.client.rpc("reorder_workout_sections", {
-      target_workout_id: workoutId,
-      ordered_ids: sectionIds,
-    });
-    if (result.error) fail("Could not reorder workout sections", result.error);
-  }
-
-  async reorderWorkouts(weekId: string, workoutIds: string[]) {
+  async reorderWorkouts(program: Program, workoutIds: string[]) {
+    const week = implicitProgramWeek(program);
+    if (!week || program.weeks.length !== 1)
+      fail("The program workout sequence is unavailable", null);
     const result = await this.client.rpc("reorder_week_workouts", {
-      target_week_id: weekId,
+      target_week_id: week.id,
       ordered_ids: workoutIds,
     });
     if (result.error) fail("Could not reorder workouts", result.error);
   }
 
-  async reorderWorkoutItems(sectionId: string, itemIds: string[]) {
-    const result = await this.client.rpc("reorder_section_items", {
-      target_section_id: sectionId,
+  async reorderWorkoutItems(workoutId: string, itemIds: string[]) {
+    const result = await this.client.rpc("reorder_workout_items", {
+      target_workout_id: workoutId,
       ordered_ids: itemIds,
     });
     if (result.error) fail("Could not reorder exercises", result.error);
-  }
-
-  async moveWorkoutItem(
-    itemId: string,
-    destinationSectionId: string,
-    destinationPosition: number,
-  ) {
-    const result = await this.client.rpc("move_workout_item", {
-      target_item_id: itemId,
-      destination_section_id: destinationSectionId,
-      destination_position: destinationPosition,
-    });
-    if (result.error) fail("Could not move the exercise", result.error);
   }
 
   async createProgramDraft(programId: string) {
@@ -2451,17 +2451,21 @@ export class LiftLogRepository {
       .from("exercises")
       .insert({
         scope: "personal",
-      owner_id: this.viewerId,
-      name: input.name,
-      category: input.category || "Custom",
-      discipline: input.discipline ?? null,
-      tags: input.tags ?? [],
-      cue: input.cue,
+        owner_id: this.viewerId,
+        name: input.name,
+        category: input.category || "Custom",
+        discipline: input.discipline ?? null,
+        tags: input.tags ?? [],
+        source_provider: input.sourceProvider ?? null,
+        source_external_id: input.sourceExternalId ?? null,
+        source_url: input.sourceUrl ?? null,
+        video_url: input.videoUrl ?? null,
+        cue: input.cue,
         default_entry_mode: input.mode,
         default_tracking_fields: fields,
       })
       .select(
-        "id, scope, owner_id, name, category, discipline, tags, cue, default_entry_mode, default_tracking_fields",
+        "id, scope, owner_id, name, category, discipline, tags, source_provider, source_external_id, source_url, video_url, cue, default_entry_mode, default_tracking_fields",
       )
       .single();
     if (result.error || !result.data)
@@ -2481,6 +2485,10 @@ export class LiftLogRepository {
         category: input.category || "Custom",
         discipline: input.discipline ?? null,
         tags: input.tags ?? [],
+        source_provider: input.sourceProvider ?? null,
+        source_external_id: input.sourceExternalId ?? null,
+        source_url: input.sourceUrl ?? null,
+        video_url: input.videoUrl ?? null,
         cue: input.cue,
         default_entry_mode: input.mode,
         default_tracking_fields: fields,
@@ -2489,7 +2497,7 @@ export class LiftLogRepository {
       .eq("scope", "personal")
       .eq("owner_id", this.viewerId)
       .select(
-        "id, scope, owner_id, name, category, discipline, tags, cue, default_entry_mode, default_tracking_fields",
+        "id, scope, owner_id, name, category, discipline, tags, source_provider, source_external_id, source_url, video_url, cue, default_entry_mode, default_tracking_fields",
       )
       .maybeSingle();
     if (result.error || !result.data)
@@ -2515,15 +2523,15 @@ export class LiftLogRepository {
 
   async addWorkout(
     program: Program,
-    weekId: string,
     title: string,
   ): Promise<PlannedWorkout> {
-    const week = program.weeks.find((item) => item.id === weekId);
-    if (!week) fail("The selected week no longer exists", null);
+    const week = implicitProgramWeek(program);
+    if (!week || program.weeks.length !== 1)
+      fail("The program workout sequence is unavailable", null);
     const workoutResult = await this.client
       .from("workouts")
       .insert({
-        program_week_id: weekId,
+        program_week_id: week.id,
         title,
         day_of_week: null,
         schedule_label: `Workout ${week.workouts.length + 1}`,
@@ -2537,28 +2545,14 @@ export class LiftLogRepository {
     const workoutId = String(workoutResult.data.id);
     const sectionResult = await this.client
       .from("workout_sections")
-      .insert([
-        {
-          workout_id: workoutId,
-          title: "Warm up",
-          section_kind: "warmup",
-          position: 0,
-        },
-        {
-          workout_id: workoutId,
-          title: "Main work",
-          section_kind: "main",
-          position: 1,
-        },
-        {
-          workout_id: workoutId,
-          title: "Cooldown",
-          section_kind: "cooldown",
-          position: 2,
-        },
-      ])
+      .insert({
+        workout_id: workoutId,
+        title: "Exercises",
+        section_kind: "main",
+        position: 0,
+      })
       .select("id, title, section_kind, position");
-    if (sectionResult.error || !sectionResult.data || sectionResult.data.length !== 3)
+    if (sectionResult.error || !sectionResult.data || sectionResult.data.length !== 1)
       fail("Could not prepare the workout sections", sectionResult.error);
     return {
       id: workoutId,
@@ -2621,7 +2615,8 @@ export class LiftLogRepository {
         ? { sets: 3, reps: "8", targetRpe: "7–8" }
         : exercise.defaultMode === "intervals"
           ? { rounds: 5, workSeconds: 60, restSeconds: 60 }
-          : exercise.defaultMode === "result"
+          : exercise.defaultMode === "result" &&
+              exercise.defaultFields.includes("duration")
             ? { durationMinutes: 20 }
             : {};
 
@@ -2645,7 +2640,8 @@ export class LiftLogRepository {
                 rest_seconds: 60,
               },
             ]
-          : exercise.defaultMode === "result"
+          : exercise.defaultMode === "result" &&
+              exercise.defaultFields.includes("duration")
             ? [{ workout_item_id: itemId, position: 0, duration_seconds: 1200 }]
             : [];
     if (entries.length) {
@@ -2658,6 +2654,8 @@ export class LiftLogRepository {
     return {
       id: itemId,
       exerciseId: exercise.id,
+      category: exercise.category,
+      videoUrl: exercise.videoUrl,
       title: exercise.name,
       cue: exercise.cue,
       mode: exercise.defaultMode,
@@ -2717,25 +2715,6 @@ export class LiftLogRepository {
     });
     if (result.error)
       fail("Could not save the exercise prescription", result.error);
-  }
-
-  async duplicateWeek(sourceWeekId: string, targetWeekId: string) {
-    const result = await this.client.rpc("duplicate_program_week", {
-      source_week_id: sourceWeekId,
-      target_week_id: targetWeekId,
-    });
-    if (result.error) fail("Could not copy the previous week", result.error);
-  }
-
-  async duplicateWeekTimes(sourceWeekId: string, copyCount: number) {
-    const result = await this.client.rpc("duplicate_program_week_times", {
-      source_week_id: sourceWeekId,
-      copy_count: copyCount,
-    });
-    if (result.error) fail("Could not copy the week", result.error);
-    return (result.data as Array<{ week_id: string }>).map(
-      (row) => row.week_id,
-    );
   }
 
   async publishProgram(versionId: string, effectiveOn = localDateOnly()) {
@@ -2900,7 +2879,7 @@ export class LiftLogRepository {
       this.client
         .from("session_item_logs")
         .select(
-          "id, workout_session_id, source_workout_item_id, snapshot_name, snapshot_cue, entry_mode, tracking_fields, position",
+          "id, workout_session_id, source_workout_item_id, snapshot_name, snapshot_category, snapshot_video_url, snapshot_cue, entry_mode, tracking_fields, position",
         )
         .eq("workout_session_id", session.id)
         .order("position"),
@@ -2928,6 +2907,8 @@ export class LiftLogRepository {
       items: items.map((item) => ({
         id: item.id,
         title: item.snapshot_name,
+        category: item.snapshot_category,
+        videoUrl: item.snapshot_video_url ?? undefined,
         cue: item.snapshot_cue,
         mode: item.entry_mode,
         fields: item.tracking_fields,

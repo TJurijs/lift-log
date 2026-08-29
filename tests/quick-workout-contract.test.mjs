@@ -22,11 +22,12 @@ const migrationPath = new URL(
 );
 
 test("quick workouts use the shared workout tree and can be scheduled or assigned", async () => {
-  const [app, styles, repository, migration] = await Promise.all([
+  const [app, styles, repository, migration, flatWorkoutMigration] = await Promise.all([
     readAppSource(),
     readFile(stylesPath, "utf8"),
     readFile(repositoryPath, "utf8"),
     readFile(migrationPath, "utf8"),
+    readFile(new URL("../supabase/migrations/202608290004_flat_workout_exercises.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(app, /Create workout/);
@@ -48,8 +49,8 @@ test("quick workouts use the shared workout tree and can be scheduled or assigne
   );
   assert.match(
     styles,
-    /\.builder-layout\.quick-workout-builder\s*\{[\s\S]*grid-template-columns:\s*minmax\(340px, 1fr\) 260px/,
-    "the editor and exercise picker must reclaim the removed selector column",
+    /\.builder-layout\.quick-workout-builder\s*\{[\s\S]*grid-template-columns:\s*minmax\(340px, 1fr\)/,
+    "a quick workout must use the full builder width without a persistent picker column",
   );
   assert.match(app, /Workout saved\. It is ready to schedule or assign\./);
   assert.match(app, /\{isQuickWorkout \? "Save workout" : "Save program"\}/);
@@ -63,5 +64,5 @@ test("quick workouts use the shared workout tree and can be scheduled or assigne
   assert.match(migration, /assign_quick_workout_to_athletes/);
   assert.match(migration, /target_planned_date date/);
   assert.match(migration, /insert into public\.workouts/);
-  assert.match(migration, /Warm up.*Main work.*Cooldown/s);
+  assert.match(flatWorkoutMigration, /'Exercises', 'main', 0/);
 });

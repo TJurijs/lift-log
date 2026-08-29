@@ -45,7 +45,7 @@ test("mobile program cards keep descriptions inside the detail view and inset ac
   );
 });
 
-test("mobile program editing reserves aligned control rails", async () => {
+test("mobile program editing reserves aligned controls and one exercise list", async () => {
   const [app, styles] = await Promise.all([
     readAppSource(),
     readFile(stylesPath, "utf8"),
@@ -53,14 +53,23 @@ test("mobile program editing reserves aligned control rails", async () => {
 
   assert.match(app, /className="program-editor-header-actions"/);
   assert.match(app, /className="program-editor-secondary-actions"/);
-  assert.match(styles, /\.program-editor-header-actions\s*\{[^}]*grid-template-columns: auto minmax\(72px, 1fr\) auto/s);
+  assert.match(styles, /\.program-editor-header-actions\s*\{[^}]*grid-template-columns: minmax\(72px, 1fr\) auto/s);
   assert.match(styles, /\.program-editor-header-actions \.program-editor-back\s*\{[^}]*grid-column: 1;[^}]*grid-row: 1/s);
+  assert.match(styles, /\.program-editor-header-actions \.source-tag\s*\{[^}]*grid-column: 1;[^}]*grid-row: 1/s);
+  assert.match(styles, /\.program-editor-header-actions > \.status-badge\s*\{[^}]*grid-column: 2;[^}]*grid-row: 1/s);
   assert.match(styles, /\.program-editor-secondary-actions\s*\{[^}]*grid-column: 1 \/ -1;[^}]*grid-template-columns: repeat\(auto-fit, minmax\(132px, 1fr\)\)/s);
   assert.match(styles, /\.program-editor-header-actions \.program-editor-primary-action\s*\{[^}]*grid-column: 1 \/ -1;[^}]*width: 100%/s);
-  assert.match(styles, /\.section-title-group\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) auto/s);
-  assert.match(styles, /\.section-actions\s*\{[^}]*grid-template-columns: 44px 44px/s);
+  assert.doesNotMatch(app, />Exercises<\/strong>/);
+  assert.match(app, /setReorderingExercises/);
+  assert.match(app, /className="text-button workout-reorder-toggle"/);
+  assert.match(app, /className="button secondary full"[\s\S]*Add exercise/);
+  assert.match(app, /dragEnabled && "drag-enabled"/);
+  assert.doesNotMatch(app, /className="section-actions"/);
+  assert.doesNotMatch(app, /className="section-action"/);
   assert.match(styles, /\.builder-exercise-preview \.builder-exercise-title-row\s*\{[^}]*padding-right: 96px[^}]*flex-wrap: nowrap/s);
   assert.match(styles, /\.builder-exercise-preview \.exercise-prescription\s*\{[^}]*width: 100%[^}]*flex-wrap: nowrap/s);
   assert.match(styles, /\.builder-exercise-preview-actions\s*\{[^}]*right: 6px[^}]*grid-template-columns: 44px 44px/s);
+  assert.match(styles, /\.builder-exercise-preview\s*\{[^}]*padding: 8px 12px;/s);
+  assert.match(styles, /\.builder-exercise-preview\.drag-enabled\s*\{[^}]*padding-left: 42px;/s);
   assert.match(styles, /\.builder-exercise-preview \.item-position\s*\{[^}]*display: none/s);
 });
