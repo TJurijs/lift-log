@@ -15,10 +15,10 @@ test("weight targets respect the account unit and retain planned-effort guidance
   assert.match(units, /export function formatWeight\(/);
   assert.match(units, /export function weightKgValue\(/);
   assert.match(app, /from "\.\.\/lib\/units"/);
-  assert.match(app, /label=\{`Target weight \(\$\{weightUnit\}\)`\}/);
-  assert.match(app, /This guides effort alongside an exact weight target\./);
+  assert.match(app, /label=\{`Weight \(\$\{weightUnit\}\)`\}/);
+  assert.match(app, /sets the intended difficulty by how many good reps should remain\./);
   assert.match(app, /Load \{weightUnit\}/);
   assert.match(app, /completedEntryLabel\(entry, weightUnit\)/);
-  assert.match(app, /targetRpe: wholeRpe\(entry\.rpe\) \|\| undefined/);
+  assert.match(app, /targetRpe: nextFields\.includes\("rpe"\)[\s\S]*wholeRpe\(entry\.rpe\) \|\| undefined/);
   assert.doesNotMatch(app, /% of max/i);
 });

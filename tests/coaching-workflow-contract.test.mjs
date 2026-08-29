@@ -160,12 +160,12 @@ test("published Own programs can be assigned from either coaching entry point", 
 
   assert.match(
     appShell,
-    /onAssignAthlete=\{\(athlete\) => \{[\s\S]*setAssignmentSeed\(\{ athleteIds: \[athlete\.id\] \}\)[\s\S]*setModal\("assign-program"\)/,
+    /onAssignAthlete=\{\(athlete\)[\s\S]{0,120}openAssignmentModal\(\{ athleteIds: \[athlete\.id\] \}\)/,
     "the selected athlete must open assignment with that athlete preselected",
   );
   assert.match(
     appShell,
-    /capabilitiesForProgram\(program\)\.assign[\s\S]*setAssignmentSeed\(\{ programId: program\.id \}\)[\s\S]*setModal\("assign-program"\)/,
+    /capabilitiesForProgram\(program\)\.assign[\s\S]{0,160}openAssignmentModal\(\{ programId: program\.id \}\)/,
     "an opened program must expose assignment only for the viewer's published Own program",
   );
   assert.match(
@@ -181,7 +181,13 @@ test("published Own programs can be assigned from either coaching entry point", 
   assert.match(assignmentModal, /dismissible=\{!saving\}/);
   assert.match(
     assignmentModal,
-    /className="assignment-progress"[\s\S]*Creating independent program/,
+    /className="assignment-progress"[\s\S]*Assigning shared program to/,
+  );
+  assert.doesNotMatch(assignmentModal, /independent program|copies/);
+  assert.match(
+    appShell,
+    /repository\.assignOwnProgramToAthletes\([\s\S]*programId,[\s\S]*athleteIds,[\s\S]*sourceProgram\.versionId/,
+    "assignment must send the selected immutable version to the set-based RPC gateway",
   );
   assert.match(
     assignmentModal,

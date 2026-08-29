@@ -5,7 +5,7 @@ import test from "node:test";
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 const migrationUrl = new URL(
-  "../supabase/migrations/202608220014_workspace_query_indexes.sql",
+  "../supabase/migrations/202608290001_v1_performance_data_architecture.sql",
   import.meta.url,
 );
 
@@ -18,38 +18,84 @@ function sourceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
-test("scheduled workout lists defer exercise prescriptions until opening or starting", async () => {
+test("calendar and scheduling lists use bounded summary RPCs", async () => {
+  const [repository, migration] = await Promise.all([
+    readFile(repositoryUrl, "utf8"),
+    readFile(migrationUrl, "utf8"),
+  ]);
+  const calendar = sourceBetween(
+    repository,
+    "async listCalendarOccurrences(",
+    "async listSchedulableWorkouts(",
+  );
+  const schedulable = sourceBetween(
+    repository,
+    "async listSchedulableWorkouts(",
+    "async loadCalendarRange(",
+  );
+
+  assert.match(calendar, /rpc\("list_calendar_occurrences"/);
+  assert.match(calendar, /rpc\("list_calendar_session_summaries"/);
+  assert.match(calendar, /range_start: rangeStart[\s\S]*range_end: rangeEnd/);
+  assert.match(calendar, /page_limit: limit \+ 1/);
+  assert.match(calendar, /after_planned_date:[\s\S]*after_id:/);
+  assert.match(calendar, /detailsLoaded: false/);
+  assert.doesNotMatch(calendar, /\.from\("(?:workout_sections|workout_items|prescribed_entries)"\)/);
+
+  const calendarWorkspace = sourceBetween(
+    repository,
+    "async loadCalendarRange(",
+    "async loadCoachingWorkspace(",
+  );
+  assert.match(
+    calendarWorkspace,
+    /Promise\.all\(\[[\s\S]*listCalendarOccurrences\(rangeStart, rangeEnd[\s\S]*listCalendarSessionSummaries\(rangeStart, rangeEnd\)/,
+  );
+  assert.doesNotMatch(calendarWorkspace, /listCompletedSessionSummaries/);
+
+  assert.match(schedulable, /rpc\("list_schedulable_workouts"/);
+  assert.match(schedulable, /page_limit: limit \+ 1/);
+  assert.match(
+    schedulable,
+    /after_program_title:[\s\S]*after_week_index:[\s\S]*after_workout_position:[\s\S]*after_id:/,
+  );
+  assert.doesNotMatch(schedulable, /getProgramVersionDetail|loadProgramDetail|\.from\(/);
+
+  assert.match(migration, /create or replace function public\.list_calendar_occurrences/);
+  assert.match(migration, /create or replace function public\.list_calendar_session_summaries/);
+  assert.match(migration, /create or replace function public\.list_schedulable_workouts/);
+  assert.match(migration, /idx_scheduled_workouts_athlete_calendar/);
+  assert.match(migration, /idx_scheduled_workouts_assignment_sequence/);
+});
+
+test("a selected scheduled workout hydrates its full tree with one RPC", async () => {
   const [app, repository, migration] = await Promise.all([
     readFile(appUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
   ]);
-  const summaries = sourceBetween(
-    repository,
-    "private async loadScheduledWorkoutSummaries",
-    "async updateOwnProfile",
-  );
   const detail = sourceBetween(
     repository,
-    "async loadScheduledWorkoutDetail",
-    "private async loadScheduledWorkoutSummaries",
+    "async loadScheduledWorkoutDetail(",
+    "async updateOwnProfile(",
   );
 
-  assert.doesNotMatch(summaries, /\.from\("workout_sections"\)/);
-  assert.doesNotMatch(summaries, /\.from\("prescribed_entries"\)/);
-  assert.match(summaries, /detailsLoaded: false/);
-  assert.match(detail, /\.from\("workout_sections"\)[\s\S]*\.from\("workout_items"\)[\s\S]*\.from\("prescribed_entries"\)/);
+  assert.match(detail, /rpc\("get_scheduled_workout_detail"/);
+  assert.match(detail, /target_schedule_id: scheduleId/);
+  assert.match(detail, /parseWorkoutPayload/);
   assert.match(detail, /detailsLoaded: true/);
-  assert.match(app, /async function ensureScheduledWorkoutDetails[\s\S]*loadScheduledWorkoutDetail/);
-  assert.match(app, /async function openWorkoutPreview[\s\S]*ensureScheduledWorkoutDetails/);
+  assert.doesNotMatch(detail, /\.from\(/);
+  assert.match(
+    migration,
+    /create or replace function public\.get_scheduled_workout_detail\([\s\S]*target_schedule_id uuid/,
+  );
+  assert.match(
+    app,
+    /async function ensureScheduledWorkoutDetails[\s\S]*repository\.loadScheduledWorkoutDetail/,
+  );
+  assert.match(
+    app,
+    /async function openWorkoutPreview[\s\S]*ensureScheduledWorkoutDetails/,
+  );
   assert.match(app, /async function startWorkout[\s\S]*ensureScheduledWorkoutDetails/);
-  for (const index of [
-    "idx_programs_athlete_current_created",
-    "idx_workouts_week_position",
-    "idx_workout_sections_workout_position",
-    "idx_prescribed_entries_item_position",
-    "idx_scheduled_workouts_athlete_sequence",
-  ]) {
-    assert.match(migration, new RegExp(index));
-  }
 });

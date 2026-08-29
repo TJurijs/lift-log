@@ -3,6 +3,17 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const programViewUrl = new URL(
+  "../app/features/programs/ProgramView.tsx",
+  import.meta.url,
+);
+async function readAppSource() {
+  const [app, programView] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(programViewUrl, "utf8"),
+  ]);
+  return `${app}\n${programView}`;
+}
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 const migrationUrl = new URL(
   "../supabase/migrations/202608220008_workout_section_defaults_and_safe_deletion.sql",
@@ -11,7 +22,7 @@ const migrationUrl = new URL(
 
 test("new workouts include the standard three sections", async () => {
   const [app, repository] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAppSource(),
     readFile(repositoryUrl, "utf8"),
   ]);
 
@@ -24,7 +35,7 @@ test("new workouts include the standard three sections", async () => {
 
 test("section deletion protects Main work and offers a safe exercise destination", async () => {
   const [app, repository, migration] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAppSource(),
     readFile(repositoryUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
   ]);

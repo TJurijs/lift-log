@@ -88,7 +88,14 @@ npm test
 npm run test:coverage
 npm run test:e2e
 npm run test:integration
+npm run test:v1:database-smoke
 npm run db:lint
+npm run ci:verify
+npm run ci:local-supabase
+npm run perf:fixture
+npm run perf:bundle:report
+npm run perf:measure:local
+npm run perf:runtime:check
 ```
 
 The integration test creates three temporary, namespaced test users and proves athlete isolation, active and revoked coach access, publishing, schedule creation, and immutable completed history. `npm run test:integration` remains loopback-only. Hosted development is a separate, fail-closed path:
@@ -97,7 +104,7 @@ The integration test creates three temporary, namespaced test users and proves a
 npm run test:integration:hosted-dev
 ```
 
-That command still refuses to start unless the process environment explicitly sets `SUPABASE_HOSTED_DEV_INTEGRATION=1`, `SUPABASE_TEST_ENVIRONMENT=hosted-development`, `SUPABASE_TEST_PROJECT_REF=ofyeejyfroblunbspgve`, the exact `https://ofyeejyfroblunbspgve.supabase.co` test URL, and separate publishable and secret test keys. Supply keys through an ignored local environment or secret manager; never commit them or put the secret key in a `VITE_` variable. Cleanup uses the service-only, exact-namespace fixture reset before deleting those three generated Auth users. The regular test suite verifies these target guards without contacting Supabase.
+That command still refuses to start unless the process environment explicitly sets `SUPABASE_HOSTED_DEV_INTEGRATION=1`, `SUPABASE_TEST_ENVIRONMENT=hosted-development`, `SUPABASE_TEST_PROJECT_REF=ofyeejyfroblunbspgve`, the exact `https://ofyeejyfroblunbspgve.supabase.co` test URL, and separate publishable and secret test keys. Supply keys through an ignored local environment or secret manager; never commit them or put the secret key in a `VITE_` variable. Cleanup uses the service-only, exact-namespace fixture reset before deleting those three generated Auth users. The `verify` CI job stays offline; the separate `local-supabase` job uses only an ephemeral loopback stack for integration, scale, and read-only browser performance gates.
 
 ## Nonprod and production builds
 
@@ -135,4 +142,4 @@ The database model is defined by:
 - `supabase/migrations/202608210011_restore_partial_repeating_cycles.sql`
 - `supabase/migrations/202608210012_safe_item_deletion_and_complete_repeating_cycles.sql`
 
-See [docs/MVP_AND_ARCHITECTURE.md](docs/MVP_AND_ARCHITECTURE.md) for the implemented architecture, [docs/PRODUCT_MODEL_AND_CAPABILITIES.md](docs/PRODUCT_MODEL_AND_CAPABILITIES.md) for the canonical terminology, state axes, provenance, and capability contract, [docs/BROWSER_SUPPORT.md](docs/BROWSER_SUPPORT.md) for the minimum browser policy, [docs/review/README.md](docs/review/README.md) for stabilization evidence, and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the staged hosting layout.
+See [docs/MVP_AND_ARCHITECTURE.md](docs/MVP_AND_ARCHITECTURE.md) for the implemented architecture, [docs/PRODUCT_MODEL_AND_CAPABILITIES.md](docs/PRODUCT_MODEL_AND_CAPABILITIES.md) for the canonical terminology, state axes, provenance, and capability contract, [docs/BROWSER_SUPPORT.md](docs/BROWSER_SUPPORT.md) for the minimum browser policy, [docs/review/README.md](docs/review/README.md) for stabilization evidence, [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the staged hosting layout, and [docs/PERFORMANCE_OPERATIONS_RUNBOOK.md](docs/PERFORMANCE_OPERATIONS_RUNBOOK.md) for budgets, capacity exercises, telemetry privacy, alerts, and recovery.

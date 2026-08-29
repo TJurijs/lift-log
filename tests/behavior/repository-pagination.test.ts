@@ -1,74 +1,97 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { LiftLogRepository } from "../../lib/repository";
 
 function exerciseRows(count: number) {
   return Array.from({ length: count }, (_, index) => ({
     id: `exercise-${String(index).padStart(5, "0")}`,
-    scope: "global" as const,
+    scope: "global",
     owner_id: null,
-    name: `Exercise ${index}`,
+    name: `Exercise ${String(index).padStart(5, "0")}`,
     category: "Strength",
-    discipline: "gym" as const,
+    discipline: "gym",
     tags: [],
     cue: "Move well",
-    default_entry_mode: "sets" as const,
-    default_tracking_fields: ["reps" as const],
+    default_entry_mode: "sets",
+    default_tracking_fields: ["reps"],
   }));
 }
 
-function exerciseClient(count: number) {
-  const rows = exerciseRows(count);
-  const ranges: Array<[number, number]> = [];
-  return {
-    ranges,
-    client: {
-      from(table: string) {
-        expect(table).toBe("exercises");
-        const query = {
-          select() {
-            return query;
-          },
-          is() {
-            return query;
-          },
-          order() {
-            return query;
-          },
-          range(from: number, to: number) {
-            ranges.push([from, to]);
-            return Promise.resolve({
-              data: rows.slice(from, to + 1),
-              error: null,
-            });
-          },
+describe("repository keyset pagination", () => {
+  it("keeps a 5,000-row exercise library bounded to the requested visible page", async () => {
+    const rows = exerciseRows(5_000);
+    const rpc = vi.fn(
+      async (_name: string, arguments_: Record<string, unknown>) => {
+        const afterId = arguments_.after_id as string | null;
+        const start = afterId
+          ? rows.findIndex((row) => row.id === afterId) + 1
+          : 0;
+        const pageLimit = arguments_.page_limit as number;
+        return {
+          data: rows.slice(start, start + pageLimit),
+          error: null,
         };
-        return query;
       },
-    },
-  };
-}
+    );
+    const from = vi.fn(() => {
+      throw new Error("exercise search must not scan the table from the client");
+    });
+    const repository = new LiftLogRepository(
+      { rpc, from } as never,
+      "athlete-1",
+      "Athlete One",
+    );
 
-describe("repository pagination", () => {
-  it.each([999, 1_000, 1_001, 5_000])(
-    "loads all %s exercises without accepting a max-rows truncation",
-    async (count) => {
-      const { client, ranges } = exerciseClient(count);
-      const repository = new LiftLogRepository(
-        client as never,
-        "athlete-1",
-        "Athlete One",
-      );
+    const first = await repository.searchExercises({ limit: 50 });
+    const second = await repository.searchExercises({
+      limit: 50,
+      cursor: first.nextCursor,
+    });
 
-      const exercises = await repository.listExercises();
+    expect(first.items).toHaveLength(50);
+    expect(second.items).toHaveLength(50);
+    expect(first.items[0]?.id).toBe("exercise-00000");
+    expect(second.items[0]?.id).toBe("exercise-00050");
+    expect(first.hasMore).toBe(true);
+    expect(second.hasMore).toBe(true);
+    expect(rpc).toHaveBeenNthCalledWith(1, "search_exercises", {
+      search_text: "",
+      scope_filter: "all",
+      discipline_filters: null,
+      category_filters: null,
+      mode_filters: null,
+      tracking_filters: null,
+      page_limit: 51,
+      after_name: null,
+      after_id: null,
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "search_exercises", {
+      search_text: "",
+      scope_filter: "all",
+      discipline_filters: null,
+      category_filters: null,
+      mode_filters: null,
+      tracking_filters: null,
+      page_limit: 51,
+      after_name: "Exercise 00049",
+      after_id: "exercise-00049",
+    });
+    expect(from).not.toHaveBeenCalled();
+  });
 
-      expect(exercises).toHaveLength(count);
-      expect(exercises.at(-1)?.id).toBe(
-        `exercise-${String(count - 1).padStart(5, "0")}`,
-      );
-      expect(ranges.at(0)).toEqual([0, 499]);
-      expect(ranges.every(([from, to]) => to - from + 1 === 500)).toBe(true);
-      if (count >= 1_000) expect(ranges.length).toBeGreaterThan(2);
-    },
-  );
+  it("never asks the bounded RPC for more than its 100-row server cap", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    const repository = new LiftLogRepository(
+      { rpc } as never,
+      "athlete-1",
+      "Athlete One",
+    );
+
+    await repository.searchExercises({ limit: 5_000 });
+
+    expect(rpc).toHaveBeenCalledWith(
+      "search_exercises",
+      expect.objectContaining({ page_limit: 100 }),
+    );
+  });
 });

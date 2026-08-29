@@ -24,33 +24,43 @@ function repositoryWithLoaders() {
 describe("coaching workspace gateway", () => {
   it("returns only the bounded coaching read model", async () => {
     const { repository, mutable } = repositoryWithLoaders();
-    mutable.loadCoachConnections = vi.fn().mockResolvedValue([{ coachId: "c1" }]);
-    mutable.loadCoachedAthletes = vi.fn().mockResolvedValue([{ id: "a1" }]);
-    mutable.loadPendingCoachInvites = vi.fn().mockResolvedValue([{ id: "p1" }]);
-    mutable.loadOutgoingCoachInvites = vi.fn().mockResolvedValue([{ id: "o1" }]);
+    mutable.loadCoachingAccessSummary = vi.fn().mockResolvedValue({
+      coachConnections: [{ coachId: "c1" }],
+      pendingCoachInvites: [{ id: "p1" }],
+      outgoingCoachInvites: [{ id: "o1" }],
+    });
+    mutable.listCoachAthletes = vi.fn().mockResolvedValue({
+      items: [{ id: "a1" }],
+      hasMore: true,
+      nextCursor: { displayName: "Athlete", id: "a1" },
+    });
 
     await expect(repository.loadCoachingWorkspace()).resolves.toEqual({
       coachConnections: [{ coachId: "c1" }],
       coachedAthletes: [{ id: "a1" }],
       pendingCoachInvites: [{ id: "p1" }],
       outgoingCoachInvites: [{ id: "o1" }],
+      coachAthleteCursor: { displayName: "Athlete", id: "a1" },
     });
+    expect(mutable.listCoachAthletes).toHaveBeenCalledWith({ limit: 25 });
   });
 
   it("coalesces concurrent refreshes into one request group", async () => {
     const { repository, mutable } = repositoryWithLoaders();
-    const athletes = deferred<never[]>();
+    const athletes = deferred<{ items: never[]; hasMore: false }>();
     const loaders = {
-      loadCoachConnections: vi.fn().mockResolvedValue([]),
-      loadCoachedAthletes: vi.fn(() => athletes.promise),
-      loadPendingCoachInvites: vi.fn().mockResolvedValue([]),
-      loadOutgoingCoachInvites: vi.fn().mockResolvedValue([]),
+      loadCoachingAccessSummary: vi.fn().mockResolvedValue({
+        coachConnections: [],
+        pendingCoachInvites: [],
+        outgoingCoachInvites: [],
+      }),
+      listCoachAthletes: vi.fn(() => athletes.promise),
     };
     Object.assign(mutable, loaders);
 
     const first = repository.loadCoachingWorkspace();
     const second = repository.loadCoachingWorkspace();
-    athletes.resolve([]);
+    athletes.resolve({ items: [], hasMore: false });
     await expect(Promise.all([first, second])).resolves.toEqual([
       {
         coachConnections: [],
@@ -74,12 +84,14 @@ describe("coaching workspace gateway", () => {
     const athletes = vi
       .fn()
       .mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce({ items: [], hasMore: false });
     Object.assign(mutable, {
-      loadCoachConnections: vi.fn().mockResolvedValue([]),
-      loadCoachedAthletes: athletes,
-      loadPendingCoachInvites: vi.fn().mockResolvedValue([]),
-      loadOutgoingCoachInvites: vi.fn().mockResolvedValue([]),
+      loadCoachingAccessSummary: vi.fn().mockResolvedValue({
+        coachConnections: [],
+        pendingCoachInvites: [],
+        outgoingCoachInvites: [],
+      }),
+      listCoachAthletes: athletes,
     });
 
     await expect(repository.loadCoachingWorkspace()).rejects.toThrow("offline");

@@ -86,6 +86,8 @@ The checked-in server configuration is `deploy/nginx-liftlog.conf`; the producti
 
 Rollback is an atomic repoint of `current` to the preceding release; no database rollback is implied.
 
+Performance budgets, exact environment checks, alert thresholds, staged capacity testing, and database recovery guidance are maintained in [PERFORMANCE_OPERATIONS_RUNBOOK.md](PERFORMANCE_OPERATIONS_RUNBOOK.md).
+
 ## Production gate
 
 Production receives a fresh `npm run build:prod` output. Do not copy the nonprod build or its mutable local `dist/` directory. Before switching `app.liftlog.cc`, configure the production Auth URL and Google client independently, issue production TLS certificates, run the same smoke checks, and retain the maintenance release for rollback.

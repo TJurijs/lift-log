@@ -6,6 +6,14 @@ import AppErrorBoundary from "./app/AppErrorBoundary";
 import { DevMobilePreview, shouldRenderDevMobilePreview } from "./app/DevMobilePreview";
 import "./app/globals.css";
 
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {
+      // Offline recovery is an enhancement; registration must never block startup.
+    });
+  });
+}
+
 const root = document.getElementById("root");
 
 if (!root) {

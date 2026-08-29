@@ -1,0 +1,36 @@
+# V1 performance data architecture
+
+Migration `202608290001_v1_performance_data_architecture.sql` makes an assignment a reference to one immutable published program version. Assigning 50 athletes inserts at most 50 assignment rows; it does not copy weeks, workouts, sections, items, or prescriptions. `fork_program_assignment` is the only assignment workflow that copies the tree, and is called only for explicit customization.
+
+Existing assigned programs are registered as `legacy_materialized` forks. Their program/version/tree IDs remain authoritative, and schedule/session rows receive only the new assignment foreign key. No existing content or history row is deleted. A legacy assigned program whose `assigned_from_program_id` was already cleared before this migration cannot be linked back to a source; it remains available through the existing program path.
+
+## Public RPC contracts
+
+- `get_workspace_bootstrap() -> jsonb`: `{ profile, activeSession, activeWorkout, nextWorkouts }`. The active session includes `id`, numeric `draftRevision`, `draftWriteToken`, `assignmentId`, `programVersionId`, `workoutId`, optional `scheduledWorkoutId`, an `itemLogIds` object, and its bounded snapshot items. `nextWorkouts` is capped at 6.
+- `list_program_summaries(page_limit = 25, after_created_at = null, after_id = null) -> rows`: descending keyset page, capped at 50. Each row includes kind/identity, assignment and customized-program identity, selected version metadata, and week/workout counts.
+- `get_program_version_detail(target_program_id = null, target_assignment_id = null, target_version_id = null) -> jsonb`: exactly one program/assignment selector is required. Returns metadata plus the complete selected version tree. Assignment athletes see immutable published content; the assigning coach may request their explicit customization draft.
+- `get_scheduled_workout_detail(target_schedule_id) -> jsonb`: occurrence metadata plus one complete workout tree.
+- `list_calendar_occurrences(range_start, range_end, page_limit = 100, after_planned_date = null, after_id = null) -> rows`: inclusive 1–93 day range, ascending keyset page, capped at 200.
+- `list_calendar_session_summaries(range_start, range_end, page_limit = 100) -> rows`: completed session summaries for the same inclusive 1–93 day calendar range, capped at 200. Calendar loading calls this in parallel with `list_calendar_occurrences`, so changing months remains exactly two bounded requests and never reuses an unrelated latest-history page.
+- `list_completed_session_summaries(page_limit = 50, before_started_at = null, before_id = null) -> rows`: descending history keyset page, capped at 100; it intentionally excludes detailed item/entry payloads and private notes.
+- `search_exercises(search_text = '', scope_filter = 'all', discipline_filters = null, category_filters = null, mode_filters = null, tracking_filters = null, page_limit = 50, after_name = null, after_id = null) -> rows`: visible global/personal exercises, server-side multi-filtering, prefix search, and an ascending keyset page capped at 99 returned rows.
+- `list_schedulable_workouts(page_limit = 50, after_program_title = null, after_week_index = null, after_workout_position = null, after_id = null) -> rows`: lightweight active assignment/own-program candidates, ordered by lower-cased program title, week index, workout position, and workout ID. The four cursor values are supplied together. Rows include program/assignment/version/workout IDs and titles, content type/quick flag, week/workout display metadata, plus the latest matching occurrence identity/date/status/sequence. Output is capped at 100 and performs no writes.
+- `list_coach_athletes(page_limit = 50, after_display_name = null, after_id = null) -> rows`: active relationships with set-based authored assignment counts, capped at 50.
+- `get_coaching_access_summary() -> jsonb`: `{ coachConnections, pendingCoachInvites, outgoingCoachInvites }`; each authorization-scoped array is capped at 25. Together with one `list_coach_athletes` page, this keeps coaching workspace startup to two requests and exposes the athlete page cursor to the client.
+- `get_coach_athlete_detail(target_athlete_id, program_limit = 25, upcoming_limit = 6, completed_limit = 6) -> jsonb`: `{ athlete, assignedProgramCount, programs, upcoming, completed }`; program output is capped at 50 and each agenda slice at 12. It returns aggregate progress rather than per-workout state arrays.
+
+## Mutation contracts
+
+- `assign_published_program_version(target_program_id, target_version_id, target_athlete_ids, target_idempotency_key) -> rows (athlete_id, assignment_id, created)`: validates the complete batch (maximum 50) and inserts shared references set-wise.
+- `fork_program_assignment(target_assignment_id, target_idempotency_key) -> jsonb`: `{ assignmentId, programId, versionId, created }`; creates one athlete-owned customization draft and copies content once.
+- `create_scheduled_occurrence(target_workout_id, target_planned_date, target_idempotency_key, target_program_id = null, target_assignment_id = null) -> jsonb`: exactly one program/assignment selector; inserts just the selected dated occurrence. UUID request keys are stable across retries.
+- `assign_quick_workout_to_athletes(target_program_id, target_athlete_ids, target_planned_date, target_idempotency_key) -> rows (athlete_id, assignment_id, created)`: assigns one shared quick-workout version and creates one dated occurrence per selected athlete; the same UUID makes both layers retry-safe.
+- `start_scheduled_workout(target_scheduled_workout_id) -> uuid`: resumes an existing session or snapshots the selected workout into one new revisioned session using set-based inserts.
+
+The obsolete `prepare_program_schedule(uuid)`, `set_program_availability(uuid, boolean)`, `assign_own_program_to_athletes(uuid, uuid[])`, and `start_or_resume_workout(uuid, uuid, uuid)` signatures are dropped rather than retained as a compatibility layer. Published source versions are protected by the existing immutability triggers. All public RPCs authorize once under `security definer`, expose explicit projections, enforce server-side bounds, and are executable only by `authenticated`.
+
+## Operational verification
+
+Run `node --test tests/v1-performance-database-contract.test.mjs` for the static migration contract. After applying the migration to local Supabase, run `node tests/run-v1-performance-database-smoke.mjs` for a real assignment/schedule/start/calendar/coaching/idempotency flow. The runner rejects non-loopback database URLs and rolls its fixture transaction back in `finally`; override its local default only with `LIFTLOG_V1_SMOKE_DB_URL`.
+
+For load verification, seed 50 active athlete relationships and a 10-week/40-workout published program in a disposable local database. Use `EXPLAIN (ANALYZE, BUFFERS, WAL)` to confirm assignment writes 50 assignment rows and zero content-tree rows, one schedule request writes one occurrence, cursor reads use the new partial indexes, and coach detail returns no more than 50/12/12 rows. Repeat each mutation with the same request UUID and assert stable identities and no additional rows.

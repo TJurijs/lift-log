@@ -3,11 +3,22 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const programViewPath = new URL(
+  "../app/features/programs/ProgramView.tsx",
+  import.meta.url,
+);
+async function readAppSource() {
+  const [app, programView] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(programViewPath, "utf8"),
+  ]);
+  return `${app}\n${programView}`;
+}
 const stylesPath = new URL("../app/globals.css", import.meta.url);
 
 test("Programs mirror the compact searchable tag-filter pattern", async () => {
   const [app, styles] = await Promise.all([
-    readFile(appPath, "utf8"),
+    readAppSource(),
     readFile(stylesPath, "utf8"),
   ]);
 
@@ -36,7 +47,7 @@ test("mobile program cards keep descriptions inside the detail view and inset ac
 
 test("mobile program editing reserves aligned control rails", async () => {
   const [app, styles] = await Promise.all([
-    readFile(appPath, "utf8"),
+    readAppSource(),
     readFile(stylesPath, "utf8"),
   ]);
 

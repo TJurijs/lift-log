@@ -3,11 +3,22 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const programViewPath = new URL(
+  "../app/features/programs/ProgramView.tsx",
+  import.meta.url,
+);
+async function readAppSource() {
+  const [app, programView] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(programViewPath, "utf8"),
+  ]);
+  return `${app}\n${programView}`;
+}
 const repositoryPath = new URL("../lib/repository.ts", import.meta.url);
 
 test("editable program and workout headers expose persisted name and description controls", async () => {
   const [app, repository] = await Promise.all([
-    readFile(appPath, "utf8"),
+    readAppSource(),
     readFile(repositoryPath, "utf8"),
   ]);
 

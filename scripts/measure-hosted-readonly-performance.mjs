@@ -1,23 +1,36 @@
 import fs from "node:fs";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 
 import { chromium } from "@playwright/test";
+import { ENVIRONMENT_BINDINGS } from "./lib/environment-bindings.mjs";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3000";
 const DEFAULT_ITERATIONS = 9;
-const EXPECTED_DEV_SUPABASE_HOST = "ofyeejyfroblunbspgve.supabase.co";
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 const READ_ONLY_RPC_NAMES = new Set([
+  "get_coach_athlete_detail",
+  "get_coaching_access_summary",
   "get_authored_coach_session_detail",
   "get_authored_coach_athlete_detail",
   "get_own_profile",
   "get_own_session_notes",
+  "get_program_version_detail",
+  "get_scheduled_workout_detail",
+  "get_workspace_bootstrap",
   "list_authored_coach_session_summaries",
   "list_authored_coach_athlete_overviews",
+  "list_calendar_occurrences",
+  "list_calendar_session_summaries",
+  "list_coach_athletes",
+  "list_completed_session_summaries",
   "list_connected_profile_summaries",
   "list_outgoing_coach_invites",
   "list_pending_coach_invites",
+  "list_program_summaries",
+  "list_schedulable_workouts",
+  "search_exercises",
 ]);
 
 function delay(milliseconds) {
@@ -28,6 +41,8 @@ function parseArgs() {
   const options = {
     baseUrl: process.env.PERF_BASE_URL ?? DEFAULT_BASE_URL,
     iterations: Number(process.env.PERF_ITERATIONS ?? DEFAULT_ITERATIONS),
+    dataEnvironment: process.env.PERF_DATA_ENVIRONMENT ?? "hosted-dev",
+    output: process.env.PERF_OUTPUT ?? null,
   };
 
   for (const argument of process.argv.slice(2)) {
@@ -35,9 +50,13 @@ function parseArgs() {
       options.baseUrl = argument.slice("--base-url=".length);
     } else if (argument.startsWith("--iterations=")) {
       options.iterations = Number(argument.slice("--iterations=".length));
+    } else if (argument.startsWith("--data-environment=")) {
+      options.dataEnvironment = argument.slice("--data-environment=".length);
+    } else if (argument.startsWith("--output=")) {
+      options.output = argument.slice("--output=".length);
     } else {
       throw new Error(
-        `Unknown option ${argument}. Use --base-url=<loopback URL> or --iterations=<number>.`,
+        `Unknown option ${argument}. Use --base-url, --iterations, --data-environment, or --output.`,
       );
     }
   }
@@ -45,12 +64,16 @@ function parseArgs() {
   if (!Number.isInteger(options.iterations) || options.iterations < 5) {
     throw new Error("At least five warm-navigation iterations are required.");
   }
+  if (!new Set(["hosted-dev", "local"]).has(options.dataEnvironment)) {
+    throw new Error("Data environment must be hosted-dev or local.");
+  }
 
   return options;
 }
 
 function readEnvFile(filePath) {
   const entries = {};
+  if (!fs.existsSync(filePath)) return entries;
   const source = fs.readFileSync(filePath, "utf8");
   for (const sourceLine of source.split(/\r?\n/u)) {
     const line = sourceLine.trim();
@@ -71,6 +94,19 @@ function readEnvFile(filePath) {
   return entries;
 }
 
+function selectedBuildEnvironment(sourceFile) {
+  const selected = readEnvFile(sourceFile);
+  for (const name of [
+    "VITE_SITE_URL",
+    "VITE_SUPABASE_URL",
+    "VITE_SUPABASE_PUBLISHABLE_KEY",
+    "VITE_ENABLE_TEST_PERSONAS",
+  ]) {
+    if (process.env[name]) selected[name] = process.env[name];
+  }
+  return selected;
+}
+
 function parseOrigin(value, label) {
   let parsed;
   try {
@@ -81,7 +117,7 @@ function parseOrigin(value, label) {
   return parsed.origin;
 }
 
-function assertSafeEnvironment(baseUrlValue) {
+function assertSafeEnvironment(baseUrlValue, dataEnvironment) {
   const baseUrl = new URL(baseUrlValue);
   if (
     baseUrl.protocol !== "http:" ||
@@ -94,29 +130,30 @@ function assertSafeEnvironment(baseUrlValue) {
     );
   }
 
-  const nonproduction = readEnvFile(".env.nonprod");
-  const production = readEnvFile(".env.production");
+  const sourceFile = dataEnvironment === "local" ? ".env.localdev" : ".env.nonprod";
+  const selected = selectedBuildEnvironment(sourceFile);
   const devSupabaseOrigin = parseOrigin(
-    nonproduction.VITE_SUPABASE_URL,
-    ".env.nonprod VITE_SUPABASE_URL",
+    selected.VITE_SUPABASE_URL,
+    `${sourceFile} VITE_SUPABASE_URL`,
   );
-  const productionSupabaseOrigin = parseOrigin(
-    production.VITE_SUPABASE_URL,
-    ".env.production VITE_SUPABASE_URL",
-  );
+  const productionSupabaseOrigin = ENVIRONMENT_BINDINGS.production.supabaseOrigin;
   const devSiteOrigin = parseOrigin(
-    nonproduction.VITE_SITE_URL,
-    ".env.nonprod VITE_SITE_URL",
+    selected.VITE_SITE_URL,
+    `${sourceFile} VITE_SITE_URL`,
   );
-  const productionSiteOrigin = parseOrigin(
-    production.VITE_SITE_URL,
-    ".env.production VITE_SITE_URL",
-  );
+  const productionSiteOrigin = ENVIRONMENT_BINDINGS.production.siteOrigin;
   const devSupabase = new URL(devSupabaseOrigin);
 
-  if (devSupabase.hostname !== EXPECTED_DEV_SUPABASE_HOST) {
+  const hostedDevIsExact = dataEnvironment === "hosted-dev" &&
+    devSupabaseOrigin === ENVIRONMENT_BINDINGS.nonprod.supabaseOrigin &&
+    devSiteOrigin === ENVIRONMENT_BINDINGS.nonprod.siteOrigin;
+  const localIsIsolated = dataEnvironment === "local" &&
+    devSupabase.protocol === "http:" && LOOPBACK_HOSTS.has(devSupabase.hostname) &&
+    new URL(devSiteOrigin).protocol === "http:" && LOOPBACK_HOSTS.has(new URL(devSiteOrigin).hostname) &&
+    devSiteOrigin !== devSupabaseOrigin;
+  if (!hostedDevIsExact && !localIsIsolated) {
     throw new Error(
-      "The nonproduction configuration is not the audited Lift Log development Supabase project.",
+      "The selected data configuration is not the exact hosted-development project or isolated local stack.",
     );
   }
   if (
@@ -125,8 +162,8 @@ function assertSafeEnvironment(baseUrlValue) {
   ) {
     throw new Error("Nonproduction and production origins must be distinct.");
   }
-  if (nonproduction.VITE_ENABLE_TEST_PERSONAS !== "true") {
-    throw new Error("Test personas must be enabled only in the nonproduction build.");
+  if (selected.VITE_ENABLE_TEST_PERSONAS !== "true") {
+    throw new Error("Test personas must be enabled in the selected measurement build.");
   }
 
   return {
@@ -134,6 +171,7 @@ function assertSafeEnvironment(baseUrlValue) {
     devSupabaseOrigin,
     productionSiteOrigin,
     productionSupabaseOrigin,
+    dataEnvironment,
   };
 }
 
@@ -433,6 +471,17 @@ async function waitForSelected(locator) {
   throw new Error("The requested coaching workspace tab was not selected.");
 }
 
+async function waitForNavigationSelection(page, label) {
+  const locator = navigationButton(page, label);
+  await locator.waitFor({ state: "visible" });
+  const deadline = performance.now() + 15_000;
+  while (performance.now() < deadline) {
+    if ((await locator.getAttribute("aria-current")) === "page") return;
+    await delay(25);
+  }
+  throw new Error(`Navigation did not select ${label}.`);
+}
+
 function navigationButton(page, label) {
   const name =
     label === "Coaching" ? /^Coaching(?:,|$)/u : new RegExp(`^${label}$`, "u");
@@ -441,12 +490,100 @@ function navigationButton(page, label) {
     .getByRole("button", { name });
 }
 
-async function navigate(page, label, heading = label) {
+async function navigate(page, label) {
+  for (const backName of [
+    /^All programs$/u,
+    /^Next workouts$/u,
+    /^Calendar$/u,
+    /^Coaching$/u,
+  ]) {
+    const back = appContent(page)
+      .getByRole("button", { name: backName })
+      .first();
+    if (!(await back.isVisible())) continue;
+    await back.click();
+    break;
+  }
   await navigationButton(page, label).click();
-  await page
-    .getByRole("heading", { name: heading, exact: true })
+  await waitForNavigationSelection(page, label);
+}
+
+function appContent(page) {
+  return page.locator(".app-content");
+}
+
+async function openProgramCatalog(page) {
+  const back = appContent(page).getByRole("button", { name: /^All programs$/u });
+  if (await back.isVisible()) await back.click();
+  await navigate(page, "Programs");
+  await appContent(page).locator(".program-compact-list").waitFor({
+    state: "visible",
+  });
+}
+
+function firstProgramDetailTrigger(page) {
+  return appContent(page)
+    .locator(
+      '.program-content-section[aria-labelledby="program-list-heading"] .program-card-main',
+    )
+    .first();
+}
+
+async function openNextWorkoutsList(page) {
+  await navigate(page, "Next workouts");
+  const back = appContent(page).getByRole("button", {
+    name: /^Next workouts$/u,
+  });
+  if (await back.isVisible()) await back.click();
+  await firstScheduledWorkoutDetailTrigger(page).waitFor({ state: "visible" });
+}
+
+function firstScheduledWorkoutDetailTrigger(page) {
+  return appContent(page)
+    .locator(".next-workout-card")
+    .filter({
+      has: page.getByRole("button", { name: /^Start workout$/u }),
+    })
     .first()
-    .waitFor({ state: "visible" });
+    .locator(".next-workout-summary");
+}
+
+async function startResponsivenessProbe(page) {
+  await page.evaluate(() => {
+    const probe = { longTasks: [], interactions: [], observers: [] };
+    const supported = PerformanceObserver.supportedEntryTypes ?? [];
+    if (supported.includes("longtask")) {
+      const observer = new PerformanceObserver((list) => {
+        probe.longTasks.push(...list.getEntries().map((entry) => entry.duration));
+      });
+      observer.observe({ type: "longtask", buffered: false });
+      probe.observers.push(observer);
+    }
+    if (supported.includes("event")) {
+      const observer = new PerformanceObserver((list) => {
+        probe.interactions.push(...list.getEntries().map((entry) => entry.duration));
+      });
+      observer.observe({ type: "event", buffered: false, durationThreshold: 40 });
+      probe.observers.push(observer);
+    }
+    globalThis.__liftlogResponsivenessProbe = probe;
+  });
+}
+
+async function finishResponsivenessProbe(page) {
+  return page.evaluate(() => {
+    const probe = globalThis.__liftlogResponsivenessProbe;
+    if (!probe) return { longTaskCount: null, longTaskTotalMs: null, longTaskMaxMs: null, interactionLatencyMs: null };
+    probe.observers.forEach((observer) => observer.disconnect());
+    const result = {
+      longTaskCount: probe.longTasks.length,
+      longTaskTotalMs: probe.longTasks.reduce((total, duration) => total + duration, 0),
+      longTaskMaxMs: probe.longTasks.length ? Math.max(...probe.longTasks) : 0,
+      interactionLatencyMs: probe.interactions.length ? Math.max(...probe.interactions) : null,
+    };
+    delete globalThis.__liftlogResponsivenessProbe;
+    return result;
+  });
 }
 
 async function measureWindow({
@@ -463,6 +600,7 @@ async function measureWindow({
     0,
   );
   const window = tracker.startWindow(name);
+  await startResponsivenessProbe(page);
   const startedAt = performance.now();
   await action();
   await ready();
@@ -470,6 +608,7 @@ async function measureWindow({
   await tracker.waitForWindowIdle(window);
   const settledMs = performance.now() - startedAt;
   const dataApi = tracker.finishWindow(window);
+  const responsiveness = await finishResponsivenessProbe(page);
   const blockedAfter = [...safetyState.blockedWrites.values()].reduce(
     (total, count) => total + count,
     0,
@@ -479,6 +618,7 @@ async function measureWindow({
     readyMs: round(readyMs),
     settledMs: round(settledMs),
     dataApi,
+    responsiveness,
     dom: await domSnapshot(page),
     jsHeapBytes: await jsHeapBytes(cdpSession, page),
     blockedWriteAttempts: blockedAfter - blockedBefore,
@@ -510,10 +650,7 @@ async function signInPersona({
         .getByRole("button", { name: new RegExp(personaName, "iu") })
         .click(),
     ready: () =>
-      page
-        .getByRole("heading", { name: "Next workouts", exact: true })
-        .first()
-        .waitFor({ state: "visible" }),
+      waitForNavigationSelection(page, "Next workouts"),
     page,
     tracker,
     cdpSession,
@@ -544,6 +681,7 @@ function metricSummary(values) {
   return {
     median: median(available),
     p95: percentile(available, 0.95),
+    p75: percentile(available, 0.75),
     min: available.length ? round(Math.min(...available)) : null,
     max: available.length ? round(Math.max(...available)) : null,
   };
@@ -583,6 +721,10 @@ function summarize(samples) {
       samples.map((sample) => sample.dom.documentHeightPx),
     ),
     jsHeapBytes: metricSummary(samples.map((sample) => sample.jsHeapBytes)),
+    longTaskCount: metricSummary(samples.map((sample) => sample.responsiveness.longTaskCount)),
+    longTaskTotalMs: metricSummary(samples.map((sample) => sample.responsiveness.longTaskTotalMs)),
+    longTaskMaxMs: metricSummary(samples.map((sample) => sample.responsiveness.longTaskMaxMs)),
+    interactionLatencyMs: metricSummary(samples.map((sample) => sample.responsiveness.interactionLatencyMs)),
     failures: {
       http: samples.reduce(
         (total, sample) => total + sample.dataApi.httpFailures,
@@ -608,6 +750,12 @@ async function measureTarget({
   cdpSession,
   safetyState,
 }) {
+  await target.setup();
+  await tracker.waitForGlobalIdle();
+  await target.action();
+  await target.ready();
+  await tracker.waitForGlobalIdle();
+
   const samples = [];
   for (let iteration = 1; iteration <= iterations; iteration += 1) {
     await target.setup();
@@ -624,7 +772,12 @@ async function measureTarget({
       }),
     );
   }
-  return { id: target.id, label: target.label, ...summarize(samples) };
+  return {
+    id: target.id,
+    label: target.label,
+    kind: target.kind ?? "navigation",
+    ...summarize(samples),
+  };
 }
 
 function janisTargets(page) {
@@ -634,21 +787,24 @@ function janisTargets(page) {
       label: "Next workouts",
       setup: () => navigate(page, "Programs"),
       action: () => navigationButton(page, "Next workouts").click(),
-      ready: () =>
-        page
-          .getByRole("heading", { name: "Next workouts", exact: true })
-          .first()
-          .waitFor({ state: "visible" }),
+      ready: () => waitForNavigationSelection(page, "Next workouts"),
     },
     {
       id: "programs",
       label: "Programs",
       setup: () => navigate(page, "Next workouts"),
       action: () => navigationButton(page, "Programs").click(),
+      ready: () => waitForNavigationSelection(page, "Programs"),
+    },
+    {
+      id: "program-detail",
+      label: "Program detail",
+      kind: "detail",
+      setup: () => openProgramCatalog(page),
+      action: () => firstProgramDetailTrigger(page).click(),
       ready: () =>
-        page
-          .getByRole("heading", { name: "Programs", exact: true })
-          .first()
+        appContent(page)
+          .getByRole("button", { name: /^All programs$/u })
           .waitFor({ state: "visible" }),
     },
     {
@@ -656,22 +812,14 @@ function janisTargets(page) {
       label: "Calendar",
       setup: () => navigate(page, "Next workouts"),
       action: () => navigationButton(page, "Calendar").click(),
-      ready: () =>
-        page
-          .getByRole("heading", { name: "Calendar", exact: true })
-          .first()
-          .waitFor({ state: "visible" }),
+      ready: () => waitForNavigationSelection(page, "Calendar"),
     },
     {
       id: "exercises",
       label: "Exercise library",
       setup: () => navigate(page, "Next workouts"),
       action: () => navigationButton(page, "Exercises").click(),
-      ready: () =>
-        page
-          .getByRole("heading", { name: "Exercises", exact: true })
-          .first()
-          .waitFor({ state: "visible" }),
+      ready: () => waitForNavigationSelection(page, "Exercises"),
     },
   ];
 }
@@ -682,32 +830,44 @@ function raimondsTargets(page) {
 
   return [
     {
+      id: "scheduled-workout-detail",
+      label: "Scheduled workout detail",
+      kind: "detail",
+      setup: () => openNextWorkoutsList(page),
+      action: () => firstScheduledWorkoutDetailTrigger(page).click(),
+      ready: () =>
+        appContent(page)
+          .getByRole("button", { name: /^Next workouts$/u })
+          .waitFor({ state: "visible" }),
+    },
+    {
       id: "coaching-my-coaches",
       label: "Coaching · My coaches",
       setup: () => navigate(page, "Next workouts"),
       action: () => navigationButton(page, "Coaching").click(),
       ready: async () => {
-        await page.locator(".coaching-athlete-layout").waitFor({ state: "visible" });
+        await waitForNavigationSelection(page, "Coaching");
         await waitForSelected(myCoaches);
       },
     },
     {
-      id: "coaching-my-athletes",
-      label: "Coaching · My athletes",
+      id: "coach-athlete-detail",
+      label: "Coach athlete detail",
+      kind: "detail",
       setup: async () => {
         await navigate(page, "Coaching");
         if ((await myCoaches.getAttribute("aria-selected")) !== "true") {
           await myCoaches.click();
           await waitForSelected(myCoaches);
         }
-        await page
-          .locator(".coaching-athlete-layout")
-          .waitFor({ state: "visible" });
       },
       action: () => myAthletes.click(),
       ready: async () => {
-        await page.locator(".coach-dashboard").waitFor({ state: "visible" });
+        await waitForNavigationSelection(page, "Coaching");
         await waitForSelected(myAthletes);
+        await appContent(page)
+          .getByText("Athlete overview", { exact: true })
+          .waitFor({ state: "visible" });
       },
     },
   ];
@@ -811,7 +971,7 @@ async function assertLocalAppIsReady(baseUrl) {
 
 async function main() {
   const options = parseArgs();
-  const environment = assertSafeEnvironment(options.baseUrl);
+  const environment = assertSafeEnvironment(options.baseUrl, options.dataEnvironment);
   const password = getPersonaPassword();
   await assertLocalAppIsReady(environment.baseUrl);
 
@@ -860,18 +1020,20 @@ async function main() {
     }
 
     const report = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       measuredAt: new Date().toISOString(),
       configuration: {
-        appEnvironment: "localhost hosted-development build",
-        dataEnvironment: "audited hosted-development Supabase",
+        appEnvironment: "loopback application build",
+        dataEnvironment: environment.dataEnvironment,
+        releaseSha: process.env.VITE_RELEASE_SHA ?? process.env.GITHUB_SHA ?? "local",
         browser: "headless Chromium",
         viewport: { width: 1440, height: 900 },
         warmIterationsPerScreen: options.iterations,
         serviceWorkers: "blocked",
       },
       safety: {
-        navigationOnly: true,
+        readOnly: true,
+        measuredSurfaces: ["navigation", "detail"],
         allowedDataApiMethods: [
           "GET",
           "HEAD",
@@ -885,7 +1047,12 @@ async function main() {
       },
       personas,
     };
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    const serialized = `${JSON.stringify(report, null, 2)}\n`;
+    if (options.output) {
+      fs.mkdirSync(path.dirname(options.output), { recursive: true });
+      fs.writeFileSync(options.output, serialized);
+    }
+    process.stdout.write(serialized);
   } finally {
     await browser.close();
   }

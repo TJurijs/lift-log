@@ -3,41 +3,70 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const programViewPath = new URL(
+  "../app/features/programs/ProgramView.tsx",
+  import.meta.url,
+);
+async function readAppSource() {
+  const [app, programView] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(programViewPath, "utf8"),
+  ]);
+  return `${app}\n${programView}`;
+}
 const primitivesPath = new URL("../app/ui-primitives.tsx", import.meta.url);
 const progressPath = new URL("../lib/program-progress.ts", import.meta.url);
 const migrationPath = new URL(
-  "../supabase/migrations/202608250001_final_content_is_schedulable.sql",
+  "../supabase/migrations/202608290001_v1_performance_data_architecture.sql",
   import.meta.url,
 );
 
-test("finalized Own and Coach programs can prepare fresh calendar cycles", async () => {
-  const [app, migration, primitives, progress] = await Promise.all([
-    readFile(appPath, "utf8"),
+test("finalized Own and assigned programs schedule one selected occurrence", async () => {
+  const [app, migration, primitives, progress, repository] = await Promise.all([
+    readAppSource(),
     readFile(migrationPath, "utf8"),
     readFile(primitivesPath, "utf8"),
     readFile(progressPath, "utf8"),
+    readFile(new URL("../lib/repository.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(
     migration,
-    /prepare_program_schedule[\s\S]*version\.status = 'published'[\s\S]*program\.source_type in \('self', 'coach'\)[\s\S]*cycle_start := cycle_start \+ workout_count[\s\S]*insert into public\.scheduled_workouts/i,
-    "published athlete-owned content must prepare a new occurrence cycle without availability",
+    /create or replace function public\.create_scheduled_occurrence[\s\S]*target_workout_id uuid[\s\S]*target_idempotency_key uuid/,
+    "the mutation must identify exactly one workout and be safe to retry",
   );
   assert.match(
-    app,
-    /const schedulablePrograms =[\s\S]*workspace\.schedulablePrograms/,
-    "the workspace must derive scheduling from finalized content",
+    migration.match(
+      /create or replace function public\.create_scheduled_occurrence[\s\S]*?\$\$;/i,
+    )?.[0] ?? "",
+    /insert into public\.scheduled_workouts/,
   );
-  assert.doesNotMatch(
-    app,
-    /availabilityAction|onAvailability|In schedule/,
-    "the UI must not expose a separate scheduling-availability state",
+  assert.equal(
+    (
+      migration.match(
+        /create or replace function public\.create_scheduled_occurrence[\s\S]*?\$\$;/i,
+      )?.[0] ?? ""
+    ).match(/insert into public\.scheduled_workouts/g)?.length,
+    1,
   );
   assert.match(
-    app,
-    /label=\{programRunStatusLabel\(runStatus\)\}/,
-    "program cards must surface the derived run lifecycle",
+    migration,
+    /drop function if exists public\.prepare_program_schedule\(uuid\);/i,
+    "the obsolete program-wide schedule prepopulation API must be removed",
   );
+  assert.match(
+    migration,
+    /drop function if exists public\.set_program_availability\(uuid, boolean\);/i,
+    "the obsolete availability toggle must be removed with schedule prepopulation",
+  );
+  assert.match(repository, /async listSchedulableWorkouts/);
+  assert.match(repository, /rpc\("list_schedulable_workouts"/);
+  assert.match(
+    repository,
+    /async createScheduledOccurrence[\s\S]*rpc\("create_scheduled_occurrence"[\s\S]*target_idempotency_key: idempotencyKey/,
+  );
+  assert.doesNotMatch(repository, /prepareProgramSchedule/);
+  assert.doesNotMatch(app, /availabilityAction|onAvailability|In schedule/);
   assert.match(
     progress,
     /schedule\.status === "completed"[\s\S]*schedule\.status === "skipped"[\s\S]*plannedDate < today[\s\S]*"overdue"/,
@@ -46,13 +75,13 @@ test("finalized Own and Coach programs can prepare fresh calendar cycles", async
   assert.match(primitives, /ready: "Final"[\s\S]*completed: "Completed"/);
   assert.match(
     app,
-    /No workouts available to schedule[\s\S]*Save an Own program or workout first/,
+    /No workouts available to schedule[\s\S]*Save a workout or program first/,
     "the empty scheduler must explain the saved-content rule",
   );
 });
 
 test("program assignment is hidden without active coachees", async () => {
-  const app = await readFile(appPath, "utf8");
+  const app = await readAppSource();
   assert.match(
     app,
     /onAssignProgram=\{[\s\S]*capabilitiesForProgram\(program\)\.assign/,
@@ -60,7 +89,7 @@ test("program assignment is hidden without active coachees", async () => {
 });
 
 test("saving a program makes it directly schedulable", async () => {
-  const app = await readFile(appPath, "utf8");
+  const app = await readAppSource();
   assert.doesNotMatch(app, /onRemoveAvailable/);
   assert.match(
     app,
@@ -90,7 +119,7 @@ test("saving a program makes it directly schedulable", async () => {
   assert.doesNotMatch(app, /This is the stable version used by scheduled workouts\./);
   assert.match(
     app,
-    /\{editable && \([\s\S]*?<aside className="exercise-picker panel"/,
+    /\{editable && !mobilePickerSectionId && \([\s\S]*?<aside[\s\S]*?className="exercise-picker desktop-exercise-picker panel"/,
     "the Exercise Library must be hidden outside edit mode",
   );
 });

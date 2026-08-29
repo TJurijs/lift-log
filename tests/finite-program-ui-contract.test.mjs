@@ -3,8 +3,19 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const programViewPath = new URL(
+  "../app/features/programs/ProgramView.tsx",
+  import.meta.url,
+);
+async function readAppSource() {
+  const [app, programView] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(programViewPath, "utf8"),
+  ]);
+  return `${app}\n${programView}`;
+}
 test("program creation always starts a finite one-week program", async () => {
-  const app = await readFile(appPath, "utf8");
+  const app = await readAppSource();
   const programModal = app.slice(
     app.indexOf("function ProgramModal"),
     app.indexOf("function ScheduleModal"),
@@ -25,7 +36,7 @@ test("program creation always starts a finite one-week program", async () => {
 });
 
 test("the week controls offer direct blank and current-week copy actions", async () => {
-  const app = await readFile(appPath, "utf8");
+  const app = await readAppSource();
 
   assert.match(app, /aria-label="Add blank week"/);
   assert.match(app, /aria-label=\{`Duplicate Week \$\{selectedWeek\}`\}/);
@@ -43,7 +54,7 @@ test("the week controls offer direct blank and current-week copy actions", async
 });
 
 test("the compact week controls retain progress feedback", async () => {
-  const app = await readFile(appPath, "utf8");
+  const app = await readAppSource();
 
   assert.match(app, /localWeekAction === "blank"/);
   assert.match(app, /localWeekAction === "copy"/);

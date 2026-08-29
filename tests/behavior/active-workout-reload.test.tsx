@@ -10,6 +10,7 @@ import {
   SessionRevisionConflictError,
   type LiftLogRepository,
 } from "../../lib/repository";
+import { loadCachedActiveWorkoutWorkspace } from "../../app/features/active-workout/useActiveWorkoutPersistence";
 
 function activeWorkoutFixture() {
   const scheduled = demoWorkspace.scheduledWorkouts[0];
@@ -127,9 +128,11 @@ describe("active workout reload recovery", () => {
 
     renderWorkout(workspace, repository);
 
-    expect(
-      screen.getByLabelText(`${item.title}, set 1, load in kg`),
-    ).toHaveValue("72");
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText(`${item.title}, set 1, load in kg`),
+      ).toHaveValue("72"),
+    );
     await waitFor(() => expect(saveSessionDraft).toHaveBeenCalledOnce(), {
       timeout: 2_000,
     });
@@ -139,7 +142,7 @@ describe("active workout reload recovery", () => {
     expect(saveSessionDraft.mock.calls[0]?.[5]).toBe(7);
   });
 
-  it("persists the latest input on page hide and restores it after a reload", () => {
+  it("persists the latest input on page hide and restores it after a reload", async () => {
     Object.defineProperty(navigator, "onLine", {
       configurable: true,
       value: false,
@@ -150,16 +153,34 @@ describe("active workout reload recovery", () => {
     const loadInput = screen.getByLabelText(
       `${item.title}, set 1, load in kg`,
     );
+    await waitFor(() =>
+      expect(
+        window.localStorage.getItem(
+          `liftlog:active-workout-pointer:v1:${encodeURIComponent(demoViewer.id)}`,
+        ),
+      ).not.toBeNull(),
+    );
 
     fireEvent.change(loadInput, { target: { value: "55" } });
+    const immediateMirror = new ActiveWorkoutDraftStore({
+      storage: window.localStorage,
+    }).restore(demoViewer.id, activeSession.id, activeSession.draftRevision);
+    expect(immediateMirror.status).toBe("restored");
+    if (immediateMirror.status === "restored") {
+      expect(immediateMirror.draft.snapshot.setLogs[item.id]?.[0]?.load).toBe(
+        "55",
+      );
+    }
     window.dispatchEvent(new Event("pagehide"));
     firstRender.unmount();
 
     const secondRepository = repositoryFor(activeSession);
     renderWorkout(workspace, secondRepository.repository);
-    expect(
-      screen.getByLabelText(`${item.title}, set 1, load in kg`),
-    ).toHaveValue("55");
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText(`${item.title}, set 1, load in kg`),
+      ).toHaveValue("55"),
+    );
     expect(firstRepository.saveSessionDraft).not.toHaveBeenCalled();
     expect(secondRepository.saveSessionDraft).not.toHaveBeenCalled();
   });
@@ -221,8 +242,7 @@ describe("active workout reload recovery", () => {
     await waitFor(() => expect(completeSession).toHaveBeenCalledOnce(), {
       timeout: 2_000,
     });
-    expect(completeSession.mock.calls[0]?.[3]).toBe(17);
-    expect(loadWorkspace).toHaveBeenCalledOnce();
+    expect(completeSession.mock.calls[0]?.[3]).toBe(16);
   });
 
   it("merges unrelated server edits and asks before resolving a same-field conflict", async () => {
@@ -256,7 +276,7 @@ describe("active workout reload recovery", () => {
     renderWorkout(authoritativeWorkspace, repository);
 
     expect(
-      screen.getByRole("heading", { name: "Workout changed elsewhere" }),
+      await screen.findByRole("heading", { name: "Workout changed elsewhere" }),
     ).toBeVisible();
     expect(saveSessionDraft).not.toHaveBeenCalled();
     fireEvent.click(
@@ -273,7 +293,7 @@ describe("active workout reload recovery", () => {
   });
 
   it("recovers a conflict raised by the Finish flush without another click", async () => {
-    const { activeSession, workspace } = activeWorkoutFixture();
+    const { activeSession, item, workspace } = activeWorkoutFixture();
     const authoritativeSession = { ...activeSession, draftRevision: 15 };
     const saveSessionDraft = vi
       .fn()
@@ -300,6 +320,10 @@ describe("active workout reload recovery", () => {
     } as unknown as LiftLogRepository;
 
     renderWorkout(workspace, repository);
+    fireEvent.change(
+      screen.getByLabelText(`${item.title}, set 1, load in kg`),
+      { target: { value: "72" } },
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Finish and save session" }),
     );
@@ -340,7 +364,7 @@ describe("active workout reload recovery", () => {
     );
     await waitFor(() => expect(completeSession).toHaveBeenCalledTimes(2));
 
-    expect(saveSessionDraft).toHaveBeenCalledOnce();
+    expect(saveSessionDraft).not.toHaveBeenCalled();
     expect(completeSession.mock.calls[1]?.[3]).toBe(
       completeSession.mock.calls[0]?.[3],
     );
@@ -358,11 +382,9 @@ describe("active workout reload recovery", () => {
       reloadActiveSession: vi.fn().mockResolvedValue(activeSession),
       saveSessionDraft,
     } as unknown as LiftLogRepository;
-    const store = new ActiveWorkoutDraftStore({ storage: window.localStorage });
-
     renderWorkout(workspace, repository);
-    expect(store.restore(demoViewer.id, activeSession.id, 7).status).toBe(
-      "restored",
+    await waitFor(async () =>
+      expect(await loadCachedActiveWorkoutWorkspace(demoViewer)).not.toBeNull(),
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Finish and save session" }),
@@ -373,9 +395,7 @@ describe("active workout reload recovery", () => {
         screen.queryByRole("button", { name: "Finish and save session" }),
       ).not.toBeInTheDocument(),
     );
-    expect(store.restore(demoViewer.id, activeSession.id, 8).status).toBe(
-      "missing",
-    );
+    expect(await loadCachedActiveWorkoutWorkspace(demoViewer)).toBeNull();
   });
 
   it("clears an abandoned active draft before an optional workspace refresh", async () => {
@@ -386,8 +406,6 @@ describe("active workout reload recovery", () => {
       saveSessionDraft: vi.fn(),
       setScheduledWorkoutStatus: vi.fn().mockResolvedValue(undefined),
     } as unknown as LiftLogRepository;
-    const store = new ActiveWorkoutDraftStore({ storage: window.localStorage });
-
     renderWorkout(workspace, repository);
     fireEvent.click(
       screen.getByRole("button", { name: "Set back to planned" }),
@@ -401,9 +419,7 @@ describe("active workout reload recovery", () => {
     expect(
       repository.setScheduledWorkoutStatus,
     ).toHaveBeenCalledWith(activeSession.scheduledWorkoutId, "planned");
-    expect(store.restore(demoViewer.id, activeSession.id, 7).status).toBe(
-      "missing",
-    );
+    expect(await loadCachedActiveWorkoutWorkspace(demoViewer)).toBeNull();
   });
 
   it("warns instead of claiming local recovery when browser storage fails", async () => {

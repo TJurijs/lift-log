@@ -1,0 +1,109 @@
+name: Quality and performance guardrails
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VITE_SITE_URL: https://app.liftlog.cc
+      VITE_SUPABASE_URL: https://awdgjgziyrqdkybmlime.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_guardrail
+      VITE_ENABLE_TEST_PERSONAS: "false"
+      VITE_RELEASE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci
+      - run: npm run ci:verify
+      - name: Produce offline reports
+        run: |
+          mkdir -p artifacts/performance
+          npm run perf:fixture:report
+          npm run perf:bundle:report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-guardrails-${{ github.run_id }}
+          path: artifacts/performance
+          if-no-files-found: error
+
+  local-supabase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TEST_PERSONA_PASSWORD: LiftLog-local-CI-2026
+      VITE_SITE_URL: http://localhost:3000
+      VITE_ENABLE_TEST_PERSONAS: "true"
+      VITE_RELEASE_SHA: ${{ github.sha }}
+      PERF_ITERATIONS: "5"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci
+      - name: Start isolated local Supabase
+        run: npm run db:start
+      - name: Export local browser binding
+        shell: bash
+        run: |
+          status="$(npx supabase status -o env)"
+          api_url="$(printf '%s\n' "$status" | sed -n 's/^API_URL="\(.*\)"$/\1/p' | head -n 1)"
+          publishable_key="$(printf '%s\n' "$status" | sed -n 's/^PUBLISHABLE_KEY="\(.*\)"$/\1/p' | head -n 1)"
+          if [ -z "$publishable_key" ]; then
+            publishable_key="$(printf '%s\n' "$status" | sed -n 's/^ANON_KEY="\(.*\)"$/\1/p' | head -n 1)"
+          fi
+          test -n "$api_url"
+          test -n "$publishable_key"
+          {
+            echo "VITE_SUPABASE_URL=$api_url"
+            echo "VITE_SUPABASE_PUBLISHABLE_KEY=$publishable_key"
+            echo "TEST_POPULATION_AS_OF=$(date -u +%F)"
+          } >> "$GITHUB_ENV"
+      - name: Verify local database contracts and scale shape
+        run: npm run ci:local-supabase
+      - name: Seed disposable browser-test personas
+        run: npm run seed:test-population:local
+      - name: Build the isolated local app
+        run: npm run build:local
+      - name: Install runtime browser
+        run: npx playwright install --with-deps chromium
+      - name: Measure and gate navigation and detail performance
+        shell: bash
+        run: |
+          npm run preview:ci > artifacts/performance/runtime-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/ > /dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "Local preview did not become ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          npm run perf:measure:local
+          npm run perf:runtime:check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: local-supabase-performance-${{ github.run_id }}
+          path: artifacts/performance
+          if-no-files-found: error
+      - name: Stop isolated local Supabase
+        if: always()
+        run: npm run db:stop || true

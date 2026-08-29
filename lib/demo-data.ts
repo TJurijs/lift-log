@@ -390,6 +390,7 @@ export const athleteSummaries: AthleteSummary[] = [
     assignedPrograms: [
       {
         id: "coach-program-1",
+        programId: "coach-program-1",
         versionId: "coach-program-version-1",
         title: "Weightlifting base",
         assignedAt: "2026-07-28",
@@ -399,10 +400,6 @@ export const athleteSummaries: AthleteSummary[] = [
         scheduledPercent: 100,
         completedWorkouts: 7,
         completionPercent: 58,
-        workoutProgress: [
-          "completed", "completed", "completed", "completed", "completed", "completed",
-          "completed", "scheduled", "scheduled", "scheduled", "scheduled", "scheduled",
-        ],
         nextWorkout: {
           id: "coach-workout-1",
           title: "Snatch technique",
@@ -445,6 +442,7 @@ export const athleteSummaries: AthleteSummary[] = [
     assignedPrograms: [
       {
         id: "coach-program-2",
+        programId: "coach-program-2",
         versionId: "coach-program-version-2",
         title: "Two-day strength",
         assignedAt: "2026-08-05",
@@ -454,10 +452,6 @@ export const athleteSummaries: AthleteSummary[] = [
         scheduledPercent: 63,
         completedWorkouts: 3,
         completionPercent: 38,
-        workoutProgress: [
-          "completed", "completed", "completed", "scheduled", "scheduled", "unscheduled",
-          "unscheduled", "unscheduled",
-        ],
         nextWorkout: {
           id: "coach-workout-3",
           title: "Full body B",
@@ -500,6 +494,7 @@ export const athleteSummaries: AthleteSummary[] = [
     assignedPrograms: [
       {
         id: "coach-program-3",
+        programId: "coach-program-3",
         versionId: "coach-program-version-3",
         title: "Return to running",
         assignedAt: "2026-07-01",
@@ -509,9 +504,6 @@ export const athleteSummaries: AthleteSummary[] = [
         scheduledPercent: 100,
         completedWorkouts: 6,
         completionPercent: 100,
-        workoutProgress: [
-          "completed", "completed", "completed", "completed", "completed", "completed",
-        ],
       },
     ],
     agenda: [

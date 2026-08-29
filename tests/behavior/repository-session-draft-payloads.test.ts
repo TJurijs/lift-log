@@ -37,6 +37,7 @@ const resultLogs = {
   "result-item": {
     duration: "1.25",
     distance: "2.5",
+    load: "48.5",
     rounds: "4",
     heartRate: "150",
     rpe: "7.5",
@@ -88,7 +89,7 @@ describe("workout-session draft persistence", () => {
             {
               position: 0,
               reps: null,
-              loadKg: null,
+              loadKg: 48.5,
               durationSeconds: 75,
               distanceMetres: 2500,
               rounds: 4,
@@ -113,10 +114,12 @@ describe("workout-session draft persistence", () => {
         {
           "interval-item": {
             "round.0.completed": "1",
+            "round.0.duration": "45",
             "round.0.distance": "0.25",
             "round.0.heartRate": "142",
             "round.0.rpe": "6",
             "round.1.distance": "0.27",
+            "round.1.duration": "75",
             "round.1.heartRate": "148",
             "round.1.rpe": "7",
           },
@@ -131,6 +134,7 @@ describe("workout-session draft persistence", () => {
           entries: [
             {
               position: 0,
+              durationSeconds: 45,
               distanceMetres: 250,
               rounds: 1,
               heartRate: 142,
@@ -138,6 +142,7 @@ describe("workout-session draft persistence", () => {
             },
             {
               position: 1,
+              durationSeconds: 75,
               distanceMetres: 270,
               rounds: null,
               heartRate: 148,

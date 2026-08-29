@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CompletedSessionDetail, Program } from "../../lib/domain";
+import type { CompletedSessionDetail } from "../../lib/domain";
 import { LiftLogRepository } from "../../lib/repository";
 
 function makeRepository(viewerId = "viewer-1") {
@@ -14,7 +14,6 @@ function makeRepository(viewerId = "viewer-1") {
   };
 }
 
-const program = { id: "program-1", versionId: "version-1" } as Program;
 const completed = {
   id: "session-1",
   workoutTitle: "Workout",
@@ -26,9 +25,30 @@ const completed = {
 
 describe("immutable repository caches", () => {
   it("coalesces exact published-version reads by stable identity", async () => {
-    const { repository, mutable } = makeRepository();
-    const load = vi.fn().mockResolvedValue(program);
-    mutable.loadProgramVersionForAthleteByIdUncached = load;
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        kind: "program",
+        id: "program-1",
+        programId: "program-1",
+        athleteId: "viewer-1",
+        createdById: "viewer-1",
+        versionId: "version-1",
+        versionStatus: "published",
+        versionNumber: 1,
+        title: "Program",
+        description: "",
+        sourceType: "self",
+        contentType: "program",
+        phases: [],
+        weeks: [],
+      },
+      error: null,
+    });
+    const repository = new LiftLogRepository(
+      { rpc } as never,
+      "viewer-1",
+      "Viewer",
+    );
 
     await Promise.all([
       repository.loadProgramVersionForAthleteById("athlete-1", "program-1", "version-1"),
@@ -40,7 +60,12 @@ describe("immutable repository caches", () => {
       "version-1",
     );
 
-    expect(load).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("get_program_version_detail", {
+      target_program_id: "program-1",
+      target_assignment_id: null,
+      target_version_id: "version-1",
+    });
   });
 
   it("caches immutable completed results per athlete and session", async () => {

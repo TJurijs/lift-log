@@ -9,7 +9,7 @@ const authHarness = vi.hoisted(() => ({
     | null,
   dispose: vi.fn(),
   getSession: vi.fn(),
-  loadWorkspace: vi.fn(),
+  loadBootstrap: vi.fn(),
   repositoryConstructions: 0,
 }));
 
@@ -49,8 +49,8 @@ vi.mock("../../lib/repository", () => ({
       authHarness.dispose();
     }
 
-    loadWorkspace() {
-      return authHarness.loadWorkspace();
+    loadBootstrap() {
+      return authHarness.loadBootstrap();
     }
   },
 }));
@@ -75,7 +75,7 @@ describe("auth session lifecycle", () => {
     authHarness.callback = null;
     authHarness.dispose.mockReset();
     authHarness.getSession.mockReset();
-    authHarness.loadWorkspace.mockReset();
+    authHarness.loadBootstrap.mockReset();
     authHarness.repositoryConstructions = 0;
   });
 
@@ -126,14 +126,14 @@ describe("auth session lifecycle", () => {
     authHarness.getSession.mockResolvedValue({
       data: { session: session("user-1") },
     });
-    authHarness.loadWorkspace.mockResolvedValue({});
+    authHarness.loadBootstrap.mockResolvedValue({});
 
     render(<AppEntry />);
     expect(await screen.findByTestId("lift-log-app")).toHaveTextContent(
       "user-1",
     );
     expect(authHarness.repositoryConstructions).toBe(1);
-    expect(authHarness.loadWorkspace).toHaveBeenCalledTimes(1);
+    expect(authHarness.loadBootstrap).toHaveBeenCalledTimes(1);
 
     for (const event of [
       "SIGNED_IN",
@@ -145,7 +145,7 @@ describe("auth session lifecycle", () => {
 
     await waitFor(() => {
       expect(authHarness.repositoryConstructions).toBe(1);
-      expect(authHarness.loadWorkspace).toHaveBeenCalledTimes(1);
+      expect(authHarness.loadBootstrap).toHaveBeenCalledTimes(1);
       expect(authHarness.dispose).not.toHaveBeenCalled();
     });
 
@@ -155,7 +155,7 @@ describe("auth session lifecycle", () => {
     );
     await waitFor(() => {
       expect(authHarness.repositoryConstructions).toBe(2);
-      expect(authHarness.loadWorkspace).toHaveBeenCalledTimes(2);
+      expect(authHarness.loadBootstrap).toHaveBeenCalledTimes(2);
       expect(authHarness.dispose).toHaveBeenCalledTimes(1);
     });
   });
@@ -165,7 +165,7 @@ describe("auth session lifecycle", () => {
       data: { session: Session | null };
     }>();
     authHarness.getSession.mockReturnValue(bootstrap.promise);
-    authHarness.loadWorkspace.mockResolvedValue({});
+    authHarness.loadBootstrap.mockResolvedValue({});
 
     render(<AppEntry />);
     act(() => authHarness.callback?.("SIGNED_IN", session("user-2")));
@@ -180,14 +180,14 @@ describe("auth session lifecycle", () => {
 
     expect(screen.getByTestId("lift-log-app")).toHaveTextContent("user-2");
     expect(authHarness.repositoryConstructions).toBe(1);
-    expect(authHarness.loadWorkspace).toHaveBeenCalledTimes(1);
+    expect(authHarness.loadBootstrap).toHaveBeenCalledTimes(1);
   });
 
   it("clears the exiting account's local workout recovery without touching another user", async () => {
     authHarness.getSession.mockResolvedValue({
       data: { session: session("user-1") },
     });
-    authHarness.loadWorkspace.mockResolvedValue({});
+    authHarness.loadBootstrap.mockResolvedValue({});
     render(<AppEntry />);
     expect(await screen.findByTestId("lift-log-app")).toHaveTextContent(
       "user-1",

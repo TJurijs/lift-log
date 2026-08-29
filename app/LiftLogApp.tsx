@@ -26,40 +26,21 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Save,
   Search,
   Settings2,
   Trash2,
-  TrendingUp,
   UserPlus,
   Users,
   X,
 } from "lucide-react";
 import {
-  closestCenter,
-  DndContext,
-  KeyboardSensor,
-  MouseSensor,
-  TouchSensor,
-  useDraggable,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
+  memo,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -68,7 +49,9 @@ import {
 import type {
   ActiveSession,
   AthleteSummary,
+  CalendarWorkspaceData,
   CoachAgendaEntry,
+  CoachAthleteCursor,
   CoachAssignedProgramSummary,
   CoachConnection,
   CoachingWorkspaceData,
@@ -78,6 +61,7 @@ import type {
   CompletedSessionDetail,
   EntryMode,
   Exercise,
+  ExerciseCursor,
   ExerciseDiscipline,
   OwnProfile,
   OutgoingCoachInvite,
@@ -86,7 +70,10 @@ import type {
   PrescriptionEntry,
   Program,
   ProgramAssignment,
+  ProgramCursor,
   ScheduledWorkout,
+  SchedulableWorkoutCandidate,
+  SchedulableWorkoutCursor,
   SessionSetValue,
   TrackingField,
   ViewName,
@@ -94,18 +81,14 @@ import type {
   WorkoutSection,
   WorkspaceData,
 } from "../lib/domain";
+import { trackingFieldsForMode } from "../lib/domain";
 import type { AppViewer } from "../lib/auth";
 import {
-  isAmbiguousSessionDraftError,
   LiftLogRepository,
   SessionRevisionConflictError,
 } from "../lib/repository";
-import {
-  ActiveWorkoutDraftStore,
-  type ActiveWorkoutDraftRestoreResult,
-  type ActiveWorkoutDraftSnapshot,
-} from "../lib/active-workout-draft-storage";
-import { mergeActiveWorkoutDraftSnapshots } from "../lib/active-workout-draft-merge";
+import type { ActiveWorkoutDraftSnapshot } from "../lib/active-workout-draft-storage";
+import type { SessionDraftSaveStatus } from "../lib/session-draft-coordinator";
 import {
   deriveOccurrenceCapabilities,
   deriveTrainingContentCapabilities,
@@ -114,11 +97,6 @@ import {
   type TrainingContentCapabilities,
 } from "../lib/capabilities";
 import { localDateOnly } from "../lib/date-only";
-import {
-  SessionDraftCoordinator,
-  type SessionDraftSaveStatus,
-} from "../lib/session-draft-coordinator";
-import { flushSessionDraftWithRecovery } from "../lib/session-draft-recovery";
 import {
   cn,
   formatDuration,
@@ -157,10 +135,12 @@ import {
   listUpcomingWorkouts,
   selectNextWorkoutFocus,
 } from "../lib/workout-focus";
+import { parseAppView, updateAppViewUrl } from "../lib/app-route";
 import {
   AsyncButton,
   InlineError,
   ModalShell,
+  PageHeader,
   PersonAvatar,
   SegmentedTabs,
   SessionSaveIndicator,
@@ -169,6 +149,11 @@ import {
   Toast,
   WorkoutSectionHeading,
 } from "./ui-primitives";
+import { useActiveWorkoutPersistence } from "./features/active-workout/useActiveWorkoutPersistence";
+
+const CalendarView = lazy(() => import("./features/calendar/CalendarView"));
+const loadProgramView = () => import("./features/programs/ProgramView");
+const ProgramView = lazy(loadProgramView);
 
 const navItems: Array<{
   id: ViewName;
@@ -207,100 +192,44 @@ type ContentDeleteTarget =
   | { kind: "workout-item"; id: string; title: string }
   | { kind: "program"; program: Program };
 type SetLog = SessionSetValue;
-type SessionDraftSnapshot = {
-  session: ActiveSession;
-  setLogs: Record<string, SetLog[]>;
-  resultLogs: Record<string, Record<string, string>>;
-  sessionRpe: string;
-  sessionNote: string;
-};
-type SessionDraftQueueState = {
-  sessionId: string;
-  repositoryRef: { current: LiftLogRepository };
-  coordinator: SessionDraftCoordinator<SessionDraftSnapshot>;
-};
-type SessionDraftConflictState = {
-  sessionId: string;
-  authoritativeRevision: number;
-  remoteSnapshot: ActiveWorkoutDraftSnapshot;
-  localCandidate: ActiveWorkoutDraftSnapshot;
-  serverCandidate: ActiveWorkoutDraftSnapshot;
-  conflicts: string[];
-  resolve?: (snapshot: ActiveWorkoutDraftSnapshot) => void;
-};
-const activeWorkoutDraftStore = new ActiveWorkoutDraftStore();
+const emptySetLogs: SetLog[] = [];
+const emptyResultLog: Record<string, string> = {};
 
-function localDraftSnapshot(
-  snapshot: SessionDraftSnapshot,
-): ActiveWorkoutDraftSnapshot {
-  return {
-    setLogs: snapshot.setLogs,
-    resultLogs: snapshot.resultLogs,
-    sessionRpe: snapshot.sessionRpe,
-    sessionNote: snapshot.sessionNote,
-  };
-}
-
-function activeSessionDraftSnapshot(
-  session: ActiveSession,
-): ActiveWorkoutDraftSnapshot {
-  return {
-    setLogs: session.setLogs,
-    resultLogs: session.resultLogs,
-    sessionRpe: session.sessionRpe,
-    sessionNote: session.sessionNote,
-  };
-}
-
-function sameLocalDraft(
-  left: ActiveWorkoutDraftSnapshot,
-  right: ActiveWorkoutDraftSnapshot,
-) {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function restoredActiveWorkoutDraft(
-  session: ActiveSession,
-  result: ActiveWorkoutDraftRestoreResult,
-) {
-  if (result.status !== "restored" && result.status !== "revision-mismatch") {
-    return null;
-  }
-
-  const remoteSnapshot = activeSessionDraftSnapshot(session);
-  const { draft } = result;
-  if (!draft.baseSnapshot) {
-    if (draft.baseRevision === session.draftRevision) {
-      return {
-        snapshot: draft.snapshot,
-        remoteSnapshot,
-        serverCandidate: remoteSnapshot,
-        conflicts: [] as string[],
-      };
+function mergeProgramCatalog(
+  previous: WorkspaceData,
+  incoming: Program[],
+  reset: boolean,
+): WorkspaceData {
+  const ordered = reset ? [] : [...(previous.programCatalog ?? [])];
+  const byId = new Map(ordered.map((program) => [program.id, program]));
+  for (const nextProgram of incoming) {
+    const current = byId.get(nextProgram.id);
+    const merged =
+      current && current.detailsLoaded !== false ? current : nextProgram;
+    if (!byId.has(nextProgram.id)) ordered.push(merged);
+    else {
+      const index = ordered.findIndex((program) => program.id === nextProgram.id);
+      if (index >= 0) ordered[index] = merged;
     }
-    return {
-      snapshot: draft.snapshot,
-      remoteSnapshot,
-      serverCandidate: remoteSnapshot,
-      conflicts: ["workout"],
-    };
+    byId.set(nextProgram.id, merged);
   }
-
-  const localMerge = mergeActiveWorkoutDraftSnapshots(
-    draft.baseSnapshot,
-    draft.snapshot,
-    remoteSnapshot,
-  );
-  const serverMerge = mergeActiveWorkoutDraftSnapshots(
-    draft.baseSnapshot,
-    remoteSnapshot,
-    draft.snapshot,
+  const schedulablePrograms = ordered.filter(
+    (program) =>
+      program.versionStatus === "published" && program.sourceType !== "library",
   );
   return {
-    snapshot: localMerge.snapshot,
-    remoteSnapshot,
-    serverCandidate: serverMerge.snapshot,
-    conflicts: localMerge.conflicts,
+    ...previous,
+    programCatalog: ordered,
+    schedulablePrograms,
+    schedulableProgramIds: schedulablePrograms.map((program) => program.id),
+    draftProgram:
+      ordered.find((program) => program.versionStatus === "draft") ?? null,
+    activeProgram:
+      ordered.find(
+        (program) =>
+          program.sourceType !== "library" &&
+          program.versionStatus === "published",
+      ) ?? null,
   };
 }
 
@@ -309,6 +238,12 @@ type ProgramAction = {
   id: string;
   kind: "delete" | "publish" | "edit" | "open" | "week";
 } | null;
+type ExerciseLibraryFilters = {
+  disciplines: ExerciseDiscipline[];
+  categories: string[];
+  modes: EntryMode[];
+  tracking: TrackingField[];
+};
 type CompletedWorkoutViewState = {
   session: CompletedSession;
   detail: CompletedSessionDetail | null;
@@ -324,6 +259,21 @@ type DetailState =
     }
   | ({ kind: "completed-workout" } & CompletedWorkoutViewState)
   | null;
+type ScheduleCandidate = {
+  id: string;
+  scheduleId?: string;
+  programId: string;
+  assignmentId?: string;
+  programVersionId: string;
+  programTitle: string;
+  workoutId: string;
+  workoutTitle: string;
+  scheduleLabel: string;
+  estimatedMinutes: number;
+  quickWorkout: boolean;
+  plannedDate?: string;
+};
+type LazyWorkspaceFeature = "programs" | "exercises" | "calendar" | "coaching";
 
 function prescriptionEntries(item: WorkoutItem) {
   return item.prescription.entries?.length
@@ -376,6 +326,8 @@ function prescriptionLabel(
       parts.push(`${target.durationMinutes} min`);
     if (target.distance !== undefined)
       parts.push(`${target.distance} ${target.distanceUnit ?? "m"}`);
+    if (target.loadKg !== undefined)
+      parts.push(`${formatWeight(target.loadKg, weightUnit)} ${weightUnit}`);
   }
   return parts.join(" · ") || (item.mode === "none" ? "Instructions" : "Open");
 }
@@ -410,43 +362,6 @@ function starterSetLogs(
       }
     });
   return logs;
-}
-
-function createSessionDraftCoordinator(
-  repositoryRef: { current: LiftLogRepository },
-  initialRevision: number,
-  online: boolean,
-  onStatusChange: (status: SessionDraftSaveStatus) => void,
-  onError: (error: unknown) => void,
-  onRevisionConfirmed: (
-    revision: number,
-    snapshot: SessionDraftSnapshot,
-  ) => void,
-) {
-  return new SessionDraftCoordinator<SessionDraftSnapshot>(
-    async ({ expectedRevision, writeToken, snapshot }) => {
-      const result = await repositoryRef.current.saveSessionDraft(
-        snapshot.session,
-        snapshot.setLogs,
-        snapshot.resultLogs,
-        snapshot.sessionRpe,
-        snapshot.sessionNote,
-        expectedRevision,
-        writeToken,
-      );
-      onRevisionConfirmed(result.revision, snapshot);
-      return result.revision;
-    },
-    {
-      initialRevision,
-      online,
-      isAmbiguousFailure: isAmbiguousSessionDraftError,
-      isRevisionConflict: (error) =>
-        error instanceof SessionRevisionConflictError,
-      onError,
-      onStatusChange,
-    },
-  );
 }
 
 async function copyText(value: string) {
@@ -489,31 +404,15 @@ export default function LiftLogApp({
   initialWorkspace: WorkspaceData;
   repository: LiftLogRepository | null;
 }) {
-  const [initialWorkoutDraft] = useState(() => {
-    const session = initialWorkspace.activeSession;
-    if (!session) return { result: null, restored: null };
-    const result = activeWorkoutDraftStore.restore(
-      viewer.id,
-      session.id,
-      session.draftRevision,
-    );
-    return {
-      result,
-      restored: restoredActiveWorkoutDraft(session, result),
-    };
-  });
-  const restoredSnapshot = initialWorkoutDraft.restored?.snapshot;
-  const restoredSnapshotNeedsSync = Boolean(
-    initialWorkspace.activeSession &&
-      restoredSnapshot &&
-      initialWorkoutDraft.restored?.conflicts.length === 0 &&
-      !sameLocalDraft(
-        restoredSnapshot,
-        activeSessionDraftSnapshot(initialWorkspace.activeSession),
-      ),
+  const [activeView, setActiveView] = useState<ViewName>(() =>
+    typeof window === "undefined" ? "today" : parseAppView(window.location.hash),
   );
-  const [activeView, setActiveView] = useState<ViewName>("today");
   const [workspace, setWorkspace] = useState<WorkspaceData>(initialWorkspace);
+  const [calendarRangeData, setCalendarRangeData] =
+    useState<CalendarWorkspaceData>({
+      scheduledWorkouts: initialWorkspace.scheduledWorkouts,
+      completedSessions: initialWorkspace.completedSessions,
+    });
   const [program, setProgram] = useState<Program | null>(null);
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [selectedWorkoutId, setSelectedWorkoutId] = useState("");
@@ -545,6 +444,13 @@ export default function LiftLogApp({
     "global" | "personal"
   >("global");
   const [exerciseQuery, setExerciseQuery] = useState("");
+  const [exerciseFilters, setExerciseFilters] =
+    useState<ExerciseLibraryFilters>(() => emptyExerciseLibraryFilters());
+  const [exerciseCursor, setExerciseCursor] = useState<ExerciseCursor>();
+  const [exerciseSearchLoading, setExerciseSearchLoading] = useState(false);
+  const [exerciseSearchError, setExerciseSearchError] = useState("");
+  const [exerciseSearchRetryKey, setExerciseSearchRetryKey] = useState(0);
+  const exerciseSearchRequestRef = useRef(0);
   const [modal, setModal] = useState<ModalName>(null);
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(
     initialWorkspace.activeSession,
@@ -568,33 +474,26 @@ export default function LiftLogApp({
   >(null);
   const [detail, setDetail] = useState<DetailState>(null);
   const [sessionRpe, setSessionRpe] = useState(
-    restoredSnapshot?.sessionRpe ??
-      initialWorkspace.activeSession?.sessionRpe ??
-      "7",
+    initialWorkspace.activeSession?.sessionRpe ?? "7",
   );
   const [sessionNote, setSessionNote] = useState(
-    restoredSnapshot?.sessionNote ??
-      initialWorkspace.activeSession?.sessionNote ??
-      "",
-  );
-  const [sessionDraftConflict, setSessionDraftConflict] =
-    useState<SessionDraftConflictState | null>(() => {
-      const session = initialWorkspace.activeSession;
-      const restored = initialWorkoutDraft.restored;
-      if (!session || !restored?.conflicts.length) return null;
-      return {
-        sessionId: session.id,
-        authoritativeRevision: session.draftRevision,
-        remoteSnapshot: restored.remoteSnapshot,
-        localCandidate: restored.snapshot,
-        serverCandidate: restored.serverCandidate,
-        conflicts: restored.conflicts,
-      };
-    });
-  const [localRecoveryAvailable, setLocalRecoveryAvailable] = useState(
-    initialWorkoutDraft.result?.status !== "storage-unavailable",
+    initialWorkspace.activeSession?.sessionNote ?? "",
   );
   const [toast, setToast] = useState("");
+  const loadedWorkspaceFeaturesRef = useRef(
+    new Set<LazyWorkspaceFeature>(
+      repository ? [] : ["exercises", "calendar", "coaching"],
+    ),
+  );
+  const loadingWorkspaceFeaturesRef = useRef(
+    new Map<LazyWorkspaceFeature, Promise<void>>(),
+  );
+  const [loadingWorkspaceFeature, setLoadingWorkspaceFeature] =
+    useState<LazyWorkspaceFeature | null>(null);
+  const [workspaceFeatureError, setWorkspaceFeatureError] = useState<{
+    feature: LazyWorkspaceFeature;
+    message: string;
+  } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const notify = useCallback((message: string) => {
     if (toastTimerRef.current !== null)
@@ -612,40 +511,111 @@ export default function LiftLogApp({
     },
     [],
   );
-  const sessionDraftQueueRef = useRef<SessionDraftQueueState | null>(null);
-  const sessionDraftSaveTimerRef = useRef<number | null>(null);
-  const latestSessionDraftRef = useRef<SessionDraftSnapshot | null>(null);
-  const observedSessionDraftIdRef = useRef<string | null>(null);
-  const lastSessionDraftContentRef = useRef<{
-    sessionId: string;
-    serialized: string;
-  } | null>(null);
-  const restoredDraftNeedsSyncRef = useRef(restoredSnapshotNeedsSync);
-  const confirmedSessionRevisionRef = useRef(
-    new Map<string, number>(
-      initialWorkspace.activeSession
-        ? [
-            [
-              initialWorkspace.activeSession.id,
-              initialWorkspace.activeSession.draftRevision,
-            ],
-          ]
-        : [],
-    ),
+  useEffect(() => {
+    if (!window.location.hash || parseAppView(window.location.hash) !== activeView) {
+      updateAppViewUrl(activeView, "replace");
+    }
+    const restoreViewFromHistory = () => {
+      setActiveView(parseAppView(window.location.hash));
+      scrollToAppTop();
+    };
+    window.addEventListener("popstate", restoreViewFromHistory);
+    window.addEventListener("hashchange", restoreViewFromHistory);
+    return () => {
+      window.removeEventListener("popstate", restoreViewFromHistory);
+      window.removeEventListener("hashchange", restoreViewFromHistory);
+    };
+  }, [activeView]);
+  const loadWorkspaceFeature = useCallback(
+    (feature: LazyWorkspaceFeature) => {
+      if (!repository || loadedWorkspaceFeaturesRef.current.has(feature)) {
+        return Promise.resolve();
+      }
+      const current = loadingWorkspaceFeaturesRef.current.get(feature);
+      if (current) return current;
+
+      setLoadingWorkspaceFeature(feature);
+      setWorkspaceFeatureError(null);
+      const pending = (async () => {
+        if (feature === "programs") {
+          const page = await repository.listProgramSummaries({ limit: 25 });
+          setProgramCursor(page.nextCursor);
+          setWorkspace((previous) =>
+            mergeProgramCatalog(previous, page.items, true),
+          );
+        } else if (feature === "exercises") {
+          const exerciseWorkspace = await repository.loadExerciseWorkspace();
+          setWorkspace((previous) => ({ ...previous, ...exerciseWorkspace }));
+        } else if (feature === "calendar") {
+          const calendarWorkspace = await repository.loadCalendarWorkspace();
+          setWorkspace((previous) => ({ ...previous, ...calendarWorkspace }));
+        } else {
+          const coachingWorkspace = await repository.loadCoachingWorkspace();
+          const { coachAthleteCursor: nextCursor, ...workspaceData } =
+            coachingWorkspace;
+          setCoachAthleteCursor(nextCursor);
+          setCoachAthletesLoadError("");
+          setWorkspace((previous) => ({ ...previous, ...workspaceData }));
+        }
+        loadedWorkspaceFeaturesRef.current.add(feature);
+      })()
+        .catch((error: unknown) => {
+          setWorkspaceFeatureError({
+            feature,
+            message:
+              error instanceof Error
+                ? error.message
+                : "This part of your workspace could not be loaded",
+          });
+        })
+        .finally(() => {
+          loadingWorkspaceFeaturesRef.current.delete(feature);
+          setLoadingWorkspaceFeature((currentFeature) =>
+            currentFeature === feature ? null : currentFeature,
+          );
+        });
+      loadingWorkspaceFeaturesRef.current.set(feature, pending);
+      return pending;
+    },
+    [repository],
   );
-  const confirmedSessionSnapshotRef = useRef(
-    new Map<string, ActiveWorkoutDraftSnapshot>(
-      initialWorkspace.activeSession
-        ? [
-            [
-              initialWorkspace.activeSession.id,
-              activeSessionDraftSnapshot(initialWorkspace.activeSession),
-            ],
-          ]
-        : [],
-    ),
+  useEffect(() => {
+    const feature =
+      activeView === "coaching"
+          ? "coaching"
+          : activeView === "program"
+            ? "programs"
+            : null;
+    if (feature) void loadWorkspaceFeature(feature);
+  }, [activeView, loadWorkspaceFeature]);
+
+  const loadVisibleCalendarRange = useCallback(
+    async (rangeStart: string, rangeEnd: string) => {
+      if (!repository) return;
+      const requestId = ++calendarRangeRequestRef.current;
+      lastCalendarRangeRef.current = { start: rangeStart, end: rangeEnd };
+      setCalendarRangeLoading(true);
+      setCalendarRangeError("");
+      try {
+        const next = await repository.loadCalendarRange(rangeStart, rangeEnd);
+        if (requestId !== calendarRangeRequestRef.current) return;
+        setCalendarRangeData(next);
+      } catch (error) {
+        if (requestId === calendarRangeRequestRef.current) {
+          setCalendarRangeError(
+            error instanceof Error
+              ? error.message
+              : "This calendar month could not be loaded.",
+          );
+        }
+      } finally {
+        if (requestId === calendarRangeRequestRef.current) {
+          setCalendarRangeLoading(false);
+        }
+      }
+    },
+    [repository],
   );
-  const sessionDraftRecoveryRef = useRef<Promise<number> | null>(null);
   const completionTokenRef = useRef<{
     sessionId: string;
     token: string;
@@ -653,246 +623,17 @@ export default function LiftLogApp({
     sessionRpe: string;
     sessionNote: string;
   } | null>(null);
-  const [sessionSaveStatus, setSessionSaveStatus] =
-    useState<SessionDraftSaveStatus>("saved");
-  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
-  const onlineRef = useRef(isOnline);
-  const persistActiveWorkoutDraft = useCallback(
-    (
-      sessionId: string,
-      baseRevision: number,
-      snapshot: ActiveWorkoutDraftSnapshot,
-      baseSnapshot: ActiveWorkoutDraftSnapshot,
-    ) => {
-      const stored = activeWorkoutDraftStore.save(
-        viewer.id,
-        sessionId,
-        baseRevision,
-        snapshot,
-        baseSnapshot,
-      );
-      setLocalRecoveryAvailable((current) =>
-        current === stored ? current : stored,
-      );
-      return stored;
-    },
-    [viewer.id],
-  );
-  const requestSessionDraftConflictResolution = useCallback(
-    (
-      conflict: Omit<SessionDraftConflictState, "resolve">,
-    ): Promise<ActiveWorkoutDraftSnapshot> =>
-      new Promise((resolve) => {
-        setSessionSaveStatus("error");
-        setSessionDraftConflict({ ...conflict, resolve });
-        notify(
-          "This workout changed in another copy · choose which conflicting values to keep",
-        );
-      }),
-    [notify],
-  );
-  const recoverSessionDraftRevision = useCallback(
-    (sessionId: string, forceAuthoritativeReload = false) => {
-      if (sessionDraftRecoveryRef.current) {
-        return sessionDraftRecoveryRef.current;
-      }
-
-      const recovery = (async () => {
-        const queue = sessionDraftQueueRef.current;
-        if (queue?.sessionId !== sessionId) {
-          throw new Error("The active workout save queue is no longer available.");
-        }
-        if (
-          !forceAuthoritativeReload &&
-          !queue.coordinator.revisionResetRequired
-        ) {
-          return queue.coordinator.confirmedRevision;
-        }
-
-        let authoritativeSession: ActiveSession | null = null;
-        setSessionSaveStatus("saving");
-        const revision = await flushSessionDraftWithRecovery({
-          coordinator: queue.coordinator,
-          isRevisionConflict: (error) =>
-            error instanceof SessionRevisionConflictError,
-          startWithAuthoritativeRevision: forceAuthoritativeReload,
-          loadAuthoritativeRevision: async () => {
-            authoritativeSession =
-              await queue.repositoryRef.current.reloadActiveSession(sessionId);
-            if (!authoritativeSession) {
-              throw new Error(
-                "This workout is no longer active. Your unsaved entries remain on this device.",
-              );
-            }
-            return authoritativeSession.draftRevision;
-          },
-          getLatestSnapshot: async ({ authoritativeRevision }) => {
-            const latest = latestSessionDraftRef.current;
-            if (!latest || latest.session.id !== sessionId) {
-              throw new Error(
-                "The latest workout entries could not be prepared for recovery.",
-              );
-            }
-            if (authoritativeRevision === undefined) return latest;
-            if (!authoritativeSession) {
-              throw new Error(
-                "The authoritative workout could not be prepared for recovery.",
-              );
-            }
-            const remoteSnapshot = activeSessionDraftSnapshot(
-              authoritativeSession,
-            );
-            const baseSnapshot =
-              confirmedSessionSnapshotRef.current.get(sessionId) ??
-              remoteSnapshot;
-            const localSnapshot = localDraftSnapshot(latest);
-            const localMerge = mergeActiveWorkoutDraftSnapshots(
-              baseSnapshot,
-              localSnapshot,
-              remoteSnapshot,
-            );
-            let recoveredLocalSnapshot = localMerge.snapshot;
-            if (localMerge.conflicts.length > 0) {
-              const serverMerge = mergeActiveWorkoutDraftSnapshots(
-                baseSnapshot,
-                remoteSnapshot,
-                localSnapshot,
-              );
-              recoveredLocalSnapshot =
-                await requestSessionDraftConflictResolution({
-                  sessionId,
-                  authoritativeRevision,
-                  remoteSnapshot,
-                  localCandidate: localMerge.snapshot,
-                  serverCandidate: serverMerge.snapshot,
-                  conflicts: localMerge.conflicts,
-                });
-            }
-            const recoveredSnapshot: SessionDraftSnapshot = {
-              session: {
-                ...latest.session,
-                draftRevision: authoritativeRevision,
-                itemLogIds: authoritativeSession.itemLogIds,
-              },
-              ...recoveredLocalSnapshot,
-            };
-            confirmedSessionSnapshotRef.current.set(
-              sessionId,
-              remoteSnapshot,
-            );
-            persistActiveWorkoutDraft(
-              sessionId,
-              authoritativeRevision,
-              recoveredLocalSnapshot,
-              remoteSnapshot,
-            );
-            latestSessionDraftRef.current = recoveredSnapshot;
-            setActiveSession(authoritativeSession);
-            setSetLogs(recoveredLocalSnapshot.setLogs);
-            setResultLogs(recoveredLocalSnapshot.resultLogs);
-            setSessionRpe(recoveredLocalSnapshot.sessionRpe);
-            setSessionNote(recoveredLocalSnapshot.sessionNote);
-            return recoveredSnapshot;
-          },
-        });
-        confirmedSessionRevisionRef.current.set(sessionId, revision);
-        return revision;
-      })().finally(() => {
-          if (sessionDraftRecoveryRef.current === recovery) {
-            sessionDraftRecoveryRef.current = null;
-          }
-        });
-      sessionDraftRecoveryRef.current = recovery;
-      return recovery;
-    },
-    [persistActiveWorkoutDraft, requestSessionDraftConflictResolution],
-  );
-  const startSessionDraftRecovery = useCallback(
-    (sessionId: string, forceAuthoritativeReload = false) => {
-      void recoverSessionDraftRevision(
-        sessionId,
-        forceAuthoritativeReload,
-      ).then(
-        () => notify("Workout reconnected · latest entries saved"),
-        (error: unknown) => {
-          setSessionSaveStatus(
-            onlineRef.current ? "error" : "unsaved-offline",
-          );
-          notify(
-            error instanceof Error
-              ? error.message
-              : "Your workout is safe on this device but could not sync yet.",
-          );
-        },
-      );
-    },
-    [notify, recoverSessionDraftRevision],
-  );
-  const ensureSessionDraftQueue = useCallback(
-    (session: ActiveSession, targetRepository: LiftLogRepository) => {
-      const current = sessionDraftQueueRef.current;
-      if (current?.sessionId === session.id) {
-        current.repositoryRef.current = targetRepository;
-        return current.coordinator;
-      }
-
-      current?.coordinator.close();
-      const repositoryRef = { current: targetRepository };
-      const initialRevision = Math.max(
-        session.draftRevision ?? 0,
-        confirmedSessionRevisionRef.current.get(session.id) ?? 0,
-      );
-      const coordinator = createSessionDraftCoordinator(
-        repositoryRef,
-        initialRevision,
-        onlineRef.current,
-        setSessionSaveStatus,
-        (error) => {
-          if (error instanceof SessionRevisionConflictError) {
-            startSessionDraftRecovery(session.id);
-            return;
-          }
-          notify(
-            error instanceof Error
-              ? error.message
-              : "Workout changes are unsaved — retry when connected",
-          );
-        },
-        (revision, confirmedSnapshot) => {
-          if (sessionDraftQueueRef.current?.sessionId !== session.id) return;
-          confirmedSessionRevisionRef.current.set(session.id, revision);
-          const latest = latestSessionDraftRef.current;
-          const confirmedLocalSnapshot =
-            localDraftSnapshot(confirmedSnapshot);
-          confirmedSessionSnapshotRef.current.set(
-            session.id,
-            confirmedLocalSnapshot,
-          );
-          persistActiveWorkoutDraft(
-            session.id,
-            revision,
-            localDraftSnapshot(
-              latest?.session.id === session.id ? latest : confirmedSnapshot,
-            ),
-            confirmedLocalSnapshot,
-          );
-        },
-      );
-      sessionDraftQueueRef.current = {
-        sessionId: session.id,
-        repositoryRef,
-        coordinator,
-      };
-      return coordinator;
-    },
-    [notify, persistActiveWorkoutDraft, startSessionDraftRecovery],
-  );
-
   const [requestedCoachMode, setCoachMode] = useState<"athlete" | "coach">(
     "athlete",
   );
   const coachingRefreshRef = useRef(false);
   const [coachingRefreshing, setCoachingRefreshing] = useState(false);
+  const [coachAthleteCursor, setCoachAthleteCursor] = useState<
+    CoachAthleteCursor | undefined
+  >();
+  const [coachAthletesLoadingMore, setCoachAthletesLoadingMore] =
+    useState(false);
+  const [coachAthletesLoadError, setCoachAthletesLoadError] = useState("");
   const coachingDetailRequestsRef = useRef(new Set<string>());
   const [coachingDetailLoadingId, setCoachingDetailLoadingId] = useState<
     string | null
@@ -924,8 +665,24 @@ export default function LiftLogApp({
   const [scheduleInitialDate, setScheduleInitialDate] = useState<string | null>(
     null,
   );
-  const scheduleOpeningRef = useRef(false);
-  const [scheduleOpening, setScheduleOpening] = useState(false);
+  const [scheduleCandidates, setScheduleCandidates] = useState<
+    SchedulableWorkoutCandidate[]
+  >([]);
+  const [scheduleCandidateCursor, setScheduleCandidateCursor] =
+    useState<SchedulableWorkoutCursor>();
+  const [scheduleCandidatesLoading, setScheduleCandidatesLoading] =
+    useState(false);
+  const [scheduleCandidatesError, setScheduleCandidatesError] = useState("");
+  const [programCursor, setProgramCursor] = useState<ProgramCursor>();
+  const [programsLoadingMore, setProgramsLoadingMore] = useState(false);
+  const [programsLoadError, setProgramsLoadError] = useState("");
+  const calendarRangeRequestRef = useRef(0);
+  const lastCalendarRangeRef = useRef<{
+    start: string;
+    end: string;
+  } | null>(null);
+  const [calendarRangeLoading, setCalendarRangeLoading] = useState(false);
+  const [calendarRangeError, setCalendarRangeError] = useState("");
   const completedWorkoutRequestRef = useRef(0);
   const [programOwnerId, setProgramOwnerId] = useState(viewer.id);
   const [requestedProgramSource, setProgramSource] =
@@ -935,22 +692,200 @@ export default function LiftLogApp({
   const builderMutationPendingRef = useRef(false);
   const [builderMutationPending, setBuilderMutationPending] = useState(false);
 
+  const loadMorePrograms = useCallback(async () => {
+    if (!repository || !programCursor || programsLoadingMore) return;
+    setProgramsLoadingMore(true);
+    setProgramsLoadError("");
+    try {
+      const page = await repository.listProgramSummaries({
+        limit: 25,
+        cursor: programCursor,
+      });
+      setProgramCursor(page.nextCursor);
+      setWorkspace((previous) =>
+        mergeProgramCatalog(previous, page.items, false),
+      );
+    } catch (error) {
+      setProgramsLoadError(
+        error instanceof Error
+          ? error.message
+          : "More programs could not be loaded.",
+      );
+    } finally {
+      setProgramsLoadingMore(false);
+    }
+  }, [programCursor, programsLoadingMore, repository]);
+
+  useEffect(() => {
+    if (!repository || activeView !== "exercises") return;
+    const requestId = ++exerciseSearchRequestRef.current;
+    const timer = window.setTimeout(() => {
+      setExerciseSearchLoading(true);
+      setExerciseSearchError("");
+      void repository
+        .searchExercises({
+          query: exerciseQuery,
+          scope: exerciseScope,
+          disciplines: exerciseFilters.disciplines,
+          categories: exerciseFilters.categories,
+          modes: exerciseFilters.modes,
+          tracking: exerciseFilters.tracking,
+          limit: 50,
+        })
+        .then((page) => {
+          if (requestId !== exerciseSearchRequestRef.current) return;
+          setExerciseCursor(page.nextCursor);
+          setWorkspace((previous) => ({
+            ...previous,
+            ...(exerciseScope === "global"
+              ? { globalExercises: page.items }
+              : { personalExercises: page.items }),
+          }));
+        })
+        .catch((error: unknown) => {
+          if (requestId !== exerciseSearchRequestRef.current) return;
+          setExerciseSearchError(
+            error instanceof Error
+              ? error.message
+              : "The exercise library could not be searched.",
+          );
+        })
+        .finally(() => {
+          if (requestId === exerciseSearchRequestRef.current) {
+            setExerciseSearchLoading(false);
+          }
+        });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeView,
+    exerciseFilters,
+    exerciseQuery,
+    exerciseScope,
+    exerciseSearchRetryKey,
+    repository,
+  ]);
+
+  const loadMoreExercises = useCallback(async () => {
+    if (!repository || !exerciseCursor || exerciseSearchLoading) return;
+    const requestId = ++exerciseSearchRequestRef.current;
+    setExerciseSearchLoading(true);
+    setExerciseSearchError("");
+    try {
+      const page = await repository.searchExercises({
+        query: exerciseQuery,
+        scope: exerciseScope,
+        disciplines: exerciseFilters.disciplines,
+        categories: exerciseFilters.categories,
+        modes: exerciseFilters.modes,
+        tracking: exerciseFilters.tracking,
+        limit: 50,
+        cursor: exerciseCursor,
+      });
+      if (requestId !== exerciseSearchRequestRef.current) return;
+      setExerciseCursor(page.nextCursor);
+      setWorkspace((previous) => {
+        const current =
+          exerciseScope === "global"
+            ? previous.globalExercises
+            : previous.personalExercises;
+        const merged = [
+          ...current,
+          ...page.items.filter(
+            (exercise) =>
+              !current.some((candidate) => candidate.id === exercise.id),
+          ),
+        ];
+        return {
+          ...previous,
+          ...(exerciseScope === "global"
+            ? { globalExercises: merged }
+            : { personalExercises: merged }),
+        };
+      });
+    } catch (error) {
+      if (requestId === exerciseSearchRequestRef.current) {
+        setExerciseSearchError(
+          error instanceof Error
+            ? error.message
+            : "More exercises could not be loaded.",
+        );
+      }
+    } finally {
+      if (requestId === exerciseSearchRequestRef.current) {
+        setExerciseSearchLoading(false);
+      }
+    }
+  }, [
+    exerciseCursor,
+    exerciseFilters,
+    exerciseQuery,
+    exerciseScope,
+    exerciseSearchLoading,
+    repository,
+  ]);
+
+  const searchBuilderExercises = useCallback(
+    async (query: string) => {
+      if (repository) {
+        const page = await repository.searchExercises({
+          query,
+          scope: "all",
+          limit: 20,
+        });
+        return page.items;
+      }
+      const normalized = query.trim().toLowerCase();
+      return [
+        ...workspace.globalExercises,
+        ...workspace.personalExercises,
+      ]
+        .filter(
+          (exercise) =>
+            !normalized || exercise.name.toLowerCase().includes(normalized),
+        )
+        .slice(0, 20);
+    },
+    [repository, workspace.globalExercises, workspace.personalExercises],
+  );
+
   const schedulablePrograms =
     workspace.schedulablePrograms ??
     [workspace.draftProgram ?? workspace.activeProgram].filter(
       (candidate): candidate is Program => Boolean(candidate),
     );
   const outgoingCoachInvites = workspace.outgoingCoachInvites ?? [];
-  const hasCoach = workspace.coachConnections.length > 0;
+  const coachingDetailsLoaded =
+    loadedWorkspaceFeaturesRef.current.has("coaching");
+  const hasCoach = coachingDetailsLoaded
+    ? workspace.coachConnections.length > 0
+    : (workspace.coachingAccess?.hasCoach ?? false);
   const hasAthleteWorkspace =
-    workspace.coachedAthletes.length > 0 ||
-    workspace.pendingCoachInvites.length > 0;
+    coachingDetailsLoaded
+      ? workspace.coachedAthletes.length > 0 ||
+        workspace.pendingCoachInvites.length > 0
+      : (workspace.coachingAccess?.coachedAthleteCount ?? 0) > 0 ||
+        (workspace.coachingAccess?.pendingInviteCount ?? 0) > 0;
   const coachMode = hasAthleteWorkspace ? requestedCoachMode : "athlete";
   const programSource =
     requestedProgramSource === "coach" && !hasCoach
       ? "own"
       : requestedProgramSource;
   const programCatalog = workspace.programCatalog ?? schedulablePrograms;
+  const visibleGlobalExercises = repository
+    ? workspace.globalExercises
+    : filterCompleteExerciseLibrary(
+        workspace.globalExercises,
+        exerciseQuery,
+        exerciseFilters,
+      );
+  const visiblePersonalExercises = repository
+    ? workspace.personalExercises
+    : filterCompleteExerciseLibrary(
+        workspace.personalExercises,
+        exerciseQuery,
+        exerciseFilters,
+      );
   const workoutPreviewSchedule =
     detail?.kind === "workout-preview" ? detail.schedule : null;
   const workoutPreviewReturnView =
@@ -976,7 +911,9 @@ export default function LiftLogApp({
       activeCoachOfOwner: workspace.coachedAthletes.some(
         (athlete) => athlete.id === targetProgram.athleteId,
       ),
-      hasAssignableAthletes: workspace.coachedAthletes.length > 0,
+      hasAssignableAthletes: coachingDetailsLoaded
+        ? workspace.coachedAthletes.length > 0
+        : (workspace.coachingAccess?.coachedAthleteCount ?? 0) > 0,
       coachReadScope: "authored_only",
     });
   }
@@ -1027,232 +964,57 @@ export default function LiftLogApp({
     currentWeek?.workouts[0];
 
   const [setLogs, setSetLogs] = useState<Record<string, SetLog[]>>(() =>
-    restoredSnapshot?.setLogs ??
+    initialWorkspace.activeSession?.setLogs ??
     (todayWorkout ? starterSetLogs(todayWorkout, activeSession) : {}),
   );
   const [resultLogs, setResultLogs] = useState<
     Record<string, Record<string, string>>
-  >(restoredSnapshot?.resultLogs ?? initialWorkspace.activeSession?.resultLogs ?? {});
-  const activeSessionId = activeSession?.id;
-
-  useLayoutEffect(() => {
-    if (!activeSession || !workoutStarted) return;
-    const snapshot: SessionDraftSnapshot = {
-      session: activeSession,
-      setLogs,
-      resultLogs,
-      sessionRpe,
-      sessionNote,
-    };
-    latestSessionDraftRef.current = snapshot;
-    const coordinator =
-      sessionDraftQueueRef.current?.sessionId === activeSession.id
-        ? sessionDraftQueueRef.current.coordinator
-        : null;
-    const confirmedRevision = Math.max(
-      activeSession.draftRevision,
-      coordinator?.confirmedRevision ?? 0,
-      confirmedSessionRevisionRef.current.get(activeSession.id) ?? 0,
-    );
-    const baseSnapshot =
-      confirmedSessionSnapshotRef.current.get(activeSession.id) ??
-      activeSessionDraftSnapshot(activeSession);
-    persistActiveWorkoutDraft(
-      activeSession.id,
-      confirmedRevision,
-      localDraftSnapshot(snapshot),
-      baseSnapshot,
-    );
-  }, [
-    activeSession,
-    persistActiveWorkoutDraft,
-    resultLogs,
-    sessionNote,
-    sessionRpe,
-    setLogs,
-    workoutStarted,
-  ]);
-
-  useEffect(() => {
-    const updateConnection = () => {
-      const online = navigator.onLine;
-      onlineRef.current = online;
-      setIsOnline(online);
-      const queue = sessionDraftQueueRef.current;
-      queue?.coordinator.setOnline(online);
-      if (online && queue?.coordinator.revisionResetRequired) {
-        startSessionDraftRecovery(queue.sessionId);
-      }
-    };
-    window.addEventListener("online", updateConnection);
-    window.addEventListener("offline", updateConnection);
-    return () => {
-      window.removeEventListener("online", updateConnection);
-      window.removeEventListener("offline", updateConnection);
-    };
-  }, [startSessionDraftRecovery]);
-
-  useEffect(() => {
-    const persistLatest = () => {
-      const latest = latestSessionDraftRef.current;
-      if (!latest) return;
-      const coordinator =
-        sessionDraftQueueRef.current?.sessionId === latest.session.id
-          ? sessionDraftQueueRef.current.coordinator
-          : null;
-      const revision = Math.max(
-        latest.session.draftRevision,
-        coordinator?.confirmedRevision ?? 0,
-        confirmedSessionRevisionRef.current.get(latest.session.id) ?? 0,
-      );
-      const baseSnapshot =
-        confirmedSessionSnapshotRef.current.get(latest.session.id) ??
-        activeSessionDraftSnapshot(latest.session);
-      persistActiveWorkoutDraft(
-        latest.session.id,
-        revision,
-        localDraftSnapshot(latest),
-        baseSnapshot,
-      );
-    };
-    const resumeSync = () => {
-      const online = navigator.onLine;
-      onlineRef.current = online;
-      setIsOnline(online);
-      const queue = sessionDraftQueueRef.current;
-      queue?.coordinator.setOnline(online);
-      if (!online || !queue) return;
-      if (queue.coordinator.revisionResetRequired) {
-        startSessionDraftRecovery(queue.sessionId);
-      } else if (queue.coordinator.hasUnsavedChanges) {
-        queue.coordinator.save();
-      }
-    };
-    const backgroundSync = () => {
-      persistLatest();
-      if (sessionDraftSaveTimerRef.current !== null) {
-        window.clearTimeout(sessionDraftSaveTimerRef.current);
-        sessionDraftSaveTimerRef.current = null;
-      }
-      if (onlineRef.current) {
-        sessionDraftQueueRef.current?.coordinator.save();
-      }
-    };
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") backgroundSync();
-      else resumeSync();
-    };
-
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("pagehide", backgroundSync);
-    window.addEventListener("pageshow", resumeSync);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("pagehide", backgroundSync);
-      window.removeEventListener("pageshow", resumeSync);
-    };
-  }, [persistActiveWorkoutDraft, startSessionDraftRecovery]);
-
-  useEffect(() => {
-    if (!repository || !activeSession) {
-      sessionDraftQueueRef.current?.coordinator.close();
-      sessionDraftQueueRef.current = null;
-      latestSessionDraftRef.current = null;
-      observedSessionDraftIdRef.current = null;
-      lastSessionDraftContentRef.current = null;
-      if (sessionDraftSaveTimerRef.current !== null) {
-        window.clearTimeout(sessionDraftSaveTimerRef.current);
-        sessionDraftSaveTimerRef.current = null;
-      }
-      completionTokenRef.current = null;
-      return;
-    }
-    const coordinator = ensureSessionDraftQueue(activeSession, repository);
-    coordinator.setOnline(onlineRef.current);
-  }, [activeSession, activeSessionId, ensureSessionDraftQueue, repository]);
-
-  useEffect(
-    () => () => {
-      if (sessionDraftSaveTimerRef.current !== null) {
-        window.clearTimeout(sessionDraftSaveTimerRef.current);
-        sessionDraftSaveTimerRef.current = null;
-      }
-      sessionDraftQueueRef.current?.coordinator.close();
-      sessionDraftQueueRef.current = null;
+  >(initialWorkspace.activeSession?.resultLogs ?? {});
+  const activeWorkoutSnapshot = useMemo<ActiveWorkoutDraftSnapshot>(
+    () => ({ setLogs, resultLogs, sessionRpe, sessionNote }),
+    [resultLogs, sessionNote, sessionRpe, setLogs],
+  );
+  const applyPersistedSnapshot = useCallback(
+    (snapshot: ActiveWorkoutDraftSnapshot) => {
+      setSetLogs(snapshot.setLogs);
+      setResultLogs(snapshot.resultLogs);
+      setSessionRpe(snapshot.sessionRpe);
+      setSessionNote(snapshot.sessionNote);
     },
     [],
   );
-
-  useEffect(() => {
-    if (!repository || !activeSession || !workoutStarted) return;
-    const coordinator = ensureSessionDraftQueue(activeSession, repository);
-    const snapshot: SessionDraftSnapshot = {
-      session: activeSession,
-      setLogs,
-      resultLogs,
-      sessionRpe,
-      sessionNote,
-    };
-    latestSessionDraftRef.current = snapshot;
-    const durableSnapshot = localDraftSnapshot(snapshot);
-    const serializedSnapshot = JSON.stringify(durableSnapshot);
-    const confirmedRevision = Math.max(
-      activeSession.draftRevision,
-      coordinator.confirmedRevision,
-      confirmedSessionRevisionRef.current.get(activeSession.id) ?? 0,
-    );
-    confirmedSessionRevisionRef.current.set(
-      activeSession.id,
-      confirmedRevision,
-    );
-    if (observedSessionDraftIdRef.current !== activeSession.id) {
-      observedSessionDraftIdRef.current = activeSession.id;
-      if (!restoredDraftNeedsSyncRef.current) {
-        lastSessionDraftContentRef.current = {
-          sessionId: activeSession.id,
-          serialized: serializedSnapshot,
-        };
-        return;
-      }
-      restoredDraftNeedsSyncRef.current = false;
-    }
-    if (
-      lastSessionDraftContentRef.current?.sessionId === activeSession.id &&
-      lastSessionDraftContentRef.current.serialized === serializedSnapshot
-    ) {
-      return;
-    }
-    lastSessionDraftContentRef.current = {
-      sessionId: activeSession.id,
-      serialized: serializedSnapshot,
-    };
-
-    coordinator.stage(snapshot);
-    if (!onlineRef.current) {
-      coordinator.setOnline(false);
-      return;
-    }
-    if (sessionDraftSaveTimerRef.current !== null) {
-      window.clearTimeout(sessionDraftSaveTimerRef.current);
-    }
-    const saveTimer = window.setTimeout(() => {
-      if (sessionDraftSaveTimerRef.current === saveTimer) {
-        sessionDraftSaveTimerRef.current = null;
-      }
-      if (workoutActionRef.current === "finishing") return;
-      coordinator.save();
-    }, 650);
-    sessionDraftSaveTimerRef.current = saveTimer;
-  }, [
-    activeSession,
-    ensureSessionDraftQueue,
+  const activeWorkoutPersistence = useActiveWorkoutPersistence({
+    userId: viewer.id,
+    session: workoutStarted ? activeSession : null,
+    workout: todayWorkout,
+    schedule: todaySchedule,
+    profile: workspace.profile,
     repository,
-    resultLogs,
-    sessionNote,
-    sessionRpe,
-    setLogs,
-    workoutStarted,
-  ]);
+    snapshot: activeWorkoutSnapshot,
+    onApplySnapshot: applyPersistedSnapshot,
+    onSessionRefresh: setActiveSession,
+    onRevisionConfirmed: (revision, writeToken) =>
+      setActiveSession((current) =>
+        current
+          ? {
+              ...current,
+              draftRevision: revision,
+              draftWriteToken: writeToken,
+            }
+          : current,
+      ),
+    onSyncError: (error) =>
+      notify(
+        error instanceof Error
+          ? error.message
+          : "Your workout is saved on this device but could not sync yet.",
+      ),
+  });
+  const sessionDraftConflict = activeWorkoutPersistence.conflict;
+  const sessionSaveStatus = activeWorkoutPersistence.status;
+  const isOnline = activeWorkoutPersistence.online;
+  const localRecoveryAvailable =
+    activeWorkoutPersistence.localRecoveryAvailable;
 
   function selectProgram(
     nextProgram: Program,
@@ -1282,6 +1044,7 @@ export default function LiftLogApp({
   }
 
   async function openProgram(targetProgram: Program) {
+    void loadProgramView();
     if (!repository || targetProgram.detailsLoaded !== false) {
       selectProgram(targetProgram);
       setActiveView("program");
@@ -1293,6 +1056,8 @@ export default function LiftLogApp({
       const detail = await repository.loadProgramDetail(
         targetProgram.athleteId,
         targetProgram.id,
+        targetProgram.versionId,
+        targetProgram.assignmentId,
       );
       if (!detail) throw new Error("This program is no longer available.");
       selectProgram(detail);
@@ -1314,9 +1079,10 @@ export default function LiftLogApp({
         (candidate) => candidate.id === schedule.programId,
       );
       const nextProgram = repository
-        ? await repository.loadOwnScheduledProgramVersionById(
+          ? await repository.loadOwnScheduledProgramVersionById(
             schedule.programId,
             schedule.programVersionId,
+            schedule.assignmentId,
           )
         : matchingProgram;
       if (!nextProgram) throw new Error("This plan version is no longer available.");
@@ -1334,114 +1100,6 @@ export default function LiftLogApp({
       notify(
         error instanceof Error ? error.message : "The plan could not be opened",
       );
-    }
-  }
-
-  function applyWorkspace(nextWorkspace: WorkspaceData) {
-    const previousActiveSessionId = activeSession?.id;
-    const nextActiveSession = nextWorkspace.activeSession;
-    const nextWorkout = selectNextWorkoutFocus(
-      nextWorkspace.programCatalog,
-      nextActiveSession,
-      nextWorkspace.scheduledWorkouts,
-    )?.workout;
-    const preserveActiveDraft = Boolean(
-      activeSession &&
-      nextActiveSession?.id === activeSession.id &&
-      workoutStarted,
-    );
-    const storedResult =
-      !preserveActiveDraft && nextActiveSession
-        ? activeWorkoutDraftStore.restore(
-            viewer.id,
-            nextActiveSession.id,
-            nextActiveSession.draftRevision,
-          )
-        : null;
-    const restoredDraft =
-      storedResult && nextActiveSession
-        ? restoredActiveWorkoutDraft(nextActiveSession, storedResult)
-        : null;
-    const storedSnapshot = restoredDraft?.snapshot ?? null;
-    setWorkspace(nextWorkspace);
-    setActiveSession(nextActiveSession);
-    if (!preserveActiveDraft) {
-      restoredDraftNeedsSyncRef.current = Boolean(
-        nextActiveSession &&
-          storedSnapshot &&
-          restoredDraft?.conflicts.length === 0 &&
-          !sameLocalDraft(
-            storedSnapshot,
-            activeSessionDraftSnapshot(nextActiveSession),
-          ),
-      );
-      observedSessionDraftIdRef.current = null;
-      lastSessionDraftContentRef.current = null;
-      setSessionDraftConflict(
-        nextActiveSession && restoredDraft?.conflicts.length
-          ? {
-              sessionId: nextActiveSession.id,
-              authoritativeRevision: nextActiveSession.draftRevision,
-              remoteSnapshot: restoredDraft.remoteSnapshot,
-              localCandidate: restoredDraft.snapshot,
-              serverCandidate: restoredDraft.serverCandidate,
-              conflicts: restoredDraft.conflicts,
-            }
-          : null,
-      );
-      setSetLogs(
-        storedSnapshot?.setLogs ??
-          (nextWorkout ? starterSetLogs(nextWorkout, nextActiveSession) : {}),
-      );
-      setResultLogs(storedSnapshot?.resultLogs ?? nextActiveSession?.resultLogs ?? {});
-      setSessionRpe(
-        storedSnapshot?.sessionRpe ?? nextActiveSession?.sessionRpe ?? "7",
-      );
-      setSessionNote(
-        storedSnapshot?.sessionNote ?? nextActiveSession?.sessionNote ?? "",
-      );
-      if (storedSnapshot) {
-        notify("Recovered unsaved workout entries from this device");
-      }
-    }
-    if (nextActiveSession) {
-      confirmedSessionRevisionRef.current.set(
-        nextActiveSession.id,
-        Math.max(
-          nextActiveSession.draftRevision,
-          confirmedSessionRevisionRef.current.get(nextActiveSession.id) ?? 0,
-        ),
-      );
-      confirmedSessionSnapshotRef.current.set(
-        nextActiveSession.id,
-        activeSessionDraftSnapshot(nextActiveSession),
-      );
-    }
-    if (
-      previousActiveSessionId &&
-      nextActiveSession?.id !== previousActiveSessionId
-    ) {
-      activeWorkoutDraftStore.clearAfterCompletion(
-        viewer.id,
-        previousActiveSessionId,
-      );
-      confirmedSessionRevisionRef.current.delete(previousActiveSessionId);
-      confirmedSessionSnapshotRef.current.delete(previousActiveSessionId);
-    }
-    setWorkoutStarted(Boolean(nextActiveSession));
-    setSelectedAthleteId(
-      (previousId) =>
-        nextWorkspace.coachedAthletes.find(
-          (athlete) => athlete.id === previousId,
-        )?.id ??
-        nextWorkspace.coachedAthletes[0]?.id ??
-        null,
-    );
-    if (program?.athleteId === viewer.id) {
-      const refreshedProgram = nextWorkspace.programCatalog.find(
-        (candidate) => candidate.id === program.id,
-      );
-      if (!refreshedProgram) setProgram(null);
     }
   }
 
@@ -1464,6 +1122,17 @@ export default function LiftLogApp({
     }));
   }
 
+  async function refreshProgramWorkspace(programId?: string) {
+    if (!repository) return null;
+    repository.invalidatePrograms(programId);
+    const page = await repository.listProgramSummaries({ limit: 25 });
+    setProgramCursor(page.nextCursor);
+    setWorkspace((previous) =>
+      mergeProgramCatalog(previous, page.items, true),
+    );
+    return page.items;
+  }
+
   async function restoreProgramAfterBuilderFailure(
     fallback: Program,
     selection: { weekIndex: number; workoutId: string; sectionId: string },
@@ -1477,6 +1146,7 @@ export default function LiftLogApp({
       const authoritative = await repository.loadEditableProgram(
         fallback.athleteId,
         fallback.id,
+        fallback.assignmentId,
       );
       replaceProgramEverywhere(authoritative);
     } catch {
@@ -1493,7 +1163,11 @@ export default function LiftLogApp({
     };
     if (program?.versionStatus === "draft") {
       selectProgram(
-        await repository.loadEditableProgram(program.athleteId, program.id),
+        await repository.loadEditableProgram(
+          program.athleteId,
+          program.id,
+          program.assignmentId,
+        ),
         preferred,
       );
       return;
@@ -1504,6 +1178,8 @@ export default function LiftLogApp({
     const nextProgram = await repository.loadProgramDetail(
       program.athleteId,
       program.id,
+      program.versionId,
+      program.assignmentId,
     );
     if (nextProgram) selectProgram(nextProgram, preferred);
     else setProgram(null);
@@ -1526,11 +1202,15 @@ export default function LiftLogApp({
       void loadCoachedAthleteDetail(selectedAthlete.id);
     }
     setActiveView(view);
+    updateAppViewUrl(view);
     scrollToAppTop();
   }
 
   function applyCoachingWorkspace(nextCoaching: CoachingWorkspaceData) {
-    setWorkspace((previous) => ({ ...previous, ...nextCoaching }));
+    const { coachAthleteCursor: nextCursor, ...workspaceData } = nextCoaching;
+    setCoachAthleteCursor(nextCursor);
+    setCoachAthletesLoadError("");
+    setWorkspace((previous) => ({ ...previous, ...workspaceData }));
     setSelectedAthleteId(
       (previousId) =>
         nextCoaching.coachedAthletes.find(
@@ -1539,6 +1219,36 @@ export default function LiftLogApp({
         nextCoaching.coachedAthletes[0]?.id ??
         null,
     );
+  }
+
+  async function loadMoreCoachAthletes() {
+    if (!repository || !coachAthleteCursor || coachAthletesLoadingMore) return;
+    setCoachAthletesLoadingMore(true);
+    setCoachAthletesLoadError("");
+    try {
+      const page = await repository.listCoachAthletes({
+        limit: 25,
+        cursor: coachAthleteCursor,
+      });
+      setWorkspace((previous) => {
+        const athletesById = new Map(
+          previous.coachedAthletes.map((athlete) => [athlete.id, athlete]),
+        );
+        for (const athlete of page.items) {
+          if (!athletesById.has(athlete.id)) athletesById.set(athlete.id, athlete);
+        }
+        return { ...previous, coachedAthletes: [...athletesById.values()] };
+      });
+      setCoachAthleteCursor(page.nextCursor);
+    } catch (error) {
+      setCoachAthletesLoadError(
+        error instanceof Error
+          ? error.message
+          : "More athletes could not be loaded.",
+      );
+    } finally {
+      setCoachAthletesLoadingMore(false);
+    }
   }
 
   async function loadCoachedAthleteDetail(
@@ -1625,101 +1335,57 @@ export default function LiftLogApp({
     }
   }
 
-  function updateSet(
+  const updateSet = useCallback((
     itemId: string,
     index: number,
     field: keyof SetLog,
     value: string,
-  ) {
+  ) => {
     setSetLogs((previous) => ({
       ...previous,
       [itemId]: previous[itemId].map((row, rowIndex) =>
         rowIndex === index ? { ...row, [field]: value } : row,
       ),
     }));
-  }
+  }, []);
 
-  function addSet(itemId: string) {
+  const addSet = useCallback((itemId: string) => {
     setSetLogs((previous) => ({
       ...previous,
       [itemId]: [...(previous[itemId] ?? []), { reps: "", load: "", rpe: "" }],
     }));
-  }
+  }, []);
 
-  function removeSet(itemId: string, index: number) {
+  const removeSet = useCallback((itemId: string, index: number) => {
     setSetLogs((previous) => ({
       ...previous,
       [itemId]: previous[itemId].filter((_, rowIndex) => rowIndex !== index),
     }));
-  }
+  }, []);
 
-  function updateResult(itemId: string, field: string, value: string) {
+  const updateResult = useCallback((itemId: string, field: string, value: string) => {
     setResultLogs((previous) => ({
       ...previous,
       [itemId]: { ...(previous[itemId] ?? {}), [field]: value },
     }));
-  }
+  }, []);
 
-  function resolveSessionDraftConflict(keepLocalValues: boolean) {
-    const conflict = sessionDraftConflict;
-    if (!conflict) return;
-    const chosen = keepLocalValues
-      ? conflict.localCandidate
-      : conflict.serverCandidate;
-    confirmedSessionRevisionRef.current.set(
-      conflict.sessionId,
-      conflict.authoritativeRevision,
-    );
-    confirmedSessionSnapshotRef.current.set(
-      conflict.sessionId,
-      conflict.remoteSnapshot,
-    );
-    persistActiveWorkoutDraft(
-      conflict.sessionId,
-      conflict.authoritativeRevision,
-      chosen,
-      conflict.remoteSnapshot,
-    );
-    setSetLogs(chosen.setLogs);
-    setResultLogs(chosen.resultLogs);
-    setSessionRpe(chosen.sessionRpe);
-    setSessionNote(chosen.sessionNote);
-    setSessionDraftConflict(null);
-
-    if (conflict.resolve) {
-      conflict.resolve(chosen);
-    } else {
-      const needsSync = !sameLocalDraft(chosen, conflict.remoteSnapshot);
-      restoredDraftNeedsSyncRef.current = false;
-      observedSessionDraftIdRef.current = null;
-      lastSessionDraftContentRef.current = null;
-      if (
-        needsSync &&
-        repository &&
-        activeSession?.id === conflict.sessionId
-      ) {
-        const snapshot: SessionDraftSnapshot = {
-          session: activeSession,
-          ...chosen,
-        };
-        latestSessionDraftRef.current = snapshot;
-        lastSessionDraftContentRef.current = {
-          sessionId: conflict.sessionId,
-          serialized: JSON.stringify(chosen),
-        };
-        const coordinator = ensureSessionDraftQueue(activeSession, repository);
-        coordinator.stage(snapshot);
-        if (onlineRef.current) coordinator.save();
-        else coordinator.setOnline(false);
-      } else {
-        setSessionSaveStatus("saved");
-      }
+  async function resolveSessionDraftConflict(keepLocalValues: boolean) {
+    if (!sessionDraftConflict) return;
+    try {
+      await activeWorkoutPersistence.resolveConflict(keepLocalValues);
+      notify(
+        keepLocalValues
+          ? "Kept this device's conflicting values · syncing merged workout"
+          : "Kept the last server-saved conflicting values",
+      );
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "The workout conflict could not be resolved",
+      );
     }
-    notify(
-      keepLocalValues
-        ? "Kept this device's conflicting values · syncing merged workout"
-        : "Kept the last server-saved conflicting values",
-    );
   }
 
   async function ensureScheduledWorkoutDetails(schedule: ScheduledWorkout) {
@@ -1727,6 +1393,12 @@ export default function LiftLogApp({
     const detail = await repository.loadScheduledWorkoutDetail(schedule.id);
     if (!detail) throw new Error("This scheduled workout is no longer available.");
     setWorkspace((previous) => ({
+      ...previous,
+      scheduledWorkouts: previous.scheduledWorkouts.map((candidate) =>
+        candidate.id === detail.id ? detail : candidate,
+      ),
+    }));
+    setCalendarRangeData((previous) => ({
       ...previous,
       scheduledWorkouts: previous.scheduledWorkouts.map((candidate) =>
         candidate.id === detail.id ? detail : candidate,
@@ -1752,58 +1424,16 @@ export default function LiftLogApp({
         setActiveWorkoutVisible(true);
         return;
       }
-      const versionId =
-        workout.programVersionId ?? schedule.programVersionId;
-      if (!versionId)
-        throw new Error(
-          "This scheduled workout is missing its program version.",
-        );
       const session = await repository.startOrResumeSession(
-        workout,
-        versionId,
+        detailedSchedule.id,
       );
       if (!session) throw new Error("The workout session was not created.");
-      const storedResult = activeWorkoutDraftStore.restore(
-        viewer.id,
-        session.id,
-        session.draftRevision,
-      );
-      const restoredDraft = restoredActiveWorkoutDraft(session, storedResult);
-      const storedSnapshot = restoredDraft?.snapshot ?? null;
       completionTokenRef.current = null;
-      setSessionSaveStatus("saved");
-      confirmedSessionRevisionRef.current.set(
-        session.id,
-        session.draftRevision,
-      );
-      confirmedSessionSnapshotRef.current.set(
-        session.id,
-        activeSessionDraftSnapshot(session),
-      );
-      restoredDraftNeedsSyncRef.current = Boolean(
-        storedSnapshot &&
-          restoredDraft?.conflicts.length === 0 &&
-          !sameLocalDraft(storedSnapshot, activeSessionDraftSnapshot(session)),
-      );
-      observedSessionDraftIdRef.current = null;
-      lastSessionDraftContentRef.current = null;
-      setSessionDraftConflict(
-        restoredDraft?.conflicts.length
-          ? {
-              sessionId: session.id,
-              authoritativeRevision: session.draftRevision,
-              remoteSnapshot: restoredDraft.remoteSnapshot,
-              localCandidate: restoredDraft.snapshot,
-              serverCandidate: restoredDraft.serverCandidate,
-              conflicts: restoredDraft.conflicts,
-            }
-          : null,
-      );
       setActiveSession(session);
-      setSetLogs(storedSnapshot?.setLogs ?? starterSetLogs(workout, session));
-      setResultLogs(storedSnapshot?.resultLogs ?? session.resultLogs);
-      setSessionRpe(storedSnapshot?.sessionRpe ?? session.sessionRpe);
-      setSessionNote(storedSnapshot?.sessionNote ?? session.sessionNote);
+      setSetLogs(starterSetLogs(workout, session));
+      setResultLogs(session.resultLogs);
+      setSessionRpe(session.sessionRpe);
+      setSessionNote(session.sessionNote);
       setWorkoutStarted(true);
       setActiveWorkoutVisible(true);
       setWorkspace((previous) => ({
@@ -1815,13 +1445,7 @@ export default function LiftLogApp({
         ),
       }));
       setDetail(null);
-      notify(
-        storedSnapshot && !restoredDraft?.conflicts.length
-          ? "Workout resumed · recovered entries are syncing"
-          : restoredDraft?.conflicts.length
-            ? "Workout resumed · choose which conflicting values to keep"
-          : "Workout started · changes save automatically",
-      );
+      notify("Workout started · changes save automatically");
     } catch (error) {
       notify(
         error instanceof Error
@@ -1862,29 +1486,14 @@ export default function LiftLogApp({
     }
   }
 
-  function clearConfirmedActiveSession(
+  async function clearConfirmedActiveSession(
     session: ActiveSession,
     scheduleStatus: "planned" | "skipped" | "completed",
   ) {
-    if (sessionDraftSaveTimerRef.current !== null) {
-      window.clearTimeout(sessionDraftSaveTimerRef.current);
-      sessionDraftSaveTimerRef.current = null;
-    }
-    if (sessionDraftQueueRef.current?.sessionId === session.id) {
-      sessionDraftQueueRef.current.coordinator.close();
-      sessionDraftQueueRef.current = null;
-    }
-    latestSessionDraftRef.current = null;
-    observedSessionDraftIdRef.current = null;
-    lastSessionDraftContentRef.current = null;
-    activeWorkoutDraftStore.clearAfterCompletion(viewer.id, session.id);
-    confirmedSessionRevisionRef.current.delete(session.id);
-    confirmedSessionSnapshotRef.current.delete(session.id);
-    setSessionDraftConflict(null);
+    await activeWorkoutPersistence.clearAfterCompletion(session.id);
     setActiveSession(null);
     setWorkoutStarted(false);
     setWorkoutComplete(false);
-    setSessionSaveStatus("saved");
     setWorkspace((previous) => ({
       ...previous,
       activeSession: null,
@@ -1902,14 +1511,9 @@ export default function LiftLogApp({
     setWorkoutAction("finishing");
     try {
       if (repository && activeSession) {
-        if (!onlineRef.current) {
+        if (!isOnline) {
           throw new Error("Reconnect before finishing this workout");
         }
-        if (sessionDraftSaveTimerRef.current !== null) {
-          window.clearTimeout(sessionDraftSaveTimerRef.current);
-          sessionDraftSaveTimerRef.current = null;
-        }
-        const coordinator = ensureSessionDraftQueue(activeSession, repository);
         let completion =
           completionTokenRef.current?.sessionId === activeSession.id
             ? completionTokenRef.current
@@ -1918,39 +1522,15 @@ export default function LiftLogApp({
 
         for (let attempt = 0; attempt < 3; attempt += 1) {
           if (!completion) {
-            let confirmedRevision: number;
-            if (recoveredRevision !== null) {
-              confirmedRevision = recoveredRevision;
-              recoveredRevision = null;
-            } else {
-              try {
-                confirmedRevision = await coordinator.flushLatest({
-                  session: activeSession,
-                  setLogs,
-                  resultLogs,
-                  sessionRpe,
-                  sessionNote,
-                });
-              } catch (error) {
-                if (!(error instanceof SessionRevisionConflictError)) throw error;
-                confirmedRevision = await recoverSessionDraftRevision(
-                  activeSession.id,
-                );
-              }
-            }
-            const latest = latestSessionDraftRef.current;
+            const confirmedRevision =
+              recoveredRevision ?? (await activeWorkoutPersistence.flush());
+            recoveredRevision = null;
             completion = {
               sessionId: activeSession.id,
               token: crypto.randomUUID(),
               confirmedRevision,
-              sessionRpe:
-                latest?.session.id === activeSession.id
-                  ? latest.sessionRpe
-                  : sessionRpe,
-              sessionNote:
-                latest?.session.id === activeSession.id
-                  ? latest.sessionNote
-                  : sessionNote,
+              sessionRpe,
+              sessionNote,
             };
             completionTokenRef.current = completion;
           }
@@ -1973,21 +1553,13 @@ export default function LiftLogApp({
             }
             completionTokenRef.current = null;
             completion = null;
-            recoveredRevision = await recoverSessionDraftRevision(
-              activeSession.id,
-              true,
-            );
+            recoveredRevision = await activeWorkoutPersistence.recover();
           }
         }
 
-        clearConfirmedActiveSession(activeSession, "completed");
+        await clearConfirmedActiveSession(activeSession, "completed");
         completionTokenRef.current = null;
         notify("Session saved · next workout is ready when you are");
-        try {
-          applyWorkspace(await repository.loadWorkspace());
-        } catch {
-          notify("Session saved · refresh when connected to load what is next");
-        }
         return;
       }
 
@@ -2633,14 +2205,7 @@ export default function LiftLogApp({
         return;
       }
     } else {
-      const fields: TrackingField[] =
-        mode === "sets"
-          ? ["reps", "load", "rpe"]
-          : mode === "result"
-            ? ["duration", "distance", "rpe"]
-            : mode === "intervals"
-              ? ["rounds", "duration", "rpe"]
-              : [];
+      const fields = trackingFieldsForMode(mode);
       exercise = {
         id: `personal-${Date.now()}`,
         name,
@@ -2658,6 +2223,7 @@ export default function LiftLogApp({
       personalExercises: [...previous.personalExercises, exercise],
     }));
     setExerciseScope("personal");
+    setExerciseFilters(emptyExerciseLibraryFilters());
     setExerciseEditing(null);
     setExerciseDetailTarget(null);
     setModal(null);
@@ -2679,12 +2245,22 @@ export default function LiftLogApp({
       discipline,
       tags: original.tags,
       mode,
+      fields:
+        mode === original.defaultMode ? original.defaultFields : undefined,
       cue,
     };
     try {
       const exercise = repository
         ? await repository.updatePersonalExercise(original.id, input)
-        : { ...original, name, category, discipline, cue, defaultMode: mode };
+        : {
+            ...original,
+            name,
+            category,
+            discipline,
+            cue,
+            defaultMode: mode,
+            defaultFields: trackingFieldsForMode(mode, input.fields),
+          };
       setWorkspace((previous) => ({
         ...previous,
         personalExercises: previous.personalExercises.map((candidate) =>
@@ -2729,6 +2305,7 @@ export default function LiftLogApp({
             discipline: exercise.discipline,
             tags: exercise.tags,
             mode: exercise.defaultMode,
+            fields: exercise.defaultFields,
             cue: exercise.cue,
           })
         : {
@@ -2742,6 +2319,7 @@ export default function LiftLogApp({
         personalExercises: [...previous.personalExercises, copy],
       }));
       setExerciseScope("personal");
+      setExerciseFilters(emptyExerciseLibraryFilters());
       setExerciseDetailTarget(copy);
       setModal("exercise-details");
       notify(`${exercise.name} copied to My exercises`);
@@ -2786,7 +2364,7 @@ export default function LiftLogApp({
         await repository.updateProgramDescription(program.id, nextDescription);
       }
       await repository.publishProgram(program.versionId);
-      applyWorkspace(await repository.loadWorkspace());
+      await refreshProgramWorkspace(program.id);
       setProgram(null);
       setProgramOwnerId(viewer.id);
       notify(
@@ -2858,7 +2436,7 @@ export default function LiftLogApp({
     try {
       if (repository) {
         await repository.deactivateProgram(program.id);
-        applyWorkspace(await repository.loadWorkspace());
+        await refreshProgramWorkspace(program.id);
       } else {
         setWorkspace((previous) => ({
           ...previous,
@@ -3053,6 +2631,24 @@ export default function LiftLogApp({
     }
   }
 
+  async function openAssignmentModal(seed: {
+    programId?: string;
+    athleteIds?: string[];
+  }) {
+    if (
+      repository &&
+      !loadedWorkspaceFeaturesRef.current.has("coaching")
+    ) {
+      await loadWorkspaceFeature("coaching");
+      if (!loadedWorkspaceFeaturesRef.current.has("coaching")) {
+        notify("Your athletes could not be loaded. Try again.");
+        return;
+      }
+    }
+    setAssignmentSeed(seed);
+    setModal("assign-program");
+  }
+
   async function assignProgramToAthletes(
     programId: string,
     athleteIds: string[],
@@ -3064,9 +2660,14 @@ export default function LiftLogApp({
     requireCapability(capabilitiesForProgram(sourceProgram), "assign");
     if (!athleteIds.length) throw new Error("Choose at least one athlete.");
     const assignments = repository
-      ? await repository.assignOwnProgramToAthletes(programId, athleteIds)
+      ? await repository.assignOwnProgramToAthletes(
+          programId,
+          athleteIds,
+          sourceProgram.versionId,
+        )
       : athleteIds.map((athleteId) => ({
           athleteId,
+          assignmentId: `assignment-${programId}-${athleteId}`,
           programId: `assigned-${programId}-${athleteId}`,
           created: true,
         }));
@@ -3081,7 +2682,9 @@ export default function LiftLogApp({
       if (
         !assignment?.created ||
         athlete.assignedPrograms.some(
-          (candidate) => candidate.id === assignment.programId,
+          (candidate) =>
+            candidate.id ===
+            (assignment.assignmentId ?? assignment.programId),
         )
       )
         return athlete;
@@ -3089,20 +2692,18 @@ export default function LiftLogApp({
         ...athlete,
         assignedPrograms: [
           {
-            id: assignment.programId,
+            id: assignment.assignmentId ?? assignment.programId,
+            programId: assignment.programId,
+            assignmentId: assignment.assignmentId,
             versionId: sourceProgram.versionId,
             title: sourceProgram.title,
             assignedAt,
-                  status: "awaiting_schedule" as const,
-                  totalWorkouts: workoutCount,
-                  scheduledWorkouts: 0,
-                  scheduledPercent: 0,
-                  completedWorkouts: 0,
-                  completionPercent: 0,
-                  workoutProgress: Array.from(
-                    { length: workoutCount },
-                    () => "unscheduled" as const,
-                  ),
+            status: "awaiting_schedule" as const,
+            totalWorkouts: workoutCount,
+            scheduledWorkouts: 0,
+            scheduledPercent: 0,
+            completedWorkouts: 0,
+            completionPercent: 0,
           },
           ...athlete.assignedPrograms,
         ],
@@ -3153,6 +2754,7 @@ export default function LiftLogApp({
         )
       : athleteIds.map((athleteId) => ({
           athleteId,
+          assignmentId: `assignment-${programId}-${athleteId}`,
           programId: `assigned-${programId}-${athleteId}`,
           created: true,
         }));
@@ -3208,8 +2810,7 @@ export default function LiftLogApp({
     try {
       if (repository) {
         const programId = await repository.createBlankProgram(target.id, title);
-        if (target.id === viewer.id)
-          applyWorkspace(await repository.loadWorkspace());
+        if (target.id === viewer.id) await refreshProgramWorkspace(programId);
         selectProgram(
           await repository.loadEditableProgram(target.id, programId),
         );
@@ -3265,7 +2866,7 @@ export default function LiftLogApp({
     try {
       if (repository) {
         const workoutId = await repository.createBlankQuickWorkout(title);
-        applyWorkspace(await repository.loadWorkspace());
+        await refreshProgramWorkspace(workoutId);
         selectProgram(await repository.loadEditableProgram(viewer.id, workoutId));
       } else {
         const now = Date.now();
@@ -3330,7 +2931,7 @@ export default function LiftLogApp({
     try {
       if (repository) {
         await repository.deleteOwnProgram(targetProgram.id);
-        applyWorkspace(await repository.loadWorkspace());
+        await refreshProgramWorkspace(targetProgram.id);
       } else {
         setWorkspace((previous) => ({
           ...previous,
@@ -3391,39 +2992,95 @@ export default function LiftLogApp({
     await performProgramDeletion(target.program);
   }
 
-  async function openSchedule(scheduleId?: string, initialDate?: string) {
-    if (scheduleOpeningRef.current) return;
+  async function loadScheduleCandidates(reset = false) {
+    if (scheduleCandidatesLoading) return;
+    setScheduleCandidatesLoading(true);
+    setScheduleCandidatesError("");
+    try {
+      if (repository) {
+        const page = await repository.listSchedulableWorkouts({
+          limit: 50,
+          ...(reset || !scheduleCandidateCursor
+            ? {}
+            : { cursor: scheduleCandidateCursor }),
+        });
+        setScheduleCandidates((current) =>
+          reset
+            ? page.items
+            : [
+                ...current,
+                ...page.items.filter(
+                  (item) =>
+                    !current.some(
+                      (existing) =>
+                        existing.programVersionId === item.programVersionId &&
+                        existing.workoutId === item.workoutId &&
+                        existing.assignmentId === item.assignmentId,
+                    ),
+                ),
+              ],
+        );
+        setScheduleCandidateCursor(page.nextCursor);
+        return;
+      }
+
+      const demoCandidates = schedulablePrograms.flatMap((candidate) =>
+        candidate.weeks.flatMap((week) =>
+          week.workouts.map((workout, position) => {
+            const occurrences = workspace.scheduledWorkouts.filter(
+              (occurrence) =>
+                occurrence.programVersionId === candidate.versionId &&
+                occurrence.workoutId === workout.id,
+            );
+            const latest = occurrences.sort(
+              (left, right) => right.sequenceNumber - left.sequenceNumber,
+            )[0];
+            return {
+              kind: "program" as const,
+              programId: candidate.id,
+              programVersionId: candidate.versionId,
+              workoutId: workout.id,
+              programTitle: candidate.title,
+              workoutTitle: workout.title,
+              contentType: candidate.contentType ?? "program",
+              isQuickWorkout: candidate.contentType === "quick_workout",
+              weekIndex: week.index,
+              weekLabel: week.label,
+              workoutPosition: position,
+              scheduleLabel: workout.dayLabel,
+              estimatedMinutes: workout.durationMinutes,
+              ...(latest
+                ? {
+                    latestOccurrence: {
+                      id: latest.id,
+                      plannedDate: latest.plannedDate,
+                      status: latest.status,
+                      sequenceNumber: latest.sequenceNumber,
+                    },
+                  }
+                : {}),
+            } satisfies SchedulableWorkoutCandidate;
+          }),
+        ),
+      );
+      setScheduleCandidates(demoCandidates);
+      setScheduleCandidateCursor(undefined);
+    } catch (error) {
+      setScheduleCandidatesError(
+        error instanceof Error
+          ? error.message
+          : "Workouts available to schedule could not be loaded.",
+      );
+    } finally {
+      setScheduleCandidatesLoading(false);
+    }
+  }
+
+  function openSchedule(scheduleId?: string, initialDate?: string) {
     setScheduleEditingId(scheduleId ?? null);
     setScheduleInitialDate(initialDate ?? null);
     setModal("schedule");
-    if (!repository || scheduleId) return;
-
-    scheduleOpeningRef.current = true;
-    setScheduleOpening(true);
-    if (repository) {
-      try {
-        const schedulable = schedulablePrograms;
-        if (schedulable.length) {
-          await Promise.all(
-            schedulable.map((candidate) =>
-              repository.prepareProgramSchedule(candidate.versionId),
-            ),
-          );
-          applyWorkspace(await repository.loadWorkspace());
-        }
-      } catch (error) {
-        setModal(null);
-        setScheduleEditingId(null);
-        notify(
-          error instanceof Error
-            ? error.message
-            : "The program calendar could not be prepared",
-        );
-      } finally {
-        scheduleOpeningRef.current = false;
-        setScheduleOpening(false);
-      }
-    }
+    if (!scheduleId) void loadScheduleCandidates(true);
   }
 
   async function saveSchedule(scheduleId: string, date: string | null) {
@@ -3454,6 +3111,21 @@ export default function LiftLogApp({
                 },
               }
             : schedule,
+          ),
+      }));
+      setCalendarRangeData((previous) => ({
+        ...previous,
+        scheduledWorkouts: previous.scheduledWorkouts.map((schedule) =>
+          schedule.id === scheduleId
+            ? {
+                ...schedule,
+                plannedDate: date ?? undefined,
+                workout: {
+                  ...schedule.workout,
+                  plannedDate: date ?? undefined,
+                },
+              }
+            : schedule,
         ),
       }));
       setModal(null);
@@ -3470,6 +3142,79 @@ export default function LiftLogApp({
         ? error
         : new Error("The workout date could not be updated");
     }
+  }
+
+  async function saveScheduleCandidate(
+    candidate: ScheduleCandidate,
+    date: string | null,
+  ) {
+    if (candidate.scheduleId) {
+      await saveSchedule(candidate.scheduleId, date);
+      return;
+    }
+    if (!date) throw new Error("Choose a date for this workout.");
+
+    const demoScheduleId = `schedule-${Date.now()}`;
+    const created = repository
+      ? await repository.createScheduledOccurrence(
+          candidate.programId,
+          candidate.assignmentId,
+          candidate.workoutId,
+          date,
+        )
+      : {
+          id: demoScheduleId,
+          programId: candidate.programId,
+          programTitle: candidate.programTitle,
+          programVersionId: candidate.programVersionId,
+          workoutId: candidate.workoutId,
+          workoutTitle: candidate.workoutTitle,
+          slotLabel: candidate.quickWorkout
+            ? candidate.workoutTitle
+            : `${candidate.programTitle} · ${candidate.workoutTitle}`,
+          plannedDate: date,
+          sequenceNumber: workspace.scheduledWorkouts.length + 1,
+          status: "planned" as const,
+          workout: {
+            id: candidate.workoutId,
+            programVersionId: candidate.programVersionId,
+            title: candidate.workoutTitle,
+            dayLabel: candidate.scheduleLabel,
+            durationMinutes: candidate.estimatedMinutes,
+            sections: [],
+            scheduledWorkoutId: demoScheduleId,
+            plannedDate: date,
+          },
+          detailsLoaded: false,
+        };
+    setWorkspace((previous) => ({
+      ...previous,
+      scheduledWorkouts: [
+        ...previous.scheduledWorkouts.filter(
+          (schedule) => schedule.id !== created.id,
+        ),
+        created,
+      ],
+    }));
+    const visibleRange = lastCalendarRangeRef.current;
+    if (
+      !visibleRange ||
+      (date >= visibleRange.start && date <= visibleRange.end)
+    ) {
+      setCalendarRangeData((previous) => ({
+        ...previous,
+        scheduledWorkouts: [
+          ...previous.scheduledWorkouts.filter(
+            (schedule) => schedule.id !== created.id,
+          ),
+          created,
+        ],
+      }));
+    }
+    setModal(null);
+    setScheduleEditingId(null);
+    setScheduleInitialDate(null);
+    notify("Workout added to your calendar");
   }
 
   async function setScheduledWorkoutStatus(
@@ -3498,7 +3243,7 @@ export default function LiftLogApp({
       if (repository) {
         await repository.setScheduledWorkoutStatus(scheduleId, status);
         if (activeSession?.scheduledWorkoutId === scheduleId) {
-          clearConfirmedActiveSession(activeSession, status);
+          await clearConfirmedActiveSession(activeSession, status);
         } else {
           setWorkspace((previous) => ({
             ...previous,
@@ -3506,11 +3251,12 @@ export default function LiftLogApp({
               schedule.id === scheduleId ? { ...schedule, status } : schedule,
             ),
           }));
-        }
-        try {
-          applyWorkspace(await repository.loadWorkspace());
-        } catch {
-          notify("Workout updated · refresh when connected for the latest plan");
+          setCalendarRangeData((previous) => ({
+            ...previous,
+            scheduledWorkouts: previous.scheduledWorkouts.map((schedule) =>
+              schedule.id === scheduleId ? { ...schedule, status } : schedule,
+            ),
+          }));
         }
       } else {
         setWorkspace((previous) => ({
@@ -3519,8 +3265,14 @@ export default function LiftLogApp({
             schedule.id === scheduleId ? { ...schedule, status } : schedule,
           ),
         }));
+        setCalendarRangeData((previous) => ({
+          ...previous,
+          scheduledWorkouts: previous.scheduledWorkouts.map((schedule) =>
+            schedule.id === scheduleId ? { ...schedule, status } : schedule,
+          ),
+        }));
         if (activeSession?.scheduledWorkoutId === scheduleId) {
-          clearConfirmedActiveSession(activeSession, status);
+          await clearConfirmedActiveSession(activeSession, status);
         }
       }
       setDetail(null);
@@ -3608,12 +3360,14 @@ export default function LiftLogApp({
       const nextProgram = programVersionId
         ? await repository.loadProgramVersionForAthleteById(
             athlete.id,
-            assignedProgram.id,
+            assignedProgram.programId ?? assignedProgram.id,
             programVersionId,
+            assignedProgram.assignmentId,
           )
         : await repository.loadProgramForAthleteById(
             athlete.id,
-            assignedProgram.id,
+            assignedProgram.programId ?? assignedProgram.id,
+            assignedProgram.assignmentId,
           );
       if (nextProgram) {
         const workoutWeek = workoutId
@@ -3661,7 +3415,10 @@ export default function LiftLogApp({
       return;
     }
     const assignedProgram = athlete.assignedPrograms.find(
-      (candidate) => candidate.id === entry.programId,
+      (candidate) =>
+        candidate.assignmentId === entry.assignmentId ||
+        candidate.programId === entry.programId ||
+        candidate.id === entry.programId,
     );
     if (assignedProgram)
       void openAthleteProgram(
@@ -3671,6 +3428,9 @@ export default function LiftLogApp({
         entry.programVersionId,
       );
   }
+
+  const showingWorkoutPreview = Boolean(workoutPreviewSchedule);
+  const displayedSchedule = workoutPreviewSchedule ?? todaySchedule;
 
   return (
     <main className="app-shell">
@@ -3716,6 +3476,29 @@ export default function LiftLogApp({
           </button>
         </div>
 
+        {loadingWorkspaceFeature && (
+          <div className="feature-load-status" role="status" aria-live="polite">
+            <LoaderCircle size={16} className="spin" />
+            Loading {loadingWorkspaceFeature}…
+          </div>
+        )}
+        {workspaceFeatureError && (
+          <div className="feature-load-status error" role="alert">
+            <span>{workspaceFeatureError.message}</span>
+            <button
+              className="text-button"
+              onClick={() => {
+                loadedWorkspaceFeaturesRef.current.delete(
+                  workspaceFeatureError.feature,
+                );
+                void loadWorkspaceFeature(workspaceFeatureError.feature);
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
         {activeView === "today" && completedWorkoutView && (
           <CompletedWorkoutView
             state={completedWorkoutView}
@@ -3737,22 +3520,29 @@ export default function LiftLogApp({
         )}
         {activeView === "today" &&
           !completedWorkoutView &&
-          ((activeSession && activeWorkoutVisible && todayWorkout && workoutFocus) ||
-            (!activeSession && workoutPreviewSchedule)) && (
+          ((showingWorkoutPreview && workoutPreviewSchedule) ||
+            (activeSession &&
+              activeWorkoutVisible &&
+              todayWorkout &&
+              workoutFocus)) && (
           <TodayView
-            program={activeSession ? todayProgram : previewProgram}
+            program={showingWorkoutPreview ? previewProgram : todayProgram}
             viewerId={viewer.id}
-            workout={activeSession ? todayWorkout! : workoutPreviewSchedule!.workout}
-            weightUnit={workspace.profile.weightUnit}
-            timing={activeSession ? workoutFocus!.timing : "future"}
-            plannedDate={
-              activeSession
-                ? workoutFocus!.plannedDate
-                : workoutPreviewSchedule!.plannedDate
+            workout={
+              showingWorkoutPreview
+                ? workoutPreviewSchedule!.workout
+                : todayWorkout!
             }
-            workoutStarted={Boolean(activeSession) && workoutStarted}
-            workoutComplete={workoutComplete}
-            workoutAction={workoutAction}
+            weightUnit={workspace.profile.weightUnit}
+            timing={showingWorkoutPreview ? "future" : workoutFocus!.timing}
+            plannedDate={
+              showingWorkoutPreview
+                ? workoutPreviewSchedule!.plannedDate
+                : workoutFocus!.plannedDate
+            }
+            workoutStarted={!showingWorkoutPreview && workoutStarted}
+            workoutComplete={!showingWorkoutPreview && workoutComplete}
+            workoutAction={showingWorkoutPreview ? null : workoutAction}
             setLogs={setLogs}
             resultLogs={resultLogs}
             sessionRpe={sessionRpe}
@@ -3762,9 +3552,10 @@ export default function LiftLogApp({
             online={isOnline}
             onStart={() =>
               void startWorkout(
-                activeSession ? todaySchedule! : workoutPreviewSchedule!,
+                showingWorkoutPreview ? workoutPreviewSchedule! : todaySchedule!,
               )
             }
+            allowStart={!showingWorkoutPreview || !activeSession}
             onFinish={finishWorkout}
             onReset={() => {
               setWorkoutComplete(false);
@@ -3777,36 +3568,35 @@ export default function LiftLogApp({
             onSessionRpe={setSessionRpe}
             onSessionNote={setSessionNote}
             onSetPlanned={
-              activeSession && todaySchedule
+              !showingWorkoutPreview && activeSession && todaySchedule
                 ? () => void setScheduledWorkoutStatus(todaySchedule.id, "planned")
                 : undefined
             }
             onSkip={
-              (activeSession ? todaySchedule : workoutPreviewSchedule)
+              displayedSchedule
                 ? () =>
                     void setScheduledWorkoutStatus(
-                      (activeSession ? todaySchedule : workoutPreviewSchedule)!
-                        .id,
+                      displayedSchedule.id,
                       "skipped",
                     )
                 : undefined
             }
             statusAction={
               scheduleStatusAction?.id ===
-              (activeSession ? todaySchedule : workoutPreviewSchedule)?.id
+              displayedSchedule?.id
                 ? (scheduleStatusAction?.status ?? null)
                 : null
             }
-            viewMode={!activeSession}
+            viewMode={showingWorkoutPreview}
             onBack={
-              activeSession
-                ? () => setActiveWorkoutVisible(false)
-                : !activeSession
+              showingWorkoutPreview
                 ? () => {
                     const returnView = workoutPreviewReturnView;
                     setDetail(null);
                     navigate(returnView);
                   }
+                : activeSession
+                ? () => setActiveWorkoutVisible(false)
                 : undefined
             }
             backLabel={
@@ -3845,7 +3635,7 @@ export default function LiftLogApp({
                 : undefined
             }
             onViewProgram={
-              !activeSession &&
+              showingWorkoutPreview &&
               workoutPreviewSchedule &&
               previewProgram?.contentType !== "quick_workout"
                 ? () => void viewScheduledPlan(workoutPreviewSchedule)
@@ -3900,7 +3690,15 @@ export default function LiftLogApp({
           />
         )}
         {activeView === "program" && program && currentWeek && (
-          <ProgramView
+          <Suspense
+            fallback={
+              <div className="feature-load-status" role="status">
+                <LoaderCircle size={16} className="spin" />
+                Opening program…
+              </div>
+            }
+          >
+            <ProgramView
             key={`${program.id}:${program.versionId}`}
             program={program}
             action={
@@ -3909,15 +3707,11 @@ export default function LiftLogApp({
             mutationPending={builderMutationPending}
             viewerId={viewer.id}
             capabilities={capabilitiesForProgram(program)}
-            weightUnit={workspace.profile.weightUnit}
             currentWeek={currentWeek}
             selectedWeek={selectedWeek}
             selectedWorkout={selectedWorkout}
             selectedSectionId={selectedSectionId}
-            exercises={[
-              ...workspace.globalExercises,
-              ...workspace.personalExercises,
-            ]}
+            onSearchExercises={searchBuilderExercises}
             onSelectWeek={(week) => {
               setSelectedWeek(week);
               setSelectedWorkoutId(
@@ -3975,10 +3769,7 @@ export default function LiftLogApp({
             }}
             onAssignProgram={
               capabilitiesForProgram(program).assign
-                ? () => {
-                    setAssignmentSeed({ programId: program.id });
-                    setModal("assign-program");
-                  }
+                ? () => void openAssignmentModal({ programId: program.id })
                 : undefined
             }
             onEditWorkout={() => setModal("workout-settings")}
@@ -3987,7 +3778,29 @@ export default function LiftLogApp({
                 ? () => openSchedule()
                 : undefined
             }
-          />
+            renderWorkoutDetails={(workout) => (
+              <ProgramWorkoutDetails
+                workout={workout}
+                weightUnit={workspace.profile.weightUnit}
+              />
+            )}
+            renderWorkoutItem={(item) => (
+              <WorkoutLogItem
+                item={item}
+                active={false}
+                weightUnit={workspace.profile.weightUnit}
+                showSetControls={false}
+                builderPreview
+                setLogs={programPreviewSetLogs(item)}
+                resultLog={programPreviewResultLog(item)}
+                onUpdateSet={() => undefined}
+                onAddSet={() => undefined}
+                onRemoveSet={() => undefined}
+                onUpdateResult={() => undefined}
+              />
+            )}
+            />
+          </Suspense>
         )}
         {activeView === "program" &&
           !program &&
@@ -4011,6 +3824,9 @@ export default function LiftLogApp({
               schedules={workspace.scheduledWorkouts}
               source={programSource}
               hasCoach={hasCoach}
+              hasMore={Boolean(programCursor)}
+              loadingMore={programsLoadingMore}
+              loadError={programsLoadError}
               action={programAction}
               capabilitiesForProgram={capabilitiesForProgram}
               onOpen={(targetProgram) => void openProgram(targetProgram)}
@@ -4026,38 +3842,85 @@ export default function LiftLogApp({
               }}
               onCreateWorkout={() => setModal("quick-workout")}
               onSchedule={() => openSchedule()}
+              onLoadMore={() => void loadMorePrograms()}
             />
           ))}
         {activeView === "calendar" && (
-          <CalendarView
-            sessions={workspace.completedSessions}
-            schedules={workspace.scheduledWorkouts}
-            weekStartsOnSunday={workspace.profile.weekStartsOnSunday}
-            canSchedule={schedulablePrograms.some(
-              (candidate) => candidate.versionStatus === "published",
+          <>
+            {calendarRangeLoading && (
+              <div className="feature-load-status" role="status" aria-live="polite">
+                <LoaderCircle size={16} className="spin" />
+                Loading calendar…
+              </div>
             )}
-            onNavigate={navigate}
-            onSchedule={() => openSchedule()}
-            onOpenPlan={openCalendarPlan}
-            onOpenResults={openCalendarResults}
-            onScheduleDay={(date) => openSchedule(undefined, date)}
-            onMoveSchedule={(scheduleId, date) => {
-              void saveSchedule(scheduleId, date);
-            }}
-            onRemoveSchedule={(scheduleId) => {
-              void saveSchedule(scheduleId, null);
-            }}
-          />
+            {calendarRangeError && (
+              <div className="feature-load-status error" role="alert">
+                <span>{calendarRangeError}</span>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    const range = lastCalendarRangeRef.current;
+                    if (range) {
+                      void loadVisibleCalendarRange(range.start, range.end);
+                    }
+                  }}
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+            <Suspense
+              fallback={
+                <div className="feature-load-status" role="status">
+                  <LoaderCircle size={16} className="spin" />
+                  Opening calendar…
+                </div>
+              }
+            >
+              <CalendarView
+                sessions={calendarRangeData.completedSessions}
+                schedules={calendarRangeData.scheduledWorkouts}
+                weekStartsOnSunday={workspace.profile.weekStartsOnSunday}
+                canSchedule={
+                  Boolean(repository) ||
+                  scheduleCandidates.length > 0 ||
+                  schedulablePrograms.some(
+                    (candidate) => candidate.versionStatus === "published",
+                  )
+                }
+                onNavigate={navigate}
+                onSchedule={() => openSchedule()}
+                onOpenPlan={openCalendarPlan}
+                onOpenResults={openCalendarResults}
+                onScheduleDay={(date) => openSchedule(undefined, date)}
+                onMoveSchedule={(scheduleId, date) => {
+                  void saveSchedule(scheduleId, date);
+                }}
+                onRemoveSchedule={(scheduleId) => {
+                  void saveSchedule(scheduleId, null);
+                }}
+                onVisibleRangeChange={loadVisibleCalendarRange}
+              />
+            </Suspense>
+          </>
         )}
         {activeView === "exercises" && (
           <ExercisesHome
             scope={exerciseScope}
             query={exerciseQuery}
-            global={workspace.globalExercises}
-            personal={workspace.personalExercises}
+            filters={exerciseFilters}
+            global={visibleGlobalExercises}
+            personal={visiblePersonalExercises}
             copyingExerciseId={copyingExerciseId}
-            onScope={setExerciseScope}
+            loading={exerciseSearchLoading}
+            loadError={exerciseSearchError}
+            hasMore={Boolean(exerciseCursor)}
+            onScope={(scope) => {
+              setExerciseScope(scope);
+              setExerciseFilters(emptyExerciseLibraryFilters());
+            }}
             onQuery={setExerciseQuery}
+            onFilters={setExerciseFilters}
             onAdd={() => {
               setExerciseEditing(null);
               setExerciseDetailTarget(null);
@@ -4077,6 +3940,10 @@ export default function LiftLogApp({
               setExerciseDeleteTarget(exercise);
               setModal("delete-exercise");
             }}
+            onLoadMore={() => void loadMoreExercises()}
+            onRetry={() =>
+              setExerciseSearchRetryKey((current) => current + 1)
+            }
           />
         )}
         {activeView === "coaching" && (
@@ -4087,6 +3954,9 @@ export default function LiftLogApp({
             pendingInvites={workspace.pendingCoachInvites}
             outgoingInvites={outgoingCoachInvites}
             athletes={workspace.coachedAthletes}
+            hasMoreAthletes={Boolean(coachAthleteCursor)}
+            loadingMoreAthletes={coachAthletesLoadingMore}
+            athletesLoadError={coachAthletesLoadError}
             selectedAthlete={selectedAthlete}
             loadingAthleteId={coachingDetailLoadingId}
             openingProgramId={openingCoachProgramId}
@@ -4102,14 +3972,14 @@ export default function LiftLogApp({
             onDisconnect={removeCoachAccess}
             onCancelInvite={(invitation) => void cancelCoachInvite(invitation)}
             onSelectAthlete={selectCoachedAthlete}
+            onLoadMoreAthletes={() => void loadMoreCoachAthletes()}
             onOpenAssignedProgram={(athlete, assignedProgram, workoutId) =>
               void openAthleteProgram(athlete, assignedProgram, workoutId)
             }
             onOpenAgendaEntry={openCoachAgendaEntry}
-            onAssignAthlete={(athlete) => {
-              setAssignmentSeed({ athleteIds: [athlete.id] });
-              setModal("assign-program");
-            }}
+            onAssignAthlete={(athlete) =>
+              void openAssignmentModal({ athleteIds: [athlete.id] })
+            }
           />
         )}
       </section>
@@ -4234,6 +4104,9 @@ export default function LiftLogApp({
         <AssignProgramModal
           programs={assignableOwnPrograms}
           athletes={workspace.coachedAthletes}
+          hasMoreAthletes={Boolean(coachAthleteCursor)}
+          loadingMoreAthletes={coachAthletesLoadingMore}
+          athletesLoadError={coachAthletesLoadError}
           initialProgramId={assignmentSeed.programId}
           initialAthleteIds={assignmentSeed.athleteIds}
           onClose={() => {
@@ -4242,6 +4115,7 @@ export default function LiftLogApp({
           }}
           onAssign={assignProgramToAthletes}
           onAssignQuickWorkout={assignQuickWorkoutToAthletes}
+          onLoadMoreAthletes={() => void loadMoreCoachAthletes()}
         />
       )}
       {modal === "program" && (
@@ -4271,23 +4145,22 @@ export default function LiftLogApp({
       )}
       {modal === "schedule" && (
         <ScheduleModal
-          key={`${scheduleOpening ? "preparing" : "ready"}:${scheduleEditingId ?? "new"}:${scheduleInitialDate ?? "today"}`}
+          key={`${scheduleEditingId ?? "new"}:${scheduleInitialDate ?? "today"}`}
+          candidates={scheduleCandidates}
           schedules={workspace.scheduledWorkouts}
-          schedulableVersionIds={schedulablePrograms.map(
-            (candidate) => candidate.versionId,
-          )}
-          quickWorkoutVersionIds={schedulablePrograms
-            .filter((candidate) => candidate.contentType === "quick_workout")
-            .map((candidate) => candidate.versionId)}
           editingId={scheduleEditingId}
           initialDate={scheduleInitialDate}
-          preparing={scheduleOpening}
+          loading={scheduleCandidatesLoading}
+          error={scheduleCandidatesError}
+          hasMore={Boolean(scheduleCandidateCursor)}
+          onLoadMore={() => void loadScheduleCandidates(false)}
+          onRetry={() => void loadScheduleCandidates(true)}
           onClose={() => {
             setScheduleEditingId(null);
             setScheduleInitialDate(null);
             setModal(null);
           }}
-          onSave={saveSchedule}
+          onSave={saveScheduleCandidate}
         />
       )}
       {modal === "account" && (
@@ -4426,34 +4299,6 @@ function Sidebar({
   );
 }
 
-function PageHeader({
-  eyebrow,
-  title,
-  titleAction,
-  description,
-  children,
-}: {
-  eyebrow: string;
-  title: React.ReactNode;
-  titleAction?: React.ReactNode;
-  description?: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <header className="page-header">
-      <div>
-        <p className="eyebrow">{eyebrow}</p>
-        <div className="page-title-row">
-          {typeof title === "string" ? <h1>{title}</h1> : title}
-          {titleAction}
-        </div>
-        {description && <p>{description}</p>}
-      </div>
-      {children && <div className="page-actions">{children}</div>}
-    </header>
-  );
-}
-
 function NextWorkoutsView({
   schedules,
   hasProgram,
@@ -4479,6 +4324,14 @@ function NextWorkoutsView({
   onSetStatus: (scheduleId: string, status: "planned" | "skipped") => void;
   statusAction: { id: string; status: "planned" | "skipped" } | null;
 }) {
+  const [page, setPage] = useState(0);
+  const pageSize = 20;
+  const pageCount = Math.max(1, Math.ceil(schedules.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleSchedules = schedules.slice(
+    currentPage * pageSize,
+    currentPage * pageSize + pageSize,
+  );
   if (schedules.length) {
     return (
       <>
@@ -4496,7 +4349,7 @@ function NextWorkoutsView({
           </button>
         </PageHeader>
         <section className="next-workouts-list" aria-label="Scheduled workouts">
-          {schedules.map((schedule) => {
+          {visibleSchedules.map((schedule) => {
             const date = new Date(`${schedule.plannedDate}T12:00:00`);
             const dateLabel = date.toLocaleDateString("en", {
               weekday: "long",
@@ -4549,6 +4402,27 @@ function NextWorkoutsView({
             );
           })}
         </section>
+        {pageCount > 1 && (
+          <nav className="library-pagination" aria-label="Upcoming workout pages">
+            <button
+              className="button secondary small"
+              disabled={currentPage === 0}
+              onClick={() => setPage((current) => Math.max(0, current - 1))}
+            >
+              <ArrowLeft size={14} /> Previous
+            </button>
+            <span>Page {currentPage + 1} of {pageCount}</span>
+            <button
+              className="button secondary small"
+              disabled={currentPage >= pageCount - 1}
+              onClick={() =>
+                setPage((current) => Math.min(pageCount - 1, current + 1))
+              }
+            >
+              Next <ArrowRight size={14} />
+            </button>
+          </nav>
+        )}
       </>
     );
   }
@@ -4616,6 +4490,7 @@ function TodayView({
   localRecoveryAvailable,
   online,
   onStart,
+  allowStart = true,
   onFinish,
   onReset,
   onUpdateSet,
@@ -4651,6 +4526,7 @@ function TodayView({
   localRecoveryAvailable: boolean;
   online: boolean;
   onStart: () => void;
+  allowStart?: boolean;
   onFinish: () => void;
   onReset: () => void;
   onUpdateSet: (
@@ -4877,8 +4753,8 @@ function TodayView({
                   item={item}
                   active={workoutStarted}
                   weightUnit={weightUnit}
-                  setLogs={setLogs[item.id] ?? []}
-                  resultLog={resultLogs[item.id] ?? {}}
+                  setLogs={setLogs[item.id] ?? emptySetLogs}
+                  resultLog={resultLogs[item.id] ?? emptyResultLog}
                   onUpdateSet={onUpdateSet}
                   onAddSet={onAddSet}
                   onRemoveSet={onRemoveSet}
@@ -4887,7 +4763,7 @@ function TodayView({
               ))}
             </section>
           ))}
-          {!workoutStarted && !workoutComplete && (
+          {!workoutStarted && !workoutComplete && allowStart && (
             <AsyncButton
               className="button primary full"
               loading={workoutAction === "starting"}
@@ -5010,15 +4886,6 @@ export function RpeChoiceButtons({
   );
 }
 
-const plannedRpeOptions = [
-  { value: "", label: "No planned effort", detail: "Athlete chooses effort" },
-  { value: "6", label: "Easy", detail: "about 4 reps left" },
-  { value: "7", label: "Moderate", detail: "about 3 reps left" },
-  { value: "8", label: "Hard", detail: "about 2 reps left" },
-  { value: "9", label: "Very hard", detail: "about 1 rep left" },
-  { value: "10", label: "Max", detail: "no reps left" },
-] as const;
-
 export function PlannedRpeSelect({
   value,
   onChange,
@@ -5031,21 +4898,15 @@ export function PlannedRpeSelect({
   ariaLabel?: string;
 }) {
   return (
-    <div className="planned-rpe-select rpe-select">
-      <select
+    <div className="planned-rpe-select">
+      <RpeSelect
         disabled={disabled}
-        className={cn("rpe-select-trigger", value && "selected", value && `rpe-${rpeTone(value)}`)}
-        aria-label={ariaLabel}
+        ariaLabel={ariaLabel}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {plannedRpeOptions.map((option) => (
-          <option key={option.value || "none"} value={option.value}>
-            {option.value ? `${option.value} · ` : ""}
-            {option.label} · {option.detail}
-          </option>
-        ))}
-      </select>
+        emptyLabel="No target"
+        intent="planned"
+        onChange={onChange}
+      />
     </div>
   );
 }
@@ -5055,11 +4916,15 @@ export function RpeSelect({
   value,
   onChange,
   ariaLabel = "Actual RPE",
+  emptyLabel = "Not logged",
+  intent = "actual",
 }: {
   disabled: boolean;
   value: string;
   onChange: (value: string) => void;
   ariaLabel?: string;
+  emptyLabel?: string;
+  intent?: "actual" | "planned";
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -5104,8 +4969,10 @@ export function RpeSelect({
       {open && !disabled && (
         <div className="rpe-select-menu">
           <p className="rpe-select-help" id={helpId}>
-            <strong>RPE</strong> shows how hard the set felt by how many good
-            reps you had left.
+            <strong>RPE</strong>{" "}
+            {intent === "planned"
+              ? "sets the intended difficulty by how many good reps should remain."
+              : "shows how hard the set felt by how many good reps you had left."}
           </p>
           <div
             className="rpe-select-options"
@@ -5124,7 +4991,7 @@ export function RpeSelect({
               }}
             >
               <strong>—</strong>
-              <span>Not logged</span>
+              <span>{emptyLabel}</span>
             </button>
             {rpeOptions.map((option) => (
               <button
@@ -5164,15 +5031,11 @@ function TargetRpeBadge({ value }: { value: string }) {
   );
 }
 
-function workoutLogFields(mode: EntryMode): TrackingField[] {
-  if (mode === "sets") return ["reps", "load", "rpe"];
-  if (mode === "intervals")
-    return ["rounds", "duration", "distance", "heartRate", "rpe"];
-  if (mode === "result") return ["duration", "distance", "heartRate", "rpe"];
-  return [];
+function workoutLogFields(item: Pick<WorkoutItem, "mode" | "fields">) {
+  return trackingFieldsForMode(item.mode, item.fields);
 }
 
-function WorkoutLogItem({
+const WorkoutLogItem = memo(function WorkoutLogItem({
   item,
   active,
   weightUnit = "kg",
@@ -5203,7 +5066,7 @@ function WorkoutLogItem({
   onUpdateResult: (itemId: string, field: string, value: string) => void;
 }) {
   const note = item.cue || item.prescription.targetText || "";
-  const fields = workoutLogFields(item.mode);
+  const fields = workoutLogFields(item);
   const plannedRpeVaries = prescriptionEntryVaries(item, "targetRpe");
   const prescriptionSummary = (
     <div className="exercise-prescription">
@@ -5347,6 +5210,17 @@ function WorkoutLogItem({
               onChange={(value) => onUpdateResult(item.id, "distance", value)}
             />
           )}
+          {fields.includes("load") && (
+            <ResultInput
+              label="Load"
+              unit={weightUnit}
+              disabled={!active}
+              value={weightInputValue(resultLog.load ?? "", weightUnit)}
+              onChange={(value) =>
+                onUpdateResult(item.id, "load", weightKgValue(value, weightUnit))
+              }
+            />
+          )}
           {fields.includes("heartRate") && (
             <ResultInput
               label="Avg HR"
@@ -5370,7 +5244,7 @@ function WorkoutLogItem({
       )}
     </div>
   );
-}
+});
 
 function IntervalLogTable({
   item,
@@ -5384,6 +5258,10 @@ function IntervalLogTable({
   onUpdate: (field: string, value: string) => void;
 }) {
   const rounds = intervalPrescriptionEntries(item);
+  const fields = workoutLogFields(item);
+  const metricFields = (["duration", "distance", "heartRate", "rpe"] as const).filter(
+    (field) => fields.includes(field),
+  );
   const completedRounds = rounds.filter((_, index) =>
     Boolean(resultLog[`round.${index}.completed`]),
   ).length;
@@ -5399,59 +5277,82 @@ function IntervalLogTable({
   );
 
   return (
-    <div className="interval-log-table">
+    <div className={cn("interval-log-table", `metrics-${metricFields.length}`)}>
       <div className="interval-log-header" aria-hidden>
         <span>Round</span>
         <span>Plan</span>
-        <span>Distance</span>
-        <span>Avg HR</span>
-        <span>RPE</span>
+        {fields.includes("duration") && <span>Time</span>}
+        {fields.includes("distance") && <span>Distance</span>}
+        {fields.includes("heartRate") && <span>Avg HR</span>}
+        {fields.includes("rpe") && <span>RPE</span>}
       </div>
       {rounds.map((round, index) => {
         const completedKey = `round.${index}.completed`;
         const completed = Boolean(resultLog[completedKey]);
         return (
           <div className="interval-log-row" key={index}>
-            <button
-              type="button"
-              className={cn("interval-round-toggle", completed && "completed")}
-              disabled={!active}
-              aria-label={`${completed ? "Mark" : "Mark"} round ${index + 1} ${completed ? "incomplete" : "complete"}`}
-              aria-pressed={completed}
-              onClick={() => onUpdate(completedKey, completed ? "" : "1")}
-            >
-              {completed ? <Check size={13} /> : index + 1}
-            </button>
+            {fields.includes("rounds") ? (
+              <button
+                type="button"
+                className={cn("interval-round-toggle", completed && "completed")}
+                disabled={!active}
+                aria-label={`Mark round ${index + 1} ${completed ? "incomplete" : "complete"}`}
+                aria-pressed={completed}
+                onClick={() => onUpdate(completedKey, completed ? "" : "1")}
+              >
+                {completed ? <Check size={13} /> : index + 1}
+              </button>
+            ) : (
+              <span className="interval-round-number">{index + 1}</span>
+            )}
             <span className="interval-plan-cell">
               {round.workSeconds ?? "—"}/{round.restSeconds ?? "—"}
               <small>s</small>
             </span>
-            <input
-              aria-label={`${item.title}, round ${index + 1}, distance in kilometres`}
-              disabled={!active}
-              inputMode="decimal"
-              placeholder="km"
-              value={resultLog[`round.${index}.distance`] ?? ""}
-              onChange={(event) =>
-                onUpdate(`round.${index}.distance`, event.target.value)
-              }
-            />
-            <input
-              aria-label={`${item.title}, round ${index + 1}, average heart rate`}
-              disabled={!active}
-              inputMode="numeric"
-              placeholder="bpm"
-              value={resultLog[`round.${index}.heartRate`] ?? ""}
-              onChange={(event) =>
-                onUpdate(`round.${index}.heartRate`, event.target.value)
-              }
-            />
-            <RpeSelect
-              ariaLabel={`${item.title}, round ${index + 1}, actual RPE`}
-              disabled={!active}
-              value={resultLog[`round.${index}.rpe`] ?? ""}
-              onChange={(value) => onUpdate(`round.${index}.rpe`, value)}
-            />
+            {fields.includes("duration") && (
+              <input
+                aria-label={`${item.title}, round ${index + 1}, actual duration in seconds`}
+                disabled={!active}
+                inputMode="numeric"
+                placeholder="sec"
+                value={resultLog[`round.${index}.duration`] ?? ""}
+                onChange={(event) =>
+                  onUpdate(`round.${index}.duration`, event.target.value)
+                }
+              />
+            )}
+            {fields.includes("distance") && (
+              <input
+                aria-label={`${item.title}, round ${index + 1}, distance in kilometres`}
+                disabled={!active}
+                inputMode="decimal"
+                placeholder="km"
+                value={resultLog[`round.${index}.distance`] ?? ""}
+                onChange={(event) =>
+                  onUpdate(`round.${index}.distance`, event.target.value)
+                }
+              />
+            )}
+            {fields.includes("heartRate") && (
+              <input
+                aria-label={`${item.title}, round ${index + 1}, average heart rate`}
+                disabled={!active}
+                inputMode="numeric"
+                placeholder="bpm"
+                value={resultLog[`round.${index}.heartRate`] ?? ""}
+                onChange={(event) =>
+                  onUpdate(`round.${index}.heartRate`, event.target.value)
+                }
+              />
+            )}
+            {fields.includes("rpe") && (
+              <RpeSelect
+                ariaLabel={`${item.title}, round ${index + 1}, actual RPE`}
+                disabled={!active}
+                value={resultLog[`round.${index}.rpe`] ?? ""}
+                onChange={(value) => onUpdate(`round.${index}.rpe`, value)}
+              />
+            )}
           </div>
         );
       })}
@@ -5513,564 +5414,6 @@ function ResultInput({
   );
 }
 
-function ProgramView({
-  program,
-  action,
-  mutationPending,
-  viewerId,
-  capabilities,
-  weightUnit,
-  currentWeek,
-  selectedWeek,
-  selectedWorkout,
-  selectedSectionId,
-  exercises,
-  onSelectWeek,
-  onSelectWorkout,
-  onSelectSection,
-  onAddBlankWeek,
-  onCopyWeek,
-  onDeleteWeek,
-  onAddWorkout,
-  onDeleteWorkout,
-  onReorderWorkouts,
-  onAddSection,
-  onEditSection,
-  onDeleteSection,
-  onReorderSections,
-  onAddExercise,
-  onEditItem,
-  onRemoveItem,
-  onMoveItem,
-  onSave,
-  onCreateDraft,
-  onBack,
-  onAssignProgram,
-  onEditWorkout,
-  onSchedule,
-}: {
-  program: Program;
-  action: Exclude<ProgramAction, null>["kind"] | null;
-  mutationPending: boolean;
-  viewerId: string;
-  capabilities: TrainingContentCapabilities;
-  weightUnit: OwnProfile["weightUnit"];
-  currentWeek: Program["weeks"][number];
-  selectedWeek: number;
-  selectedWorkout?: PlannedWorkout;
-  selectedSectionId: string;
-  exercises: Exercise[];
-  onSelectWeek: (week: number) => void;
-  onSelectWorkout: (id: string) => void;
-  onSelectSection: (id: string) => void;
-  onAddBlankWeek: () => Promise<boolean>;
-  onCopyWeek: (count: number) => Promise<boolean>;
-  onDeleteWeek: () => void;
-  onAddWorkout: () => void;
-  onDeleteWorkout: () => void;
-  onReorderWorkouts: (ids: string[]) => void;
-  onAddSection: () => void;
-  onEditSection: (section: WorkoutSection) => void;
-  onDeleteSection: (section: WorkoutSection) => void;
-  onReorderSections: (ids: string[]) => void;
-  onAddExercise: (exercise: Exercise, sectionId?: string) => void;
-  onEditItem: (item: WorkoutItem) => void;
-  onRemoveItem: (id: string) => void;
-  onMoveItem: (
-    itemId: string,
-    destinationSectionId: string,
-    destinationPosition: number,
-  ) => void;
-  onSave: (title: string, description: string) => void;
-  onCreateDraft: () => void;
-  onBack: () => void;
-  onAssignProgram?: () => void;
-  onEditWorkout: () => void;
-  onSchedule?: () => void;
-}) {
-  const [pickerQuery, setPickerQuery] = useState("");
-  const [localWeekAction, setLocalWeekAction] = useState<
-    "blank" | "copy" | null
-  >(null);
-  const localWeekActionRef = useRef(false);
-  const dragSensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 7 } }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 220, tolerance: 8 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  );
-  const isDraft = program.versionStatus === "draft";
-  const isQuickWorkout = program.contentType === "quick_workout";
-  const headerTitle = isQuickWorkout
-    ? selectedWorkout?.title ?? program.title
-    : program.title;
-  const [title, setTitle] = useState(headerTitle);
-  const [description, setDescription] = useState(program.description);
-  const canEdit = capabilities.edit;
-  const editable = isDraft && capabilities.edit;
-  const additionalWeekCapacity = Math.max(0, 52 - program.weeks.length);
-  const dragEnabled = editable && !mutationPending;
-  const pickerResults = exercises
-    .filter((exercise) =>
-      exercise.name.toLowerCase().includes(pickerQuery.toLowerCase()),
-    )
-    .slice(0, 6);
-  const targetSection =
-    selectedWorkout?.sections.find(
-      (section) => section.id === selectedSectionId,
-    ) ?? selectedWorkout?.sections[0];
-  function finishWorkoutDrag(event: DragEndEvent) {
-    if (mutationPending) return;
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const ids = currentWeek.workouts.map((item) => item.id);
-    const from = ids.indexOf(String(active.id));
-    const to = ids.indexOf(String(over.id));
-    if (from >= 0 && to >= 0) onReorderWorkouts(arrayMove(ids, from, to));
-  }
-
-  function finishBuilderDrag(event: DragEndEvent) {
-    if (mutationPending || !selectedWorkout || !event.over) return;
-    const activeData = event.active.data.current;
-    const overData = event.over.data.current;
-    if (activeData?.type === "library-exercise") {
-      const destinationSectionId = String(overData?.sectionId ?? "");
-      if (
-        !selectedWorkout.sections.some(
-          (section) => section.id === destinationSectionId,
-        )
-      )
-        return;
-      const exercise = exercises.find(
-        (candidate) => candidate.id === String(activeData.exerciseId),
-      );
-      if (!exercise) return;
-      onSelectSection(destinationSectionId);
-      onAddExercise(exercise, destinationSectionId);
-      return;
-    }
-    if (activeData?.type === "section") {
-      const sectionIds = selectedWorkout.sections.map((section) => section.id);
-      const targetSectionId = String(overData?.sectionId ?? "");
-      const from = sectionIds.indexOf(String(activeData.sectionId));
-      const to = sectionIds.indexOf(targetSectionId);
-      if (from >= 0 && to >= 0 && from !== to)
-        onReorderSections(arrayMove(sectionIds, from, to));
-      return;
-    }
-    if (activeData?.type !== "item") return;
-    const destinationSectionId = String(overData?.sectionId ?? "");
-    const destinationSection = selectedWorkout.sections.find(
-      (section) => section.id === destinationSectionId,
-    );
-    if (!destinationSection) return;
-    const itemId = String(activeData.itemId);
-    const sourceSectionId = String(activeData.sectionId);
-    const destinationIds = destinationSection.items
-      .map((item) => item.id)
-      .filter((id) => id !== itemId);
-    const overItemId =
-      overData?.type === "item" ? String(overData.itemId) : null;
-    let destinationPosition = overItemId
-      ? destinationIds.indexOf(overItemId)
-      : destinationIds.length;
-    if (destinationPosition < 0) destinationPosition = destinationIds.length;
-    if (sourceSectionId === destinationSectionId) {
-      const originalIds = destinationSection.items.map((item) => item.id);
-      const from = originalIds.indexOf(itemId);
-      const overIndex = overItemId ? originalIds.indexOf(overItemId) : -1;
-      if (from >= 0 && overIndex >= 0) destinationPosition = overIndex;
-      if (from === destinationPosition) return;
-    }
-    onMoveItem(itemId, destinationSectionId, destinationPosition);
-    onSelectSection(destinationSectionId);
-  }
-
-  async function runWeekAction(
-    kind: "blank" | "copy",
-    mutation: () => Promise<boolean>,
-  ) {
-    if (localWeekActionRef.current || action) return;
-    localWeekActionRef.current = true;
-    setLocalWeekAction(kind);
-    try {
-      await mutation();
-    } finally {
-      localWeekActionRef.current = false;
-      setLocalWeekAction(null);
-    }
-  }
-  return (
-    <>
-      <PageHeader
-        eyebrow={
-          program.athleteId === viewerId
-            ? isQuickWorkout
-              ? "Your workout"
-              : "Your program"
-            : `Planning for ${program.ownerName}`
-        }
-        title={
-          <>
-            <span className="program-editor-heading-icon" aria-hidden="true">
-              {isQuickWorkout ? <Activity size={24} /> : <Layers3 size={24} />}
-            </span>
-            {editable ? (
-              <input
-                className="program-editor-title-input"
-                aria-label={`${isQuickWorkout ? "Workout" : "Program"} name`}
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            ) : (
-              <h1>{headerTitle}</h1>
-            )}
-          </>
-        }
-        description={!editable ? program.description : undefined}
-      >
-        <div className="program-editor-header-actions">
-          <button
-            className="button secondary small program-editor-back"
-            onClick={onBack}
-          >
-            <ArrowLeft size={15} />
-            All programs
-          </button>
-          <SourceTag
-            presentation={presentProgramProvenance(program, viewerId)}
-          />
-          <StatusBadge status={isDraft ? "draft" : "ready"} />
-          {(onSchedule || onAssignProgram) && (
-            <div className="program-editor-secondary-actions">
-              {onSchedule && (
-                <button className="button secondary small" onClick={onSchedule}>
-                  <CalendarPlus size={15} />
-                  Schedule
-                </button>
-              )}
-              {onAssignProgram && (
-                <button
-                  className="button secondary small"
-                  disabled={Boolean(action)}
-                  onClick={onAssignProgram}
-                >
-                  <UserPlus size={15} />
-                  Assign to athletes
-                </button>
-              )}
-            </div>
-          )}
-          {editable ? (
-            <button
-              className="button primary small program-editor-primary-action"
-              disabled={Boolean(action) || !title.trim()}
-              onClick={() => onSave(title, description)}
-            >
-              {action === "publish" ? (
-                <>
-                  <LoaderCircle className="button-spinner" size={15} />
-                  Saving…
-                </>
-              ) : (
-                <>
-                  <Save size={15} />
-                  {isQuickWorkout ? "Save workout" : "Save program"}
-                </>
-              )}
-            </button>
-          ) : (
-            !isDraft &&
-            canEdit && (
-              <button
-                className="button primary small program-editor-primary-action"
-                disabled={Boolean(action)}
-                onClick={onCreateDraft}
-              >
-                {action === "edit" ? (
-                  <>
-                    <LoaderCircle className="button-spinner" size={15} />
-                    Opening…
-                  </>
-                ) : (
-                  <>
-                    <Pencil size={15} />
-                    {isQuickWorkout ? "Edit workout" : "Edit program"}
-                  </>
-                )}
-              </button>
-            )
-          )}
-        </div>
-      </PageHeader>
-      {editable && (
-        <label className="form-field program-editor-description-field">
-          <span>Description <em>optional</em></span>
-          <textarea
-            value={description}
-            placeholder={`What is this ${isQuickWorkout ? "workout" : "program"} for?`}
-            onChange={(event) => setDescription(event.target.value)}
-          />
-        </label>
-      )}
-      {!isQuickWorkout && editable && program.weeks.length > 1 && (
-        <div className="program-editor-week-delete">
-          <button className="button danger small" onClick={onDeleteWeek}>
-            <Trash2 size={14} />
-            Delete week {selectedWeek}
-          </button>
-        </div>
-      )}
-      {!isQuickWorkout && <div className="week-tabs">
-        <button
-          className="icon-button"
-          aria-label="Previous program week"
-          onClick={() => onSelectWeek(Math.max(1, selectedWeek - 1))}
-          disabled={selectedWeek === 1}
-        >
-          <ArrowLeft size={16} />
-        </button>
-        <div>
-          {program.weeks.map((week) => (
-            <button
-              key={week.index}
-              className={selectedWeek === week.index ? "active" : ""}
-              onClick={() => onSelectWeek(week.index)}
-            >
-              <small>Week</small>
-              <strong>{week.index}</strong>
-            </button>
-          ))}
-          {editable && (
-            <>
-              <button
-                className="week-add"
-                disabled={Boolean(action) || additionalWeekCapacity === 0}
-                onClick={() => void runWeekAction("blank", onAddBlankWeek)}
-                title="Add blank week"
-                aria-label="Add blank week"
-              >
-                {localWeekAction === "blank" ? (
-                  <LoaderCircle className="button-spinner" size={17} />
-                ) : (
-                  <Plus size={18} />
-                )}
-              </button>
-              <button
-                className="week-add"
-                disabled={
-                  !currentWeek.workouts.length ||
-                  Boolean(action) ||
-                  additionalWeekCapacity === 0
-                }
-                onClick={() => void runWeekAction("copy", () => onCopyWeek(1))}
-                title={`Duplicate Week ${selectedWeek}`}
-                aria-label={`Duplicate Week ${selectedWeek}`}
-              >
-                {localWeekAction === "copy" ? (
-                  <LoaderCircle className="button-spinner" size={17} />
-                ) : (
-                  <Copy size={17} />
-                )}
-              </button>
-            </>
-          )}
-        </div>
-        <button
-          className="icon-button"
-          aria-label="Next program week"
-          onClick={() =>
-            onSelectWeek(Math.min(program.weeks.length, selectedWeek + 1))
-          }
-          disabled={selectedWeek === program.weeks.length}
-        >
-          <ArrowRight size={16} />
-        </button>
-      </div>}
-      <div
-        className={`builder-layout${isQuickWorkout ? " quick-workout-builder" : ""}`}
-      >
-        {!isQuickWorkout && <aside className="workout-list panel">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">
-                {isQuickWorkout ? "Quick workout" : `Week ${selectedWeek}`}
-              </p>
-              <h3>{isQuickWorkout ? "Session" : currentWeek.label}</h3>
-            </div>
-          </div>
-          <DndContext
-            sensors={dragSensors}
-            collisionDetection={closestCenter}
-            onDragEnd={finishWorkoutDrag}
-          >
-            <SortableContext
-              items={currentWeek.workouts.map((workout) => workout.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              <div className="workout-list-items">
-                {currentWeek.workouts.map((workout, index) => (
-                  <SortableWorkoutRow
-                    key={workout.id}
-                    workout={workout}
-                    index={index}
-                    selected={selectedWorkout?.id === workout.id}
-                    editable={dragEnabled}
-                    onSelect={() => onSelectWorkout(workout.id)}
-                  />
-                ))}
-              </div>
-            </SortableContext>
-          </DndContext>
-          {!isQuickWorkout && <button
-            className="button secondary full"
-            disabled={!editable}
-            onClick={onAddWorkout}
-          >
-            <Plus size={15} />
-            Add workout
-          </button>}
-        </aside>}
-        <DndContext
-          sensors={dragSensors}
-          collisionDetection={closestCenter}
-          onDragEnd={finishBuilderDrag}
-        >
-          <section className="builder-editor panel" aria-busy={mutationPending}>
-            {selectedWorkout ? (
-              <>
-                <div className="editor-heading">
-                  <div>
-                    <div className="editor-title-row">
-                      <h2>{selectedWorkout.title}</h2>
-                      {editable && !isQuickWorkout && (
-                        <button
-                          className="title-edit-button"
-                          onClick={onEditWorkout}
-                          aria-label="Rename workout"
-                          title="Rename workout"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                      )}
-                    </div>
-                    <p>Estimated {selectedWorkout.durationMinutes} minutes</p>
-                  </div>
-                  <div className="editor-actions">
-                    {editable && !isQuickWorkout && (
-                      <button
-                        className="icon-button danger"
-                        onClick={onDeleteWorkout}
-                        aria-label="Delete workout"
-                      >
-                        <Trash2 size={17} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {editable ? (
-                  <SortableContext
-                    items={selectedWorkout.sections.map(
-                      (section) => `section:${section.id}`,
-                    )}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="builder-section-list">
-                      {selectedWorkout.sections.map((section) => (
-                        <SortableBuilderSection
-                          key={section.id}
-                          section={section}
-                          selected={targetSection?.id === section.id}
-                          editable={editable}
-                          dragEnabled={dragEnabled}
-                          weightUnit={weightUnit}
-                          canDelete={section.kind !== "main"}
-                          onSelect={() => onSelectSection(section.id)}
-                          onEdit={() => onEditSection(section)}
-                          onDelete={() => onDeleteSection(section)}
-                          onEditItem={onEditItem}
-                          onRemoveItem={onRemoveItem}
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
-                ) : (
-                  <ProgramWorkoutDetails
-                    workout={selectedWorkout}
-                    weightUnit={weightUnit}
-                  />
-                )}
-                {editable && (
-                  <button
-                    className="button secondary add-section-button"
-                    onClick={onAddSection}
-                  >
-                    <Plus size={15} />
-                    Add section
-                  </button>
-                )}
-              </>
-            ) : (
-              <div className="empty-state">
-                <Dumbbell size={28} />
-                <h3>Select a workout</h3>
-                <p>Choose a session from the left to start editing.</p>
-              </div>
-            )}
-          </section>
-          {editable && (
-            <aside className="exercise-picker panel" aria-busy={mutationPending}>
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Exercise library</p>
-                <h3>
-                  {`Add to ${targetSection?.title ?? "section"}`}
-                </h3>
-              </div>
-            </div>
-            {selectedWorkout?.sections.length ? (
-              <>
-                <label className="search-field">
-                  <Search size={16} />
-                  <input
-                    aria-label="Search exercises"
-                    value={pickerQuery}
-                    onChange={(event) => setPickerQuery(event.target.value)}
-                    placeholder="Search exercises"
-                  />
-                </label>
-                <div className="picker-results">
-                  {pickerResults.map((exercise) => (
-                    <DraggableExercisePickerRow
-                      key={exercise.id}
-                      exercise={exercise}
-                      disabled={!dragEnabled}
-                      onAdd={() => onAddExercise(exercise)}
-                    />
-                  ))}
-                </div>
-                <small className="picker-help">
-                  Drag an exercise straight into any section, or click it to add
-                  it to the selected section. Then prescribe sets, weight or
-                  time.
-                </small>
-              </>
-            ) : (
-              <div className="empty-inline">
-                Add a workout section first.
-              </div>
-            )}
-            </aside>
-          )}
-        </DndContext>
-      </div>
-    </>
-  );
-}
-
 function ProgramWorkoutDetails({
   workout,
   weightUnit,
@@ -6125,379 +5468,9 @@ function programPreviewResultLog(item: WorkoutItem): Record<string, string> {
     rounds: prescription.rounds?.toString() ?? "",
     duration: prescription.durationMinutes?.toString() ?? "",
     distance: prescription.distance?.toString() ?? "",
+    load: prescription.loadKg?.toString() ?? "",
     rpe: "",
   };
-}
-
-function DraggableExercisePickerRow({
-  exercise,
-  disabled,
-  onAdd,
-}: {
-  exercise: Exercise;
-  disabled: boolean;
-  onAdd: () => void;
-}) {
-  const style = inferredExerciseDiscipline(exercise);
-  const StyleIcon =
-    exerciseTrainingStyles.find((item) => item.value === style)?.icon ??
-    Dumbbell;
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({
-      id: `picker:${exercise.id}`,
-      data: { type: "library-exercise", exerciseId: exercise.id },
-      disabled,
-    });
-  return (
-    <div
-      ref={setNodeRef}
-      className={cn("picker-result-row", isDragging && "dragging")}
-      style={{ transform: CSS.Translate.toString(transform) }}
-    >
-      <button
-        className="drag-handle picker-drag-handle"
-        type="button"
-        disabled={disabled}
-        aria-label={`Drag ${exercise.name} into a workout section`}
-        title="Drag into any section"
-        {...attributes}
-        {...listeners}
-      >
-        ⠿
-      </button>
-      <button
-        className="picker-result-main"
-        type="button"
-        disabled={disabled}
-        onClick={onAdd}
-      >
-        <span
-          className={cn("exercise-style-icon", style)}
-          title={exerciseTrainingStyleLabel(style)}
-          aria-label={exerciseTrainingStyleLabel(style)}
-        >
-          <StyleIcon size={15} />
-        </span>
-        <div>
-          <strong>{exercise.name}</strong>
-          <small>
-            {exercise.category} · {modeLabel(exercise.defaultMode)}
-          </small>
-        </div>
-        <Plus size={15} />
-      </button>
-    </div>
-  );
-}
-
-function SortableWorkoutRow({
-  workout,
-  index,
-  selected,
-  editable,
-  onSelect,
-}: {
-  workout: PlannedWorkout;
-  index: number;
-  selected: boolean;
-  editable: boolean;
-  onSelect: () => void;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: workout.id, disabled: !editable });
-  return (
-    <div
-      ref={setNodeRef}
-      className={cn(
-        "workout-order-row",
-        selected && "active",
-        isDragging && "dragging",
-      )}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-    >
-      {editable ? (
-        <button
-          className="drag-handle"
-          type="button"
-          aria-label={`Drag ${workout.title} to reorder`}
-          title="Drag to reorder"
-          {...attributes}
-          {...listeners}
-        >
-          ⠿
-        </button>
-      ) : (
-        <span className="drag-handle-placeholder" aria-hidden />
-      )}
-      <button className="workout-row-main" onClick={onSelect}>
-        <span>{index + 1}</span>
-        <div>
-          <strong>{workout.title}</strong>
-          <small>{workout.durationMinutes} min</small>
-        </div>
-        <ChevronRight size={16} />
-      </button>
-    </div>
-  );
-}
-
-function SortableBuilderSection({
-  section,
-  selected,
-  editable,
-  dragEnabled,
-  weightUnit,
-  canDelete,
-  onSelect,
-  onEdit,
-  onDelete,
-  onEditItem,
-  onRemoveItem,
-}: {
-  section: WorkoutSection;
-  selected: boolean;
-  editable: boolean;
-  dragEnabled: boolean;
-  weightUnit: OwnProfile["weightUnit"];
-  canDelete: boolean;
-  onSelect: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onEditItem: (item: WorkoutItem) => void;
-  onRemoveItem: (id: string) => void;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: `section:${section.id}`,
-    data: { type: "section", sectionId: section.id },
-    disabled: !dragEnabled,
-  });
-  return (
-    <div
-      ref={setNodeRef}
-      className={cn(
-        "builder-section",
-        selected && "selected",
-        isDragging && "dragging",
-      )}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-    >
-      <div className="builder-section-heading">
-        {dragEnabled ? (
-          <button
-            className="drag-handle section-drag-handle"
-            type="button"
-            aria-label={`Drag ${section.title} section to reorder`}
-            title="Drag section to reorder"
-            {...attributes}
-            {...listeners}
-          >
-            ⠿
-          </button>
-        ) : (
-          <span className="drag-handle-placeholder" aria-hidden />
-        )}
-        <div className="section-title-group">
-          <button className="section-title-button" onClick={onSelect}>
-            <span>{section.title}</span>
-            <small>{section.kind ?? "custom"}</small>
-          </button>
-          {editable && (
-            <div className="section-actions">
-              <button
-                className="section-action"
-                onClick={onEdit}
-                aria-label={`Edit ${section.title}`}
-                title="Edit section"
-              >
-                <Pencil size={12} />
-              </button>
-              {canDelete && (
-                <button
-                  className="section-action danger"
-                  onClick={onDelete}
-                  aria-label={`Delete ${section.title}`}
-                  title={`Delete ${section.title} section`}
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-      <SortableExerciseList
-        section={section}
-        editable={editable}
-        dragEnabled={dragEnabled}
-        weightUnit={weightUnit}
-        onEditItem={onEditItem}
-        onRemoveItem={onRemoveItem}
-      />
-    </div>
-  );
-}
-
-function SortableExerciseList({
-  section,
-  editable,
-  dragEnabled,
-  weightUnit,
-  onEditItem,
-  onRemoveItem,
-}: {
-  section: WorkoutSection;
-  editable: boolean;
-  dragEnabled: boolean;
-  weightUnit: OwnProfile["weightUnit"];
-  onEditItem: (item: WorkoutItem) => void;
-  onRemoveItem: (id: string) => void;
-}) {
-  const { setNodeRef, isOver } = useDroppable({
-    id: `item-list:${section.id}`,
-    data: { type: "item-list", sectionId: section.id },
-    disabled: !dragEnabled,
-  });
-  return (
-    <SortableContext
-      items={section.items.map((item) => `item:${item.id}`)}
-      strategy={verticalListSortingStrategy}
-    >
-      <div
-        ref={setNodeRef}
-        className={cn("builder-item-list", isOver && "drop-target")}
-      >
-        {section.items.length ? (
-          section.items.map((item, index) => (
-            <SortableExerciseItem
-              key={item.id}
-              item={item}
-              index={index}
-              sectionId={section.id}
-              editable={editable}
-              dragEnabled={dragEnabled}
-              weightUnit={weightUnit}
-              onEdit={() => onEditItem(item)}
-              onRemove={() => onRemoveItem(item.id)}
-            />
-          ))
-        ) : (
-          <div className="empty-inline exercise-drop-empty">
-            {editable
-              ? "Drop an exercise here"
-              : "No items in this section yet."}
-          </div>
-        )}
-      </div>
-    </SortableContext>
-  );
-}
-
-function SortableExerciseItem({
-  item,
-  index,
-  sectionId,
-  editable,
-  dragEnabled,
-  weightUnit,
-  onEdit,
-  onRemove,
-}: {
-  item: WorkoutItem;
-  index: number;
-  sectionId: string;
-  editable: boolean;
-  dragEnabled: boolean;
-  weightUnit: OwnProfile["weightUnit"];
-  onEdit: () => void;
-  onRemove: () => void;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: `item:${item.id}`,
-    data: { type: "item", itemId: item.id, sectionId },
-    disabled: !dragEnabled,
-  });
-  return (
-    <div
-      ref={setNodeRef}
-      className={cn(
-        "builder-item",
-        "builder-exercise-preview",
-        isDragging && "dragging",
-      )}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-    >
-      {dragEnabled ? (
-        <button
-          className="drag-handle"
-          type="button"
-          aria-label={`Drag ${item.title} to reorder or move section`}
-          title="Drag to reorder or move section"
-          {...attributes}
-          {...listeners}
-        >
-          ⠿
-        </button>
-      ) : (
-        <span className="drag-handle-placeholder" aria-hidden />
-      )}
-      <div className="builder-exercise-preview-content">
-        <WorkoutLogItem
-          item={item}
-          active={false}
-          weightUnit={weightUnit}
-          showSetControls={false}
-          builderPreview
-          setLogs={programPreviewSetLogs(item)}
-          resultLog={programPreviewResultLog(item)}
-          onUpdateSet={() => undefined}
-          onAddSet={() => undefined}
-          onRemoveSet={() => undefined}
-          onUpdateResult={() => undefined}
-        />
-      </div>
-      <div className="builder-exercise-preview-actions">
-        <button
-          className="icon-button"
-          disabled={!editable}
-          aria-label={`Edit ${item.title}`}
-          title="Edit exercise"
-          onClick={onEdit}
-        >
-          <Pencil size={15} />
-        </button>
-        <button
-          className="icon-button danger"
-          disabled={!editable}
-          aria-label={`Remove ${item.title}`}
-          title="Remove exercise"
-          onClick={onRemove}
-        >
-          <Trash2 size={15} />
-        </button>
-      </div>
-      <span className="item-position">{index + 1}</span>
-    </div>
-  );
 }
 
 function ProgramRow({
@@ -6701,6 +5674,9 @@ function ProgramsHome({
   schedules,
   source,
   hasCoach,
+  hasMore,
+  loadingMore,
+  loadError,
   action,
   capabilitiesForProgram,
   onOpen,
@@ -6710,12 +5686,16 @@ function ProgramsHome({
   onCreate,
   onCreateWorkout,
   onSchedule,
+  onLoadMore,
 }: {
   programs: Program[];
   viewerId: string;
   schedules: ScheduledWorkout[];
   source: ProgramSourceTab;
   hasCoach: boolean;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadError: string;
   action: ProgramAction;
   capabilitiesForProgram: (program: Program) => TrainingContentCapabilities;
   onOpen: (program: Program) => void;
@@ -6725,6 +5705,7 @@ function ProgramsHome({
   onCreate: () => void;
   onCreateWorkout: () => void;
   onSchedule: () => void;
+  onLoadMore: () => void;
 }) {
   const [contentQuery, setContentQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -6732,31 +5713,58 @@ function ProgramsHome({
     Array<"program" | "quick_workout">
   >([]);
   const [selectedStatuses, setSelectedStatuses] = useState<ProgramRunStatus[]>([]);
+  const [page, setPage] = useState(0);
+  const pageSize = 20;
   const own = programs.filter((program) => program.sourceType === "self");
   const coach = programs.filter((program) => program.sourceType === "coach");
-  const scheduleProgress = (program: Program) => {
+  const progressByProgramId = useMemo(() => {
     const today = localDateOnly();
-    const latestScheduleByWorkout = new Map<string, ScheduledWorkout>();
-    const programSchedules = schedules.filter(
-      (schedule) => schedule.programVersionId === program.versionId,
-    );
-    programSchedules.forEach((schedule) => {
+    const schedulesByVersion = new Map<string, ScheduledWorkout[]>();
+    for (const schedule of schedules) {
+      const group = schedulesByVersion.get(schedule.programVersionId) ?? [];
+      group.push(schedule);
+      schedulesByVersion.set(schedule.programVersionId, group);
+    }
+    const result = new Map<
+      string,
+      {
+        workoutStates: ProgramWorkoutProgressState[];
+        workoutStatus: SingleWorkoutStatusSummary;
+      }
+    >();
+    for (const program of programs) {
+      const programSchedules = schedulesByVersion.get(program.versionId) ?? [];
+      const latestScheduleByWorkout = new Map<string, ScheduledWorkout>();
+      for (const schedule of programSchedules) {
         const current = latestScheduleByWorkout.get(schedule.workoutId);
         if (!current || schedule.sequenceNumber > current.sequenceNumber)
           latestScheduleByWorkout.set(schedule.workoutId, schedule);
+      }
+      result.set(program.id, {
+        workoutStates: programWorkoutIds(program).map((workoutId) =>
+          deriveProgramWorkoutProgressState(
+            latestScheduleByWorkout.get(workoutId),
+            today,
+          ),
+        ),
+        workoutStatus: deriveSingleWorkoutStatus(
+          program.versionStatus === "draft",
+          programSchedules,
+          today,
+        ),
       });
-    return {
-      workoutStates: programWorkoutIds(program).map((workoutId) => {
-        const schedule = latestScheduleByWorkout.get(workoutId);
-        return deriveProgramWorkoutProgressState(schedule, today);
-      }),
+    }
+    return result;
+  }, [programs, schedules]);
+  const scheduleProgress = (program: Program) =>
+    progressByProgramId.get(program.id) ?? {
+      workoutStates: [],
       workoutStatus: deriveSingleWorkoutStatus(
         program.versionStatus === "draft",
-        programSchedules,
-        today,
+        [],
+        localDateOnly(),
       ),
     };
-  };
   const content = source === "own" ? own : coach;
   const statusOptions: ProgramRunStatus[] = [
     "draft",
@@ -6790,6 +5798,7 @@ function ProgramsHome({
     value: T,
     setValues: Dispatch<SetStateAction<T[]>>,
   ) {
+    setPage(0);
     setValues((current) =>
       current.includes(value)
         ? current.filter((candidate) => candidate !== value)
@@ -6797,6 +5806,7 @@ function ProgramsHome({
     );
   }
   function resetProgramFilters() {
+    setPage(0);
     setSelectedTypes([]);
     setSelectedStatuses([]);
     setContentQuery("");
@@ -6813,6 +5823,16 @@ function ProgramsHome({
   const workoutItems = sortDraftsFirst(
     filteredContent.filter((item) => item.contentType === "quick_workout"),
   );
+  const orderedContent = [...programItems, ...workoutItems];
+  const pageCount = Math.max(1, Math.ceil(orderedContent.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleIds = new Set(
+    orderedContent
+      .slice(currentPage * pageSize, currentPage * pageSize + pageSize)
+      .map((item) => item.id),
+  );
+  const visibleProgramItems = programItems.filter((item) => visibleIds.has(item.id));
+  const visibleWorkoutItems = workoutItems.filter((item) => visibleIds.has(item.id));
   const renderRow = (item: Program) => (
     <ProgramRow
       key={item.id}
@@ -6850,7 +5870,10 @@ function ProgramsHome({
           label="Program sources"
           panelId="program-source-panel"
           value={source}
-          onChange={onSource}
+          onChange={(nextSource) => {
+            setPage(0);
+            onSource(nextSource);
+          }}
           tabs={[
             { value: "own", label: "Mine", icon: CircleUserRound },
             ...(hasCoach ? [{ value: "coach" as const, label: "Coach", icon: Users }] : []),
@@ -6863,7 +5886,10 @@ function ProgramsHome({
               <input
                 aria-label="Search programs and workouts"
                 value={contentQuery}
-                onChange={(event) => setContentQuery(event.target.value)}
+                onChange={(event) => {
+                  setPage(0);
+                  setContentQuery(event.target.value);
+                }}
                 placeholder="Search programs and workouts"
               />
             </label>
@@ -6948,23 +5974,57 @@ function ProgramsHome({
         <div className="program-compact-list" id="program-source-panel" role="tabpanel">
           {filteredContent.length ? (
             <>
-              {programItems.length > 0 && (
+              {visibleProgramItems.length > 0 && (
                 <section className="program-content-section" aria-labelledby="program-list-heading">
                   <div className="program-content-heading">
                     <span><Layers3 size={15} /><strong id="program-list-heading">Programs</strong></span>
                     <small>{programItems.length}</small>
                   </div>
-                  <div className="program-content-cards">{programItems.map(renderRow)}</div>
+                  <div className="program-content-cards">{visibleProgramItems.map(renderRow)}</div>
                 </section>
               )}
-              {workoutItems.length > 0 && (
+              {visibleWorkoutItems.length > 0 && (
                 <section className="program-content-section" aria-labelledby="workout-list-heading">
                   <div className="program-content-heading">
                     <span><Activity size={15} /><strong id="workout-list-heading">Single workouts</strong></span>
                     <small>{workoutItems.length}</small>
                   </div>
-                  <div className="program-content-cards">{workoutItems.map(renderRow)}</div>
+                  <div className="program-content-cards">{visibleWorkoutItems.map(renderRow)}</div>
                 </section>
+              )}
+              {pageCount > 1 && (
+                <nav className="library-pagination" aria-label="Program pages">
+                  <button
+                    className="button secondary small"
+                    disabled={currentPage === 0}
+                    onClick={() => setPage((current) => Math.max(0, current - 1))}
+                  >
+                    <ArrowLeft size={14} /> Previous
+                  </button>
+                  <span>Page {currentPage + 1} of {pageCount}</span>
+                  <button
+                    className="button secondary small"
+                    disabled={currentPage >= pageCount - 1}
+                    onClick={() =>
+                      setPage((current) => Math.min(pageCount - 1, current + 1))
+                    }
+                  >
+                    Next <ArrowRight size={14} />
+                  </button>
+                </nav>
+              )}
+              {loadError && <InlineError>{loadError}</InlineError>}
+              {hasMore && (
+                <button
+                  className="button secondary small library-load-more"
+                  disabled={loadingMore}
+                  onClick={onLoadMore}
+                >
+                  {loadingMore && (
+                    <LoaderCircle className="button-spinner" size={14} />
+                  )}
+                  {loadingMore ? "Loading…" : "Load more programs"}
+                </button>
               )}
             </>
           ) : content.length ? (
@@ -7015,397 +6075,6 @@ function CoachProgramEmpty({
           Create program for {athlete.name.split(" ")[0]}
         </button>
       </section>
-    </>
-  );
-}
-
-export function CalendarView({
-  sessions,
-  schedules,
-  weekStartsOnSunday,
-  canSchedule,
-  onNavigate,
-  onSchedule,
-  onScheduleDay,
-  onMoveSchedule,
-  onRemoveSchedule,
-  onOpenPlan,
-  onOpenResults,
-}: {
-  sessions: CompletedSession[];
-  schedules: ScheduledWorkout[];
-  weekStartsOnSunday: boolean;
-  canSchedule: boolean;
-  onNavigate: (view: ViewName) => void;
-  onSchedule: () => void;
-  onScheduleDay: (date: string) => void;
-  onMoveSchedule: (scheduleId: string, date: string) => void;
-  onRemoveSchedule: (scheduleId: string) => void;
-  onOpenPlan: (schedule: ScheduledWorkout) => void;
-  onOpenResults: (session: CompletedSession) => void;
-}) {
-  const [monthOffset, setMonthOffset] = useState(0);
-  const [draggingScheduleId, setDraggingScheduleId] = useState<string | null>(
-    null,
-  );
-  const [selectedDate, setSelectedDate] = useState(() => localDateOnly());
-  const now = new Date();
-  const baseDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-  const year = baseDate.getFullYear();
-  const month = baseDate.getMonth();
-  const days = new Date(year, month + 1, 0).getDate();
-  const firstDay =
-    (new Date(year, month, 1).getDay() - (weekStartsOnSunday ? 0 : 1) + 7) %
-    7;
-  const weekDays = weekStartsOnSunday
-    ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const monthName = baseDate.toLocaleDateString("en", {
-    month: "long",
-    year: "numeric",
-  });
-  const monthSessions = sessions.filter((session) => {
-    const date = new Date(`${session.date}T12:00:00`);
-    return date.getFullYear() === year && date.getMonth() === month;
-  });
-  const monthSchedules = schedules.filter((schedule) => {
-    if (!schedule.plannedDate || schedule.status !== "planned") return false;
-    const date = new Date(`${schedule.plannedDate}T12:00:00`);
-    return date.getFullYear() === year && date.getMonth() === month;
-  });
-  const ratedSessions = monthSessions.filter((session) => session.rpe > 0);
-  const averageRpe = ratedSessions.length
-    ? ratedSessions.reduce((sum, session) => sum + session.rpe, 0) /
-      ratedSessions.length
-    : 0;
-  const cells = Array.from({ length: firstDay + days }, (_, index) =>
-    index < firstDay ? null : index - firstDay + 1,
-  );
-  const selectedSessions = sessions.filter(
-    (session) => session.date === selectedDate,
-  );
-  const selectedSchedules = schedules.filter(
-    (schedule) =>
-      schedule.plannedDate === selectedDate && schedule.status === "planned",
-  );
-  const selectedDateLabel = new Date(
-    `${selectedDate}T12:00:00`,
-  ).toLocaleDateString("en", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-
-  function changeMonth(offset: number) {
-    const nextOffset = monthOffset + offset;
-    const nextMonth = new Date(
-      now.getFullYear(),
-      now.getMonth() + nextOffset,
-      1,
-    );
-    setMonthOffset(nextOffset);
-    setSelectedDate(localDateOnly(nextMonth));
-  }
-  return (
-    <>
-      <PageHeader
-        eyebrow="Your schedule"
-        title="Calendar"
-        description="You decide when program workouts happen. Coaches can see this calendar but cannot change it."
-      >
-        {canSchedule ? (
-          <button className="button primary" onClick={onSchedule}>
-            <CalendarPlus size={15} />
-            Schedule workout
-          </button>
-        ) : (
-          <button
-            className="button primary"
-            onClick={() => onNavigate("program")}
-          >
-            <Dumbbell size={15} />
-            Choose a program
-          </button>
-        )}
-      </PageHeader>
-      <div className="calendar-stats">
-        <div className="panel">
-          <span>
-            <CalendarPlus size={18} />
-          </span>
-          <div>
-            <small>Planned this month</small>
-            <strong>{monthSchedules.length}</strong>
-          </div>
-          <em>Dates chosen by you</em>
-        </div>
-        <div className="panel">
-          <span>
-            <TrendingUp size={18} />
-          </span>
-          <div>
-            <small>Completed this month</small>
-            <strong>{monthSessions.length}</strong>
-          </div>
-          <em>{monthSessions.length ? "Synced history" : "No sessions yet"}</em>
-        </div>
-        <div className="panel">
-          <span>
-            <Activity size={18} />
-          </span>
-          <div>
-            <small>Average session RPE</small>
-            <strong>{averageRpe ? averageRpe.toFixed(1) : "—"}</strong>
-          </div>
-          <em>
-            {averageRpe ? "From completed logs" : "Add RPE after training"}
-          </em>
-        </div>
-      </div>
-      <div className="calendar-layout">
-        <section className="calendar-card panel">
-          <div className="calendar-heading">
-            <button
-              className="icon-button"
-              aria-label="Previous month"
-              onClick={() => changeMonth(-1)}
-            >
-              <ArrowLeft size={16} />
-            </button>
-            <h2>{monthName}</h2>
-            <button
-              className="icon-button"
-              aria-label="Next month"
-              onClick={() => changeMonth(1)}
-            >
-              <ArrowRight size={16} />
-            </button>
-          </div>
-          <div className="calendar-grid">
-            {weekDays.map((day) => (
-              <span className="calendar-dow" key={day}>
-                {day}
-              </span>
-            ))}
-            {cells.map((day, index) => {
-              if (!day)
-                return (
-                  <span className="calendar-day empty" key={`empty-${index}`} />
-                );
-              const date = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-              const daySessions = sessions.filter((item) => item.date === date);
-              const daySchedules = schedules.filter(
-                (item) =>
-                  item.plannedDate === date && item.status === "planned",
-              );
-              const isToday =
-                date ===
-                `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-              return (
-                <div
-                  className={cn(
-                    "calendar-day",
-                    daySessions.length > 0 && "trained",
-                    daySchedules.length > 0 && "planned",
-                    isToday && "today",
-                    selectedDate === date && "selected",
-                    draggingScheduleId && "schedule-target",
-                  )}
-                  key={date}
-                  onDragOver={(event) => {
-                    if (draggingScheduleId) event.preventDefault();
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const scheduleId =
-                      draggingScheduleId ??
-                      event.dataTransfer.getData("text/plain");
-                    setDraggingScheduleId(null);
-                    if (scheduleId) {
-                      setSelectedDate(date);
-                      onMoveSchedule(scheduleId, date);
-                    }
-                  }}
-                >
-                  {canSchedule ? (
-                    <button
-                      type="button"
-                      className="calendar-day-action calendar-day-schedule"
-                      aria-label={`Schedule a workout on ${date}`}
-                      onClick={() => {
-                        setSelectedDate(date);
-                        onScheduleDay(date);
-                      }}
-                    >
-                      <span aria-hidden="true">{day}</span>
-                    </button>
-                  ) : (
-                    <span className="calendar-day-number">{day}</span>
-                  )}
-                  <button
-                    type="button"
-                    className="calendar-day-action calendar-day-select"
-                    aria-label={`Show calendar items for ${date}`}
-                    aria-pressed={selectedDate === date}
-                    onClick={() => setSelectedDate(date)}
-                  >
-                    <span aria-hidden="true">{day}</span>
-                  </button>
-                  <div className="calendar-events">
-                    {daySessions.map((session) => (
-                      <button
-                        key={session.id}
-                        className="completed"
-                        aria-label={`${session.workoutTitle}, completed on ${date}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedDate(date);
-                          onOpenResults(session);
-                        }}
-                      >
-                        <Check size={12} />
-                        <span>{session.workoutTitle}</span>
-                      </button>
-                    ))}
-                    {daySchedules.map((schedule) => (
-                      <div className="calendar-planned-event" key={schedule.id}>
-                        <button
-                          className="planned"
-                          draggable
-                          aria-label={`${schedule.workoutTitle}, scheduled on ${date}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedDate(date);
-                            onOpenPlan(schedule);
-                          }}
-                          onDragStart={(event) => {
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", schedule.id);
-                            setSelectedDate(date);
-                            setDraggingScheduleId(schedule.id);
-                          }}
-                          onDragEnd={() => setDraggingScheduleId(null)}
-                        >
-                          <CalendarPlus size={12} />
-                          <span>{schedule.workoutTitle}</span>
-                        </button>
-                        <button
-                          className="calendar-event-remove"
-                          aria-label={`Remove ${schedule.workoutTitle} from the calendar`}
-                          title="Remove from calendar"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedDate(date);
-                            onRemoveSchedule(schedule.id);
-                          }}
-                        >
-                          <CalendarMinus size={11} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  {isToday && !daySessions.length && !daySchedules.length ? (
-                    <small>Today</small>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-          <section
-            className="calendar-day-agenda"
-            aria-labelledby="calendar-selected-date-title"
-          >
-            <div className="calendar-day-agenda-heading">
-              <div>
-                <small>Selected day</small>
-                <h3 id="calendar-selected-date-title" aria-live="polite">
-                  {selectedDateLabel}
-                </h3>
-              </div>
-              {canSchedule && (
-                <button
-                  type="button"
-                  className="button secondary small"
-                  onClick={() => onScheduleDay(selectedDate)}
-                >
-                  <CalendarPlus size={15} />
-                  Schedule workout
-                </button>
-              )}
-            </div>
-            {selectedSchedules.length || selectedSessions.length ? (
-              <div className="calendar-day-agenda-list">
-                {selectedSchedules.map((schedule) => (
-                  <div className="calendar-day-agenda-row" key={schedule.id}>
-                    <button
-                      type="button"
-                      className="calendar-day-agenda-main planned"
-                      onClick={() => onOpenPlan(schedule)}
-                    >
-                      <CalendarPlus size={16} />
-                      <span>
-                        <strong>{schedule.workoutTitle}</strong>
-                        <small>{schedule.programTitle} · Planned</small>
-                      </span>
-                      <ChevronRight size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label={`Remove ${schedule.workoutTitle} from the calendar`}
-                      title="Remove from calendar"
-                      onClick={() => onRemoveSchedule(schedule.id)}
-                    >
-                      <CalendarMinus size={16} />
-                    </button>
-                  </div>
-                ))}
-                {selectedSessions.map((session) => (
-                  <div className="calendar-day-agenda-row" key={session.id}>
-                    <button
-                      type="button"
-                      className="calendar-day-agenda-main completed"
-                      onClick={() => onOpenResults(session)}
-                    >
-                      <Check size={16} />
-                      <span>
-                        <strong>{session.workoutTitle}</strong>
-                        <small>
-                          Completed
-                          {session.durationMinutes
-                            ? ` · ${session.durationMinutes} min`
-                            : ""}
-                          {session.rpe ? ` · RPE ${session.rpe}` : ""}
-                        </small>
-                      </span>
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="calendar-day-agenda-empty">
-                No workouts on this day.
-              </p>
-            )}
-          </section>
-          <div className="calendar-legend">
-            <span>
-              <i className="planned-dot" />
-              Scheduled by you
-            </span>
-            <span>
-              <i className="completed-dot" />
-              Completed
-            </span>
-            <span>
-              <i className="today-dot" />
-              Today
-            </span>
-          </div>
-        </section>
-      </div>
     </>
   );
 }
@@ -7659,6 +6328,62 @@ const exerciseCategories = [
   "Strength",
 ] as const;
 
+const exerciseFilterCategories = [
+  "Weightlifting",
+  ...exerciseCategories,
+] as const;
+const exerciseModeOptions: EntryMode[] = [
+  "sets",
+  "result",
+  "intervals",
+  "none",
+];
+const exerciseTrackingOptions: TrackingField[] = [
+  "reps",
+  "load",
+  "duration",
+  "distance",
+  "rounds",
+  "heartRate",
+  "rpe",
+];
+
+function emptyExerciseLibraryFilters(): ExerciseLibraryFilters {
+  return { disciplines: [], categories: [], modes: [], tracking: [] };
+}
+
+function toggleExerciseFilterValue<T extends string>(
+  current: T[],
+  value: T,
+) {
+  return current.includes(value)
+    ? current.filter((candidate) => candidate !== value)
+    : [...current, value];
+}
+
+function filterCompleteExerciseLibrary(
+  exercises: Exercise[],
+  query: string,
+  filters: ExerciseLibraryFilters,
+) {
+  const normalizedQuery = query.trim().toLowerCase();
+  return exercises.filter(
+    (exercise) =>
+      (!normalizedQuery ||
+        `${exercise.name} ${exercise.category} ${modeLabel(exercise.defaultMode)} ${exercise.defaultFields.map(trackingFieldLabel).join(" ")}`
+          .toLowerCase()
+          .includes(normalizedQuery)) &&
+      (!filters.disciplines.length ||
+        filters.disciplines.includes(inferredExerciseDiscipline(exercise))) &&
+      (!filters.categories.length ||
+        filters.categories.includes(exercise.category)) &&
+      (!filters.modes.length || filters.modes.includes(exercise.defaultMode)) &&
+      filters.tracking.every((field) =>
+        exercise.defaultFields.includes(field),
+      ),
+  );
+}
+
 function exerciseTrainingStyleLabel(style: ExerciseDiscipline) {
   return exerciseTrainingStyles.find((item) => item.value === style)?.label ?? "Gym";
 }
@@ -7678,29 +6403,43 @@ function trackingFieldLabel(field: TrackingField) {
 function ExercisesHome({
   scope,
   query,
+  filters,
   global,
   personal,
   copyingExerciseId,
+  loading,
+  loadError,
+  hasMore,
   onScope,
   onQuery,
+  onFilters,
   onAdd,
   onOpen,
   onCopy,
   onEdit,
   onDelete,
+  onLoadMore,
+  onRetry,
 }: {
   scope: "global" | "personal";
   query: string;
+  filters: ExerciseLibraryFilters;
   global: Exercise[];
   personal: Exercise[];
   copyingExerciseId: string | null;
+  loading: boolean;
+  loadError: string;
+  hasMore: boolean;
   onScope: (scope: "global" | "personal") => void;
   onQuery: (query: string) => void;
+  onFilters: (filters: ExerciseLibraryFilters) => void;
   onAdd: () => void;
   onOpen: (exercise: Exercise) => void;
   onCopy: (exercise: Exercise) => void;
   onEdit: (exercise: Exercise) => void;
   onDelete: (exercise: Exercise) => void;
+  onLoadMore: () => void;
+  onRetry: () => void;
 }) {
   return (
     <>
@@ -7721,95 +6460,127 @@ function ExercisesHome({
         value={scope}
         onChange={onScope}
         tabs={[
-          { value: "global", label: `Library (${global.length})`, icon: BookOpen },
-          { value: "personal", label: `My exercises (${personal.length})`, icon: CircleUserRound },
+          {
+            value: "global",
+            label: `Library (${global.length}${scope === "global" && hasMore ? "+" : ""})`,
+            icon: BookOpen,
+          },
+          {
+            value: "personal",
+            label: `My exercises (${personal.length}${scope === "personal" && hasMore ? "+" : ""})`,
+            icon: CircleUserRound,
+          },
         ]}
       />
+      {loadError && (
+        <div className="feature-load-status error" role="alert">
+          <span>{loadError}</span>
+          <button className="text-button" onClick={onRetry}>
+            Try again
+          </button>
+        </div>
+      )}
       <ExercisesView
+        key={scope}
         scope={scope}
         query={query}
+        filters={filters}
         global={global}
         personal={personal}
         copyingExerciseId={copyingExerciseId}
+        loading={loading}
+        hasMore={hasMore}
         onQuery={onQuery}
+        onFilters={onFilters}
         onOpen={onOpen}
         onCopy={onCopy}
         onEdit={onEdit}
         onDelete={onDelete}
+        onLoadMore={onLoadMore}
       />
     </>
   );
 }
 
-function ExercisesView({
+export function ExercisesView({
   scope,
   query,
+  filters,
   global,
   personal,
   copyingExerciseId,
+  loading,
+  hasMore,
   onQuery,
+  onFilters,
   onOpen,
   onCopy,
   onEdit,
   onDelete,
+  onLoadMore,
 }: {
   scope: "global" | "personal";
   query: string;
+  filters: ExerciseLibraryFilters;
   global: Exercise[];
   personal: Exercise[];
   copyingExerciseId: string | null;
+  loading: boolean;
+  hasMore: boolean;
   onQuery: (query: string) => void;
+  onFilters: (filters: ExerciseLibraryFilters) => void;
   onOpen: (exercise: Exercise) => void;
   onCopy: (exercise: Exercise) => void;
   onEdit: (exercise: Exercise) => void;
   onDelete: (exercise: Exercise) => void;
+  onLoadMore: () => void;
 }) {
   const source = scope === "global" ? global : personal;
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [selectedStyles, setSelectedStyles] = useState<ExerciseDiscipline[]>([]);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [selectedModes, setSelectedModes] = useState<EntryMode[]>([]);
-  const [selectedTracking, setSelectedTracking] = useState<TrackingField[]>([]);
-  const categoryOptions = Array.from(
-    new Set(source.map((exercise) => exercise.category)),
-  )
-    .filter((category) => category !== "Weightlifting")
-    .sort((left, right) => left.localeCompare(right));
-  const modeOptions = Array.from(new Set(source.map((exercise) => exercise.defaultMode)));
-  const trackingOptions = Array.from(
-    new Set(source.flatMap((exercise) => exercise.defaultFields)),
-  );
-  const filtered = source.filter(
-    (exercise) =>
-      `${exercise.name} ${exercise.category} ${modeLabel(exercise.defaultMode)} ${exercise.defaultFields.map(trackingFieldLabel).join(" ")}`
-        .toLowerCase()
-        .includes(query.toLowerCase()) &&
-      (!selectedStyles.length ||
-        selectedStyles.includes(inferredExerciseDiscipline(exercise))) &&
-      (!selectedCategories.length || selectedCategories.includes(exercise.category)) &&
-      (!selectedModes.length || selectedModes.includes(exercise.defaultMode)) &&
-      selectedTracking.every((field) => exercise.defaultFields.includes(field)),
+  const [page, setPage] = useState(0);
+  const pageSize = 50;
+  const pageCount = Math.max(1, Math.ceil(source.length / pageSize));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleExercises = source.slice(
+    currentPage * pageSize,
+    currentPage * pageSize + pageSize,
   );
   const activeFilterCount =
-    selectedStyles.length +
-    selectedCategories.length +
-    selectedModes.length +
-    selectedTracking.length;
+    filters.disciplines.length +
+    filters.categories.length +
+    filters.modes.length +
+    filters.tracking.length;
   function resetFilters() {
-    setSelectedStyles([]);
-    setSelectedCategories([]);
-    setSelectedModes([]);
-    setSelectedTracking([]);
+    setPage(0);
+    onFilters(emptyExerciseLibraryFilters());
   }
-  function toggleTag<T extends string>(
-    tag: T,
-    setTags: Dispatch<SetStateAction<T[]>>,
-  ) {
-    setTags((current) =>
-      current.includes(tag)
-        ? current.filter((candidate) => candidate !== tag)
-        : [...current, tag],
-    );
+  function toggleDiscipline(value: ExerciseDiscipline) {
+    setPage(0);
+    onFilters({
+      ...filters,
+      disciplines: toggleExerciseFilterValue(filters.disciplines, value),
+    });
+  }
+  function toggleCategory(value: string) {
+    setPage(0);
+    onFilters({
+      ...filters,
+      categories: toggleExerciseFilterValue(filters.categories, value),
+    });
+  }
+  function toggleMode(value: EntryMode) {
+    setPage(0);
+    onFilters({
+      ...filters,
+      modes: toggleExerciseFilterValue(filters.modes, value),
+    });
+  }
+  function toggleTracking(value: TrackingField) {
+    setPage(0);
+    onFilters({
+      ...filters,
+      tracking: toggleExerciseFilterValue(filters.tracking, value),
+    });
   }
   return (
     <>
@@ -7820,7 +6591,10 @@ function ExercisesView({
             <input
               aria-label="Search exercises"
               value={query}
-              onChange={(event) => onQuery(event.target.value)}
+              onChange={(event) => {
+                setPage(0);
+                onQuery(event.target.value);
+              }}
               placeholder="Search exercises"
             />
           </label>
@@ -7836,17 +6610,17 @@ function ExercisesView({
         </div>
         {activeFilterCount > 0 && (
           <div className="library-active-filters" aria-label="Active filters">
-            {selectedStyles.map((style) => (
-              <button key={style} onClick={() => toggleTag(style, setSelectedStyles)}>{exerciseTrainingStyleLabel(style)} <X size={12} /></button>
+            {filters.disciplines.map((style) => (
+              <button key={style} onClick={() => toggleDiscipline(style)}>{exerciseTrainingStyleLabel(style)} <X size={12} /></button>
             ))}
-            {selectedCategories.map((category) => (
-              <button className="filter-tag-category" key={category} onClick={() => toggleTag(category, setSelectedCategories)}>Category: {category} <X size={12} /></button>
+            {filters.categories.map((category) => (
+              <button className="filter-tag-category" key={category} onClick={() => toggleCategory(category)}>Category: {category} <X size={12} /></button>
             ))}
-            {selectedModes.map((mode) => (
-              <button className="filter-tag-logging" key={mode} onClick={() => toggleTag(mode, setSelectedModes)}>Logging: {modeLabel(mode)} <X size={12} /></button>
+            {filters.modes.map((mode) => (
+              <button className="filter-tag-logging" key={mode} onClick={() => toggleMode(mode)}>Logging: {modeLabel(mode)} <X size={12} /></button>
             ))}
-            {selectedTracking.map((field) => (
-              <button className="filter-tag-tracking" key={field} onClick={() => toggleTag(field, setSelectedTracking)}>Tracking: {trackingFieldLabel(field)} <X size={12} /></button>
+            {filters.tracking.map((field) => (
+              <button className="filter-tag-tracking" key={field} onClick={() => toggleTracking(field)}>Tracking: {trackingFieldLabel(field)} <X size={12} /></button>
             ))}
             <button className="clear" onClick={resetFilters}>Clear</button>
           </div>
@@ -7857,7 +6631,7 @@ function ExercisesView({
               <span>Training style</span>
               <div className="library-filter-chip-row">
                 {exerciseTrainingStyles.map(({ value, label }) => (
-                  <button className={selectedStyles.includes(value) ? "active" : ""} key={value} onClick={() => toggleTag(value, setSelectedStyles)}>
+                  <button className={filters.disciplines.includes(value) ? "active" : ""} key={value} onClick={() => toggleDiscipline(value)}>
                     {label}
                   </button>
                 ))}
@@ -7866,39 +6640,45 @@ function ExercisesView({
             <div>
               <span>Category</span>
               <div className="library-filter-chip-row">
-                {categoryOptions.map((category) => (
-                  <button className={cn("filter-tag-category", selectedCategories.includes(category) && "active")} key={category} onClick={() => toggleTag(category, setSelectedCategories)}>{category}</button>
+                {exerciseFilterCategories.map((category) => (
+                  <button className={cn("filter-tag-category", filters.categories.includes(category) && "active")} key={category} onClick={() => toggleCategory(category)}>{category}</button>
                 ))}
               </div>
             </div>
             <div>
               <span>Logging</span>
               <div className="library-filter-chip-row">
-                {modeOptions.map((mode) => (
-                  <button className={cn("filter-tag-logging", selectedModes.includes(mode) && "active")} key={mode} onClick={() => toggleTag(mode, setSelectedModes)}>{modeLabel(mode)}</button>
+                {exerciseModeOptions.map((mode) => (
+                  <button className={cn("filter-tag-logging", filters.modes.includes(mode) && "active")} key={mode} onClick={() => toggleMode(mode)}>{modeLabel(mode)}</button>
                 ))}
               </div>
             </div>
-            {trackingOptions.length > 0 && (
-              <div>
-                <span>Tracking</span>
-                <div className="library-filter-chip-row">
-                  {trackingOptions.map((field) => (
-                    <button className={cn("filter-tag-tracking", selectedTracking.includes(field) && "active")} key={field} onClick={() => toggleTag(field, setSelectedTracking)}>{trackingFieldLabel(field)}</button>
-                  ))}
-                </div>
+            <div>
+              <span>Tracking</span>
+              <div className="library-filter-chip-row">
+                {exerciseTrackingOptions.map((field) => (
+                  <button className={cn("filter-tag-tracking", filters.tracking.includes(field) && "active")} key={field} onClick={() => toggleTracking(field)}>{trackingFieldLabel(field)}</button>
+                ))}
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>
       <div
         id="exercise-library-results"
         role="tabpanel"
+        aria-busy={loading}
       >
-      <div className="library-meta"><span>{filtered.length} exercises</span></div>
+      <div className="library-meta">
+        <span>{source.length}{hasMore ? "+" : ""} exercises</span>
+        {source.length > pageSize && (
+          <span>
+            {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, source.length)}
+          </span>
+        )}
+      </div>
       <div className="exercise-list panel">
-        {filtered.map((exercise) => (
+        {visibleExercises.map((exercise) => (
           <article className="exercise-list-row" key={exercise.id}>
             {(() => {
               const style = inferredExerciseDiscipline(exercise);
@@ -7972,6 +6752,37 @@ function ExercisesView({
           </article>
         ))}
       </div>
+      {pageCount > 1 && (
+        <nav className="library-pagination" aria-label="Exercise pages">
+          <button
+            className="button secondary small"
+            disabled={currentPage === 0}
+            onClick={() => setPage((current) => Math.max(0, current - 1))}
+          >
+            <ArrowLeft size={14} /> Previous
+          </button>
+          <span>Page {currentPage + 1} of {pageCount}</span>
+          <button
+            className="button secondary small"
+            disabled={currentPage >= pageCount - 1}
+            onClick={() =>
+              setPage((current) => Math.min(pageCount - 1, current + 1))
+            }
+          >
+            Next <ArrowRight size={14} />
+          </button>
+        </nav>
+      )}
+      {hasMore && (
+        <button
+          className="button secondary small library-load-more"
+          disabled={loading}
+          onClick={onLoadMore}
+        >
+          {loading && <LoaderCircle className="button-spinner" size={14} />}
+          {loading ? "Loading…" : "Load more exercises"}
+        </button>
+      )}
       </div>
     </>
   );
@@ -8024,6 +6835,9 @@ function CoachingView({
   pendingInvites,
   outgoingInvites,
   athletes,
+  hasMoreAthletes,
+  loadingMoreAthletes,
+  athletesLoadError,
   selectedAthlete,
   loadingAthleteId,
   openingProgramId,
@@ -8037,6 +6851,7 @@ function CoachingView({
   onDisconnect,
   onCancelInvite,
   onSelectAthlete,
+  onLoadMoreAthletes,
   onOpenAssignedProgram,
   onOpenAgendaEntry,
   onAssignAthlete,
@@ -8047,6 +6862,9 @@ function CoachingView({
   pendingInvites: PendingCoachInvite[];
   outgoingInvites: OutgoingCoachInvite[];
   athletes: AthleteSummary[];
+  hasMoreAthletes: boolean;
+  loadingMoreAthletes: boolean;
+  athletesLoadError: string;
   selectedAthlete: AthleteSummary | null;
   loadingAthleteId: string | null;
   openingProgramId: string | null;
@@ -8066,6 +6884,7 @@ function CoachingView({
   onDisconnect: (connection: CoachConnection) => void;
   onCancelInvite: (invitation: OutgoingCoachInvite) => void;
   onSelectAthlete: (athlete: AthleteSummary) => void;
+  onLoadMoreAthletes: () => void;
   onOpenAssignedProgram: (
     athlete: AthleteSummary,
     program: CoachAssignedProgramSummary,
@@ -8338,19 +7157,36 @@ function CoachingView({
               <p className="athlete-list-label">Active athletes</p>
             )}
             {athletes.length ? (
-              athletes.map((athlete) => (
-                <button
-                  key={athlete.id}
-                  className={selectedAthlete?.id === athlete.id ? "active" : ""}
-                  onClick={() => onSelectAthlete(athlete)}
-                >
-                  <PersonAvatar initials={athlete.initials} name={athlete.name} />
-                  <div>
-                    <strong>{athlete.name}</strong>
-                  </div>
-                  <ChevronRight size={16} />
-                </button>
-              ))
+              <>
+                {athletes.map((athlete) => (
+                  <button
+                    key={athlete.id}
+                    className={selectedAthlete?.id === athlete.id ? "active" : ""}
+                    onClick={() => onSelectAthlete(athlete)}
+                  >
+                    <PersonAvatar initials={athlete.initials} name={athlete.name} />
+                    <div>
+                      <strong>{athlete.name}</strong>
+                    </div>
+                    <ChevronRight size={16} />
+                  </button>
+                ))}
+                {athletesLoadError && (
+                  <InlineError>{athletesLoadError}</InlineError>
+                )}
+                {hasMoreAthletes && (
+                  <button
+                    className="button secondary small library-load-more"
+                    disabled={loadingMoreAthletes}
+                    onClick={onLoadMoreAthletes}
+                  >
+                    {loadingMoreAthletes && (
+                      <LoaderCircle className="button-spinner" size={14} />
+                    )}
+                    {loadingMoreAthletes ? "Loading…" : "Load more athletes"}
+                  </button>
+                )}
+              </>
             ) : (
               <div className="empty-state">
                 <Users size={24} />
@@ -8517,28 +7353,18 @@ function CoachAthleteOverview({
                   </span>
                   <span
                     className="program-card-workout-progress"
-                    aria-label={`${assignedProgram.title} workout progress`}
+                    aria-label={`${assignedProgram.title}: ${assignedProgram.completedWorkouts} of ${assignedProgram.totalWorkouts} workouts completed; ${assignedProgram.scheduledWorkouts} scheduled`}
                   >
-                    <small>Workout progress</small>
-                    <span
-                      aria-label={`${assignedProgram.completedWorkouts} of ${assignedProgram.totalWorkouts} workouts completed`}
-                    >
-                      {assignedProgram.workoutProgress.map((state, index) => (
-                        <i
-                          className={state}
-                          key={`${assignedProgram.id}-${index}-${state}`}
-                          title={`Workout ${index + 1}: ${state}`}
-                        />
-                      ))}
-                      {Boolean(assignedProgram.hiddenWorkoutCount) && (
-                        <em
-                          className="program-progress-more"
-                          title={`${assignedProgram.hiddenWorkoutCount} additional workouts`}
-                        >
-                          +{assignedProgram.hiddenWorkoutCount}
-                        </em>
-                      )}
-                    </span>
+                    <small>
+                      <strong>{assignedProgram.completionPercent}% complete</strong>
+                      {` · ${assignedProgram.completedWorkouts} of ${assignedProgram.totalWorkouts}`}
+                    </small>
+                    <small>
+                      {assignedProgram.scheduledPercent}% scheduled
+                      {assignedProgram.nextWorkout
+                        ? ` · Next: ${assignedProgram.nextWorkout.title}`
+                        : ""}
+                    </small>
                   </span>
                   <span className="program-card-meta">
                     <span>
@@ -9435,6 +8261,9 @@ function PrescriptionModal({
   onSave: (item: WorkoutItem) => Promise<void>;
 }) {
   const [mode, setMode] = useState<EntryMode>(item.mode);
+  const [trackingFields, setTrackingFields] = useState<TrackingField[]>(() =>
+    workoutLogFields(item),
+  );
   const [entries, setEntries] = useState<PrescriptionDraftEntry[]>(() =>
     prescriptionDraftEntries(item.mode, item.prescription, weightUnit),
   );
@@ -9459,6 +8288,13 @@ function PrescriptionModal({
   const [error, setError] = useState("");
   const entryCount = entries.length;
   const entryLabel = mode === "intervals" ? "Per round" : "Per set";
+  const setPlanFields: PerEntryField[] = (["reps", "load", "rpe"] as const).filter(
+    (field) => trackingFields.includes(field),
+  );
+  const intervalPlanFields: PerEntryField[] = trackingFields.includes("rpe")
+    ? ["work", "rest", "rpe"]
+    : ["work", "rest"];
+  const tracks = (field: TrackingField) => trackingFields.includes(field);
   function numberOrUndefined(value: string) {
     const parsed = Number(value);
     return value.trim() && Number.isFinite(parsed) ? parsed : undefined;
@@ -9490,25 +8326,47 @@ function PrescriptionModal({
   }
   function togglePerEntry(field: PerEntryField, checked: boolean) {
     setPerEntry((previous) => ({ ...previous, [field]: checked }));
+    if (!checked) {
+      setEntries((previous) => {
+        const sharedValue = previous[0]?.[field] ?? "";
+        return previous.map((entry) => ({ ...entry, [field]: sharedValue }));
+      });
+    }
   }
   function resetForMode(nextMode: EntryMode) {
     setMode(nextMode);
+    setTrackingFields(trackingFieldsForMode(nextMode));
     setEntries(prescriptionDraftEntries(nextMode, item.prescription, weightUnit));
     setPerEntry({ reps: false, load: false, rpe: false, work: false, rest: false });
   }
   async function save() {
     setSaving(true);
     setError("");
-    const nextFields = workoutLogFields(mode);
+    const nextFields = trackingFieldsForMode(mode, trackingFields);
     const savedEntries: PrescriptionEntry[] = entries.map((entry) => ({
-      reps: entry.reps.trim() || undefined,
-      loadKg: numberOrUndefined(weightKgValue(entry.load, weightUnit)),
-      durationMinutes: numberOrUndefined(entry.duration),
-      distance: numberOrUndefined(entry.distance),
-      distanceUnit: "km",
-      workSeconds: numberOrUndefined(entry.work),
-      restSeconds: numberOrUndefined(entry.rest),
-      targetRpe: wholeRpe(entry.rpe) || undefined,
+      reps: nextFields.includes("reps")
+        ? entry.reps.trim() || undefined
+        : undefined,
+      loadKg: nextFields.includes("load")
+        ? numberOrUndefined(weightKgValue(entry.load, weightUnit))
+        : undefined,
+      durationMinutes:
+        mode === "result" && nextFields.includes("duration")
+          ? numberOrUndefined(entry.duration)
+          : undefined,
+      distance:
+        mode === "result" && nextFields.includes("distance")
+          ? numberOrUndefined(entry.distance)
+          : undefined,
+      distanceUnit:
+        mode === "result" && nextFields.includes("distance") ? "km" : undefined,
+      workSeconds:
+        mode === "intervals" ? numberOrUndefined(entry.work) : undefined,
+      restSeconds:
+        mode === "intervals" ? numberOrUndefined(entry.rest) : undefined,
+      targetRpe: nextFields.includes("rpe")
+        ? wholeRpe(entry.rpe) || undefined
+        : undefined,
     }));
     const firstEntry = savedEntries[0] ?? {};
     const nextItem: WorkoutItem = {
@@ -9537,7 +8395,8 @@ function PrescriptionModal({
               ? {
                   durationMinutes: firstEntry.durationMinutes,
                   distance: firstEntry.distance,
-                  distanceUnit: "km",
+                  distanceUnit: firstEntry.distanceUnit,
+                  loadKg: firstEntry.loadKg,
                   targetRpe: firstEntry.targetRpe,
                   entries: savedEntries,
                 }
@@ -9558,18 +8417,19 @@ function PrescriptionModal({
   return (
     <ModalShell
       title={`Prescribe ${item.title}`}
-      description="Set the planned target here. The athlete records actual reps, weight and effort during the workout."
+      description="Set the target here. Actual results are logged during training."
       onClose={onClose}
+      className="prescription-modal"
     >
       <div className="form-grid prescription-form">
         <label className="form-field full">
-          <span>Prescription type</span>
+          <span>Format</span>
           <select
             value={mode}
             onChange={(event) => resetForMode(event.target.value as EntryMode)}
           >
-            <option value="sets">Sets and repetitions</option>
-            <option value="result">Time, distance or result</option>
+            <option value="sets">Sets × reps</option>
+            <option value="result">Time / distance</option>
             <option value="intervals">Intervals</option>
             <option value="none">Instructions only</option>
           </select>
@@ -9580,96 +8440,121 @@ function PrescriptionModal({
               <span>Sets</span>
               <input
                 type="number"
-              min="1"
-              max="30"
+                min="1"
+                max="30"
                 value={entryCount}
                 onChange={(event) => changeEntryCount(event.target.value)}
               />
             </label>
-            <label className="form-field">
-              <FieldLabel
-                label="Reps"
-                perEntryLabel={entryLabel}
-                checked={perEntry.reps}
-                onToggle={(checked) => togglePerEntry("reps", checked)}
-              />
-              {perEntry.reps ? (
-                <PerEntryValue label={entryLabel} />
-              ) : (
-                <input
-                  value={entries[0]?.reps ?? ""}
-                  onChange={(event) => updateShared("reps", event.target.value)}
-                  placeholder="5 or 8–10"
+            {tracks("reps") && (
+              <div className="form-field">
+                <FieldLabel
+                  label="Reps"
+                  perEntryLabel={entryLabel}
+                  checked={perEntry.reps}
+                  onToggle={(checked) => togglePerEntry("reps", checked)}
                 />
-              )}
-            </label>
-            <label className="form-field">
-              <FieldLabel
-                label={`Target weight (${weightUnit})`}
-                optional
-                perEntryLabel={entryLabel}
-                checked={perEntry.load}
-                onToggle={(checked) => togglePerEntry("load", checked)}
-              />
-              {perEntry.load ? (
-                <PerEntryValue label={entryLabel} />
-              ) : (
-                <input
-                  inputMode="decimal"
-                  value={entries[0]?.load ?? ""}
-                  onChange={(event) => updateShared("load", event.target.value)}
-                  placeholder="Optional"
+                {perEntry.reps ? (
+                  <PerEntryValue label={entryLabel} />
+                ) : (
+                  <input
+                    aria-label="Repetitions"
+                    value={entries[0]?.reps ?? ""}
+                    onChange={(event) => updateShared("reps", event.target.value)}
+                    placeholder="5 or 8–10"
+                  />
+                )}
+              </div>
+            )}
+            {tracks("load") && (
+              <div className="form-field">
+                <FieldLabel
+                  label={`Weight (${weightUnit})`}
+                  optional
+                  perEntryLabel={entryLabel}
+                  checked={perEntry.load}
+                  onToggle={(checked) => togglePerEntry("load", checked)}
                 />
-              )}
-            </label>
-            <div className="form-field planned-rpe-field">
-              <FieldLabel
-                label="Planned effort"
-                optional
-                perEntryLabel={entryLabel}
-                checked={perEntry.rpe}
-                onToggle={(checked) => togglePerEntry("rpe", checked)}
-              />
-              {perEntry.rpe ? (
-                <PerEntryValue label={entryLabel} />
-              ) : (
-                <PlannedRpeSelect
-                  value={entries[0]?.rpe ?? ""}
-                  onChange={(value) => updateShared("rpe", value)}
+                {perEntry.load ? (
+                  <PerEntryValue label={entryLabel} />
+                ) : (
+                  <input
+                    aria-label={`Target weight in ${weightUnit}`}
+                    inputMode="decimal"
+                    value={entries[0]?.load ?? ""}
+                    onChange={(event) => updateShared("load", event.target.value)}
+                    placeholder="Optional"
+                  />
+                )}
+              </div>
+            )}
+            {tracks("rpe") && (
+              <div className="form-field planned-rpe-field">
+                <FieldLabel
+                  label="Target RPE"
+                  optional
+                  perEntryLabel={entryLabel}
+                  checked={perEntry.rpe}
+                  onToggle={(checked) => togglePerEntry("rpe", checked)}
                 />
-              )}
-            </div>
-            <PrescriptionEntryTable
-              label="Set plan"
-              rows={entries}
-              weightUnit={weightUnit}
-              fields={["reps", "load", "rpe"]}
-              editable={perEntry}
-              onChange={updateEntry}
-            />
+                {perEntry.rpe ? (
+                  <PerEntryValue label={entryLabel} />
+                ) : (
+                  <PlannedRpeSelect
+                    value={entries[0]?.rpe ?? ""}
+                    onChange={(value) => updateShared("rpe", value)}
+                  />
+                )}
+              </div>
+            )}
+            {setPlanFields.length > 0 && (
+              <PrescriptionEntryTable
+                label="Set plan"
+                rows={entries}
+                weightUnit={weightUnit}
+                fields={setPlanFields}
+                editable={perEntry}
+                onChange={updateEntry}
+              />
+            )}
           </>
         )}
         {mode === "result" && (
           <>
-            <label className="form-field">
-              <span>Target duration (minutes)</span>
-              <input
-                type="number"
-                min="0"
-                value={entries[0]?.duration ?? ""}
-                onChange={(event) => updateEntry(0, "duration", event.target.value)}
-              />
-            </label>
-            <label className="form-field">
-              <span>Target distance (km)</span>
-              <input
-                type="number"
-                min="0"
-                step="0.1"
-                value={entries[0]?.distance ?? ""}
-                onChange={(event) => updateEntry(0, "distance", event.target.value)}
-              />
-            </label>
+            {tracks("duration") && (
+              <label className="form-field">
+                <span>Duration (min)</span>
+                <input
+                  type="number"
+                  min="0"
+                  value={entries[0]?.duration ?? ""}
+                  onChange={(event) => updateEntry(0, "duration", event.target.value)}
+                />
+              </label>
+            )}
+            {tracks("distance") && (
+              <label className="form-field">
+                <span>Distance (km)</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={entries[0]?.distance ?? ""}
+                  onChange={(event) => updateEntry(0, "distance", event.target.value)}
+                />
+              </label>
+            )}
+            {tracks("load") && (
+              <label className="form-field">
+                <span>Weight ({weightUnit})</span>
+                <input
+                  inputMode="decimal"
+                  value={entries[0]?.load ?? ""}
+                  onChange={(event) => updateEntry(0, "load", event.target.value)}
+                  placeholder="Optional"
+                />
+              </label>
+            )}
           </>
         )}
         {mode === "intervals" && (
@@ -9683,9 +8568,9 @@ function PrescriptionModal({
                 onChange={(event) => changeEntryCount(event.target.value)}
               />
             </label>
-            <label className="form-field">
+            <div className="form-field">
               <FieldLabel
-                label="Work"
+                label="Work (sec)"
                 perEntryLabel={entryLabel}
                 checked={perEntry.work}
                 onToggle={(checked) => togglePerEntry("work", checked)}
@@ -9694,15 +8579,16 @@ function PrescriptionModal({
                 <PerEntryValue label={entryLabel} />
               ) : (
                 <input
+                  aria-label="Work seconds"
                   inputMode="numeric"
                   value={entries[0]?.work ?? ""}
                   onChange={(event) => updateShared("work", event.target.value)}
                 />
               )}
-            </label>
-            <label className="form-field">
+            </div>
+            <div className="form-field">
               <FieldLabel
-                label="Rest"
+                label="Rest (sec)"
                 perEntryLabel={entryLabel}
                 checked={perEntry.rest}
                 onToggle={(checked) => togglePerEntry("rest", checked)}
@@ -9711,46 +8597,45 @@ function PrescriptionModal({
                 <PerEntryValue label={entryLabel} />
               ) : (
                 <input
+                  aria-label="Rest seconds"
                   inputMode="numeric"
                   value={entries[0]?.rest ?? ""}
                   onChange={(event) => updateShared("rest", event.target.value)}
                 />
               )}
-            </label>
-            <div className="form-field planned-rpe-field">
-              <FieldLabel
-                label="Planned effort"
-                optional
-                perEntryLabel={entryLabel}
-                checked={perEntry.rpe}
-                onToggle={(checked) => togglePerEntry("rpe", checked)}
-              />
-              {perEntry.rpe ? (
-                <PerEntryValue label={entryLabel} />
-              ) : (
-                <PlannedRpeSelect
-                  value={entries[0]?.rpe ?? ""}
-                  onChange={(value) => updateShared("rpe", value)}
-                />
-              )}
             </div>
+            {tracks("rpe") && (
+              <div className="form-field planned-rpe-field">
+                <FieldLabel
+                  label="Target RPE"
+                  optional
+                  perEntryLabel={entryLabel}
+                  checked={perEntry.rpe}
+                  onToggle={(checked) => togglePerEntry("rpe", checked)}
+                />
+                {perEntry.rpe ? (
+                  <PerEntryValue label={entryLabel} />
+                ) : (
+                  <PlannedRpeSelect
+                    value={entries[0]?.rpe ?? ""}
+                    onChange={(value) => updateShared("rpe", value)}
+                  />
+                )}
+              </div>
+            )}
             <PrescriptionEntryTable
               label="Round plan"
               rows={entries}
               weightUnit={weightUnit}
-              fields={["work", "rest", "rpe"]}
+              fields={intervalPlanFields}
               editable={perEntry}
               onChange={updateEntry}
             />
           </>
         )}
-        {mode === "result" && (
-          <div className="form-field full planned-rpe-field">
-            <span>Planned effort <em>optional</em></span>
-            <small>
-              This guides effort alongside an exact weight target. The athlete
-              records actual RPE while training.
-            </small>
+        {mode === "result" && tracks("rpe") && (
+          <div className="form-field planned-rpe-field result-rpe-field">
+            <span>Target RPE <em>optional</em></span>
             <PlannedRpeSelect
               value={entries[0]?.rpe ?? ""}
               onChange={(value) => updateEntry(0, "rpe", value)}
@@ -9759,9 +8644,10 @@ function PrescriptionModal({
         )}
         <label className="form-field full">
           <span>
-            Notes <em>optional</em>
+            Coaching notes <em>optional</em>
           </span>
           <textarea
+            rows={2}
             value={note}
             onChange={(event) => setNote(event.target.value)}
             placeholder="Technique cues, tempo, substitutions…"
@@ -9769,7 +8655,7 @@ function PrescriptionModal({
         </label>
       </div>
       {error && <InlineError>{error}</InlineError>}
-      <div className="modal-actions">
+      <div className="modal-actions prescription-actions">
         <button className="button secondary" onClick={onClose}>
           Cancel
         </button>
@@ -9781,7 +8667,7 @@ function PrescriptionModal({
           }
           onClick={save}
         >
-          {saving ? "Saving…" : "Save prescription"}
+          {saving ? "Saving…" : "Save"}
         </button>
       </div>
     </ModalShell>
@@ -9803,26 +8689,27 @@ function FieldLabel({
 }) {
   return (
     <span className="prescription-field-label">
+      <b>{label}</b>
+      {optional && <em>optional</em>}
       <label className="per-entry-toggle">
         <input
           type="checkbox"
           checked={checked}
+          aria-label={`${perEntryLabel} values for ${label}`}
           onChange={(event) => onToggle(event.target.checked)}
         />
         <i aria-hidden />
         <small>{perEntryLabel}</small>
       </label>
-      <b>{label}</b>
-      {optional && <em>optional</em>}
     </span>
   );
 }
 
 function PerEntryValue({ label }: { label: string }) {
   return (
-    <div className="per-entry-value">
+    <div className="per-entry-value" aria-label={`${label} values are edited below`}>
       <Settings2 size={13} />
-      {label}
+      Edit below
     </div>
   );
 }
@@ -9843,29 +8730,35 @@ function PrescriptionEntryTable({
   onChange: (index: number, field: keyof PrescriptionDraftEntry, value: string) => void;
 }) {
   return (
-    <div className="prescription-entry-table full">
+    <div
+      className={cn(
+        "prescription-entry-table",
+        "full",
+        `tracking-${fields.length}`,
+      )}
+    >
       <div className="prescription-entry-heading">
         <strong>{label}</strong>
-        <small>Choose “Per set” or “Per round” above to edit a column.</small>
       </div>
       <div className="prescription-entry-grid">
-        <div
-          className="prescription-entry-row prescription-entry-header"
-          style={{ gridTemplateColumns: `36px repeat(${fields.length}, minmax(0, 1fr))` }}
-        >
+        <div className="prescription-entry-row prescription-entry-header">
           <span>#</span>
           {fields.map((field) => (
             <span key={field}>
-              {field === "load" ? `Weight (${weightUnit})` : field === "rpe" ? "Planned RPE" : field[0].toUpperCase() + field.slice(1)}
+              {field === "load"
+                ? `Load ${weightUnit}`
+                : field === "rpe"
+                  ? "RPE"
+                  : field === "work"
+                    ? "Work s"
+                    : field === "rest"
+                      ? "Rest s"
+                      : field[0].toUpperCase() + field.slice(1)}
             </span>
           ))}
         </div>
         {rows.map((row, index) => (
-          <div
-            className="prescription-entry-row"
-            key={index}
-            style={{ gridTemplateColumns: `36px repeat(${fields.length}, minmax(0, 1fr))` }}
-          >
+          <div className="prescription-entry-row" key={index}>
             <span>{index + 1}</span>
             {fields.map((field) =>
               field === "rpe" ? (
@@ -9882,6 +8775,7 @@ function PrescriptionEntryTable({
                   key={field}
                   disabled={!editable[field]}
                   inputMode={field === "load" ? "decimal" : field === "reps" ? "text" : "numeric"}
+                  placeholder="—"
                   value={row[field]}
                   onChange={(event) => onChange(index, field, event.target.value)}
                 />
@@ -10147,14 +9041,21 @@ function InviteModal({
 function AssignProgramModal({
   programs,
   athletes,
+  hasMoreAthletes,
+  loadingMoreAthletes,
+  athletesLoadError,
   initialProgramId,
   initialAthleteIds = [],
   onClose,
   onAssign,
   onAssignQuickWorkout,
+  onLoadMoreAthletes,
 }: {
   programs: Program[];
   athletes: AthleteSummary[];
+  hasMoreAthletes: boolean;
+  loadingMoreAthletes: boolean;
+  athletesLoadError: string;
   initialProgramId?: string;
   initialAthleteIds?: string[];
   onClose: () => void;
@@ -10167,6 +9068,7 @@ function AssignProgramModal({
     athleteIds: string[],
     plannedDate: string,
   ) => Promise<ProgramAssignment[]>;
+  onLoadMoreAthletes: () => void;
 }) {
   const lockedProgram = Boolean(initialProgramId);
   const lockedAthletes = !initialProgramId && initialAthleteIds.length === 1;
@@ -10376,6 +9278,22 @@ function AssignProgramModal({
                       </span>
                     </label>
                   ))}
+                  {athletesLoadError && (
+                    <InlineError>{athletesLoadError}</InlineError>
+                  )}
+                  {hasMoreAthletes && (
+                    <button
+                      type="button"
+                      className="button secondary small library-load-more"
+                      disabled={saving || loadingMoreAthletes}
+                      onClick={onLoadMoreAthletes}
+                    >
+                      {loadingMoreAthletes && (
+                        <LoaderCircle className="button-spinner" size={14} />
+                      )}
+                      {loadingMoreAthletes ? "Loading…" : "Load more athletes"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -10386,8 +9304,8 @@ function AssignProgramModal({
               <span>
                 {quickWorkout
                   ? "Scheduling workout for selected athletes"
-                  : "Creating independent program"}{" "}
-                {athleteIds.size === 1 ? "copy" : "copies"}…
+                  : "Assigning shared program to"}{" "}
+                {athleteIds.size} {athleteIds.size === 1 ? "athlete" : "athletes"}…
               </span>
             </div>
           )}
@@ -10512,39 +9430,92 @@ function ProgramModal({
 }
 
 function ScheduleModal({
+  candidates,
   schedules,
-  schedulableVersionIds,
-  quickWorkoutVersionIds,
   editingId,
   initialDate,
-  preparing,
+  loading,
+  error: loadError,
+  hasMore,
+  onLoadMore,
+  onRetry,
   onClose,
   onSave,
 }: {
+  candidates: SchedulableWorkoutCandidate[];
   schedules: ScheduledWorkout[];
-  schedulableVersionIds: string[];
-  quickWorkoutVersionIds: string[];
   editingId: string | null;
   initialDate: string | null;
-  preparing: boolean;
+  loading: boolean;
+  error: string;
+  hasMore: boolean;
+  onLoadMore: () => void;
+  onRetry: () => void;
   onClose: () => void;
-  onSave: (scheduleId: string, date: string | null) => Promise<void>;
+  onSave: (candidate: ScheduleCandidate, date: string | null) => Promise<void>;
 }) {
-  const schedulableVersions = new Set(schedulableVersionIds);
-  const quickWorkoutVersions = new Set(quickWorkoutVersionIds);
-  const candidates = schedules.filter(
-    (schedule) =>
-      schedule.status === "planned" &&
-      (editingId
-        ? schedule.id === editingId
-        : !schedule.plannedDate &&
-          schedulableVersions.has(schedule.programVersionId)),
-  );
+  const availableCandidates = useMemo<ScheduleCandidate[]>(() => {
+    if (editingId) {
+      const schedule = schedules.find((candidate) => candidate.id === editingId);
+      if (!schedule) return [];
+      const source = candidates.find(
+        (candidate) =>
+          candidate.programVersionId === schedule.programVersionId &&
+          candidate.workoutId === schedule.workoutId &&
+          candidate.assignmentId === schedule.assignmentId,
+      );
+      return [{
+        id: schedule.id,
+        scheduleId: schedule.id,
+        programId: schedule.programId,
+        assignmentId: schedule.assignmentId,
+        programVersionId: schedule.programVersionId,
+        programTitle: schedule.programTitle,
+        workoutId: schedule.workoutId,
+        workoutTitle: schedule.workoutTitle,
+        scheduleLabel: schedule.slotLabel,
+        estimatedMinutes: schedule.workout.durationMinutes,
+        quickWorkout: source?.isQuickWorkout ?? false,
+        plannedDate: schedule.plannedDate,
+      }];
+    }
+
+    return candidates.flatMap((candidate): ScheduleCandidate[] => {
+      const latest = candidate.latestOccurrence;
+      if (
+        !candidate.isQuickWorkout &&
+        latest &&
+        (latest.status === "in_progress" ||
+          latest.status === "completed" ||
+          (latest.status === "planned" && Boolean(latest.plannedDate)))
+      ) {
+        return [];
+      }
+      const reusableOccurrence =
+        latest?.status === "planned" && !latest.plannedDate
+          ? latest
+          : undefined;
+      return [{
+        id: `${candidate.assignmentId ?? candidate.programId}:${candidate.workoutId}`,
+        scheduleId: reusableOccurrence?.id,
+        programId: candidate.programId,
+        assignmentId: candidate.assignmentId,
+        programVersionId: candidate.programVersionId,
+        programTitle: candidate.programTitle,
+        workoutId: candidate.workoutId,
+        workoutTitle: candidate.workoutTitle,
+        scheduleLabel: candidate.scheduleLabel,
+        estimatedMinutes: candidate.estimatedMinutes,
+        quickWorkout: candidate.isQuickWorkout,
+        plannedDate: reusableOccurrence?.plannedDate,
+      }];
+    });
+  }, [candidates, editingId, schedules]);
+
   const initial =
-    candidates.find((schedule) => schedule.id === editingId) ??
-    candidates.find((schedule) => !schedule.plannedDate) ??
-    candidates[0];
-  const [scheduleId, setScheduleId] = useState(initial?.id ?? "");
+    availableCandidates.find((candidate) => candidate.scheduleId === editingId) ??
+    availableCandidates[0];
+  const [candidateId, setCandidateId] = useState(initial?.id ?? "");
   const [date, setDate] = useState(
     initial?.plannedDate ?? initialDate ?? localDateOnly(),
   );
@@ -10554,26 +9525,32 @@ function ScheduleModal({
     "add" | "reschedule" | "unschedule" | null
   >(null);
   const [error, setError] = useState("");
-  const selected = candidates.find((schedule) => schedule.id === scheduleId);
+  const effectiveCandidateId = availableCandidates.some(
+    (candidate) => candidate.id === candidateId,
+  )
+    ? candidateId
+    : (availableCandidates[0]?.id ?? "");
+  const selected = availableCandidates.find(
+    (candidate) => candidate.id === effectiveCandidateId,
+  );
   const originalDate = selected?.plannedDate ?? "";
   const action = originalDate
-    ? !date
+    ? !date || date === originalDate
       ? "unschedule"
-      : date !== originalDate
-        ? "reschedule"
-        : "unschedule"
+      : "reschedule"
     : "add";
+
   async function save(
     nextDate: string | null,
     nextAction: "add" | "reschedule" | "unschedule",
   ) {
-    if (!scheduleId || savingRef.current) return;
+    if (!selected || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setSavingAction(nextAction);
     setError("");
     try {
-      await onSave(scheduleId, nextDate);
+      await onSave(selected, nextDate);
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -10586,42 +9563,53 @@ function ScheduleModal({
       setSavingAction(null);
     }
   }
+
   return (
     <ModalShell
       title={originalDate ? "Update a workout date" : "Schedule a workout"}
-      description="These dates belong to you. Your coach can see them but cannot change them."
+      description="Choose a workout and date. Nothing is created until you add it to Calendar."
       onClose={onClose}
-      dismissible={!preparing && !saving}
+      dismissible={!saving}
     >
-      {preparing ? (
-        <div className="schedule-preparing" role="status">
-          <LoaderCircle size={24} className="button-spinner" />
-          <div>
-            <strong>Preparing calendar…</strong>
-            <span>Preparing your saved workouts for Calendar.</span>
-          </div>
+      {loadError && !editingId && (
+        <InlineError>
+          <span>{loadError}</span>{" "}
+          <button
+            type="button"
+            className="text-button"
+            disabled={loading}
+            onClick={onRetry}
+          >
+            Try again
+          </button>
+        </InlineError>
+      )}
+      {loading && !availableCandidates.length ? (
+        <div className="feature-load-status modal-empty" role="status">
+          <LoaderCircle size={22} className="button-spinner" />
+          <span>Loading workouts…</span>
         </div>
-      ) : candidates.length ? (
+      ) : availableCandidates.length ? (
         <>
           <div className="form-grid">
             <label className="form-field full">
               <span>Workout</span>
               <select
-                value={scheduleId}
+                value={effectiveCandidateId}
                 disabled={Boolean(editingId) || saving}
                 onChange={(event) => {
-                  const next = candidates.find(
-                    (schedule) => schedule.id === event.target.value,
+                  const next = availableCandidates.find(
+                    (candidate) => candidate.id === event.target.value,
                   );
-                  setScheduleId(event.target.value);
-                  setDate(next?.plannedDate ?? localDateOnly());
+                  setCandidateId(event.target.value);
+                  setDate((currentDate) => next?.plannedDate ?? currentDate);
                 }}
               >
-                {candidates.map((schedule) => (
-                  <option value={schedule.id} key={schedule.id}>
-                    {quickWorkoutVersions.has(schedule.programVersionId)
-                      ? schedule.workoutTitle
-                      : `${schedule.programTitle} · ${schedule.workoutTitle}`}
+                {availableCandidates.map((candidate) => (
+                  <option value={candidate.id} key={candidate.id}>
+                    {candidate.quickWorkout
+                      ? candidate.workoutTitle
+                      : `${candidate.programTitle} · ${candidate.workoutTitle}`}
                   </option>
                 ))}
               </select>
@@ -10638,9 +9626,20 @@ function ScheduleModal({
           </div>
           <div className="form-info">
             <LockKeyhole size={15} />
-            <span>Only your account can assign or move this date.</span>
+            <span>Only your account can add or move this date.</span>
           </div>
-      {error && <InlineError>{error}</InlineError>}
+          {!editingId && hasMore && (
+            <button
+              type="button"
+              className="button secondary schedule-load-more"
+              disabled={loading || saving}
+              onClick={onLoadMore}
+            >
+              {loading && <LoaderCircle size={15} className="button-spinner" />}
+              {loading ? "Loading…" : "Show more workouts"}
+            </button>
+          )}
+          {error && <InlineError>{error}</InlineError>}
           <div className="modal-actions schedule-actions">
             <button
               className="button secondary"
@@ -10679,8 +9678,8 @@ function ScheduleModal({
           <CalendarDays size={26} />
           <h3>No workouts available to schedule</h3>
           <p>
-            Save an Own program or workout first. Library content must be
-            copied to Own before you can schedule it.
+            Save a workout or program first. Workouts already on your calendar
+            remain available from Calendar.
           </p>
           <button className="button secondary" onClick={onClose}>
             Close

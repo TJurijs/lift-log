@@ -3,6 +3,17 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const programViewPath = new URL(
+  "../app/features/programs/ProgramView.tsx",
+  import.meta.url,
+);
+async function readAppSource() {
+  const [app, programView] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(programViewPath, "utf8"),
+  ]);
+  return `${app}\n${programView}`;
+}
 const stylesPath = new URL("../app/globals.css", import.meta.url);
 const repositoryPath = new URL("../lib/repository.ts", import.meta.url);
 const migrationPath = new URL(
@@ -12,7 +23,7 @@ const migrationPath = new URL(
 
 test("quick workouts use the shared workout tree and can be scheduled or assigned", async () => {
   const [app, styles, repository, migration] = await Promise.all([
-    readFile(appPath, "utf8"),
+    readAppSource(),
     readFile(stylesPath, "utf8"),
     readFile(repositoryPath, "utf8"),
     readFile(migrationPath, "utf8"),
@@ -32,7 +43,7 @@ test("quick workouts use the shared workout tree and can be scheduled or assigne
   assert.doesNotMatch(app, /isQuickWorkout \? "One session" : "Training program"/);
   assert.match(
     app,
-    /className=\{`builder-layout\$\{isQuickWorkout \? " quick-workout-builder" : ""\}`\}[\s\S]*\{!isQuickWorkout && <aside className="workout-list panel">/,
+    /className=\{`builder-layout\$\{isQuickWorkout \? " quick-workout-builder" : ""\}`\}[\s\S]*\{!isQuickWorkout &&\s*\(\s*<aside className="workout-list panel">/,
     "a single quick workout must not render the redundant session selector",
   );
   assert.match(

@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const calendarViewUrl = new URL(
+  "../app/features/calendar/CalendarView.tsx",
+  import.meta.url,
+);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
 const availabilityMigrationUrl = new URL(
@@ -35,7 +39,16 @@ test("calendar scheduling exposes progress and contextual actions", async () => 
     "function AccountModal",
   );
 
-  assert.ok(app.includes("Preparing calendar…"), "opening must show progress");
+  assert.match(
+    app,
+    /const CalendarView = lazy\(\(\) => import\("\.\/features\/calendar\/CalendarView"\)\)/,
+    "the calendar must stay outside the initial application chunk",
+  );
+  assert.match(
+    app,
+    /loadingWorkspaceFeature[\s\S]*Loading \{loadingWorkspaceFeature\}…/,
+    "opening a lazily loaded workspace feature must expose progress",
+  );
   assert.ok(scheduleModal.includes("Add to calendar"));
   assert.ok(scheduleModal.includes("Reschedule"));
   assert.ok(scheduleModal.includes("Unschedule"));
@@ -44,8 +57,20 @@ test("calendar scheduling exposes progress and contextual actions", async () => 
     "the save action must have an animated progress icon",
   );
   assert.ok(scheduleModal.includes("plannedDate"));
+  assert.match(
+    scheduleModal,
+    /setDate\(\(currentDate\) => next\?\.plannedDate \?\? currentDate\)/,
+    "switching workouts must preserve the date chosen from Calendar",
+  );
+  assert.doesNotMatch(
+    scheduleModal,
+    /setDate\(next\?\.plannedDate \?\? localDateOnly\(\)\)/,
+    "switching workouts must not reset the chosen date to today",
+  );
   assert.ok(
-    /(?:date\s*!==|!==\s*date|dateChanged|isReschedul)/.test(scheduleModal),
+    /const action = originalDate[\s\S]*date === originalDate[\s\S]*"unschedule"[\s\S]*"reschedule"/.test(
+      scheduleModal,
+    ),
     "rescheduling must be driven by changing the selected date",
   );
 });
@@ -82,15 +107,11 @@ test("the primary training destination is labelled Next workouts", async () => {
 });
 
 test("calendar event clicks open plans and immutable completed results", async () => {
-  const [app, repository] = await Promise.all([
+  const [app, calendarView, repository] = await Promise.all([
     readFile(appUrl, "utf8"),
+    readFile(calendarViewUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
   ]);
-  const calendarView = sourceBetween(
-    app,
-    "function CalendarView",
-    "function ExercisesView",
-  );
 
   assert.ok(
     /daySchedules\.map\(\(schedule\)[\s\S]*?event\.stopPropagation\(\)[\s\S]*?onOpenPlan\(schedule\)/.test(
@@ -142,15 +163,11 @@ test("completed workout logs mirror the active logging grid and RPE palette", as
 });
 
 test("calendar days schedule on a chosen date and allow quick drag rescheduling", async () => {
-  const [app, styles] = await Promise.all([
+  const [app, calendarView, styles] = await Promise.all([
     readFile(appUrl, "utf8"),
+    readFile(calendarViewUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
   ]);
-  const calendarView = sourceBetween(
-    app,
-    "function CalendarView",
-    "function ExercisesView",
-  );
 
   assert.match(calendarView, /onScheduleDay\(date\)/);
   assert.match(app, /initialDate \?\? localDateOnly\(\)/);
@@ -159,21 +176,22 @@ test("calendar days schedule on a chosen date and allow quick drag rescheduling"
     /draggable[\s\S]*?setData\("text\/plain", schedule\.id\)/,
   );
   assert.match(calendarView, /onMoveSchedule\(scheduleId, date\)/);
+  assert.match(
+    calendarView,
+    /onVisibleRangeChange\?\.\(monthStart, monthEnd\)/,
+    "month navigation must request only the visible server-backed date range",
+  );
   assert.match(styles, /\.calendar-day\.schedule-target/);
 });
 
 test("user settings keep Monday and metric units as clean account defaults", async () => {
-  const [app, repository, calendarMigration, unitsMigration] = await Promise.all([
+  const [app, calendarView, repository, calendarMigration, unitsMigration] = await Promise.all([
     readFile(appUrl, "utf8"),
+    readFile(calendarViewUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
     readFile(calendarPreferenceMigrationUrl, "utf8"),
     readFile(accountUnitsMigrationUrl, "utf8"),
   ]);
-  const calendarView = sourceBetween(
-    app,
-    "function CalendarView",
-    "function ExercisesView",
-  );
   const accountModal = app.slice(app.indexOf("function AccountModal"));
 
   assert.match(
@@ -206,16 +224,12 @@ test("user settings keep Monday and metric units as clean account defaults", asy
 });
 
 test("scheduled workouts can be removed from plans, calendar hover, or availability", async () => {
-  const [app, styles, migration] = await Promise.all([
+  const [app, calendarView, styles, migration] = await Promise.all([
     readFile(appUrl, "utf8"),
+    readFile(calendarViewUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
     readFile(availabilityMigrationUrl, "utf8"),
   ]);
-  const calendarView = sourceBetween(
-    app,
-    "function CalendarView",
-    "function ExercisesView",
-  );
   assert.doesNotMatch(calendarView, /Next workout/);
   assert.match(calendarView, /calendar-event-remove[\s\S]*?onRemoveSchedule\(schedule\.id\)/);
   assert.match(calendarView, /CalendarMinus/);

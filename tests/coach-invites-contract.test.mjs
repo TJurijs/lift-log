@@ -65,9 +65,8 @@ test("workspace repository exposes pending requests and id-based responses", asy
   assert.match(domain, /pendingCoachInvites: PendingCoachInvite\[\]/);
   assert.match(domain, /export interface OutgoingCoachInvite/);
   assert.match(domain, /outgoingCoachInvites: OutgoingCoachInvite\[\]/);
-  assert.match(repository, /this\.loadPendingCoachInvites\(\)/);
-  assert.match(repository, /\.rpc\("list_pending_coach_invites"\)/);
-  assert.match(repository, /\.rpc\("list_outgoing_coach_invites"\)/);
+  assert.match(repository, /\.rpc\("get_coaching_access_summary"\)/);
+  assert.doesNotMatch(repository, /this\.loadPendingCoachInvites\(\)/);
   assert.match(
     repository,
     /async cancelCoachInvite[\s\S]*\.rpc\("cancel_coach_invite"/,

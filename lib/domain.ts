@@ -24,6 +24,38 @@ export type EntryMode = "none" | "sets" | "result" | "intervals";
 export type TrackingField =
   "reps" | "load" | "duration" | "distance" | "rounds" | "heartRate" | "rpe";
 
+const defaultTrackingFieldsByMode: Record<
+  EntryMode,
+  readonly TrackingField[]
+> = {
+  none: [],
+  sets: ["reps", "load", "rpe"],
+  result: ["duration", "distance", "rpe"],
+  intervals: ["rounds", "duration", "rpe"],
+};
+
+const compatibleTrackingFieldsByMode: Record<
+  EntryMode,
+  readonly TrackingField[]
+> = {
+  none: [],
+  sets: ["reps", "load", "rpe"],
+  result: ["duration", "distance", "load", "heartRate", "rpe"],
+  intervals: ["rounds", "duration", "distance", "heartRate", "rpe"],
+};
+
+export function trackingFieldsForMode(
+  mode: EntryMode,
+  requested?: readonly TrackingField[],
+): TrackingField[] {
+  const defaults = defaultTrackingFieldsByMode[mode];
+  if (requested === undefined) return [...defaults];
+  const selected = compatibleTrackingFieldsByMode[mode].filter((field) =>
+    requested.includes(field),
+  );
+  return selected.length || mode === "none" ? selected : [...defaults];
+}
+
 export interface Exercise {
   id: string;
   name: string;
@@ -94,6 +126,7 @@ export interface PlannedWorkout {
 
 export interface ScheduledWorkout {
   id: string;
+  assignmentId?: string;
   programId: string;
   programTitle: string;
   programVersionId: string;
@@ -135,6 +168,10 @@ export interface Program {
   sourceType: ContentOrigin;
   sourceLabel: string;
   templateId?: string;
+  /** Present when immutable published content is assigned without cloning. */
+  assignmentId?: string;
+  /** Present after an assigned program is explicitly forked for customization. */
+  customizedProgramId?: string;
   /** A quick workout uses the same editable workout tree without week planning. */
   contentType?: TrainingContentType;
   /** Present for catalog rows, which intentionally defer the full workout tree. */
@@ -149,8 +186,73 @@ export interface Program {
 
 export interface ProgramAssignment {
   athleteId: string;
+  /** Stable assignment identity. Shared immutable content is not cloned. */
+  assignmentId: string;
+  /** Source/customized content program identity, when returned by the mutation. */
   programId: string;
   created: boolean;
+}
+
+export interface CursorPage<TItem, TCursor> {
+  items: TItem[];
+  /** Cursor for the next keyset page. Missing when this page is exhausted. */
+  nextCursor?: TCursor;
+  hasMore: boolean;
+}
+
+export interface ProgramCursor {
+  createdAt: string;
+  id: string;
+}
+
+export interface SchedulableWorkoutCursor {
+  programTitle: string;
+  weekIndex: number;
+  workoutPosition: number;
+  id: string;
+}
+
+export interface SchedulableWorkoutCandidate {
+  kind: "program" | "assignment";
+  programId: string;
+  assignmentId?: string;
+  programVersionId: string;
+  workoutId: string;
+  programTitle: string;
+  workoutTitle: string;
+  contentType: TrainingContentType;
+  isQuickWorkout: boolean;
+  weekIndex: number;
+  weekLabel: string;
+  workoutPosition: number;
+  scheduleLabel: string;
+  estimatedMinutes: number;
+  latestOccurrence?: {
+    id: string;
+    plannedDate?: string;
+    status: OccurrenceStatus;
+    sequenceNumber: number;
+  };
+}
+
+export interface CalendarCursor {
+  plannedDate: string;
+  id: string;
+}
+
+export interface HistoryCursor {
+  startedAt: string;
+  id: string;
+}
+
+export interface ExerciseCursor {
+  name: string;
+  id: string;
+}
+
+export interface CoachAthleteCursor {
+  displayName: string;
+  id: string;
 }
 
 export interface ProgramTemplate {
@@ -202,13 +304,11 @@ export interface CompletedSessionDetail extends CompletedSession {
 
 export type CoachAssignedProgramStatus =
   "awaiting_schedule" | "scheduled" | "in_progress" | "completed";
-export type WorkoutProgressState =
-  | "unscheduled"
-  | "scheduled"
-  | OccurrenceStatus;
 
 export interface CoachAssignedProgramSummary {
   id: string;
+  programId: string;
+  assignmentId?: string;
   versionId: string;
   title: string;
   assignedAt: string;
@@ -218,8 +318,6 @@ export interface CoachAssignedProgramSummary {
   scheduledPercent: number;
   completedWorkouts: number;
   completionPercent: number;
-  workoutProgress: WorkoutProgressState[];
-  hiddenWorkoutCount?: number;
   nextWorkout?: {
     id: string;
     title: string;
@@ -229,6 +327,7 @@ export interface CoachAssignedProgramSummary {
 
 export interface CoachAgendaEntry {
   id: string;
+  assignmentId?: string;
   kind: "upcoming" | "completed";
   status: "planned" | "overdue" | "in_progress" | "completed";
   programId: string;
@@ -303,6 +402,10 @@ export interface ActiveSession {
   id: string;
   /** Last server-confirmed atomic draft revision. */
   draftRevision: number;
+  /** Server-issued identity for the last confirmed idempotent draft write. */
+  draftWriteToken?: string;
+  draftSavedAt?: string;
+  assignmentId?: string;
   workoutId: string;
   programVersionId: string;
   scheduledWorkoutId?: string;
@@ -315,6 +418,12 @@ export interface ActiveSession {
 
 export interface WorkspaceData {
   profile: OwnProfile;
+  /** Coarse bootstrap capabilities; detailed coaching rows remain lazy. */
+  coachingAccess?: {
+    hasCoach: boolean;
+    coachedAthleteCount: number;
+    pendingInviteCount: number;
+  };
   programCatalog: Program[];
   schedulableProgramIds: string[];
   schedulablePrograms: Program[];
@@ -337,4 +446,26 @@ export type CoachingWorkspaceData = Pick<
   | "coachedAthletes"
   | "pendingCoachInvites"
   | "outgoingCoachInvites"
+> & {
+  /** Keyset cursor for the next coached-athlete summary page. */
+  coachAthleteCursor?: CoachAthleteCursor;
+};
+
+export type CalendarWorkspaceData = Pick<
+  WorkspaceData,
+  "scheduledWorkouts" | "completedSessions"
+>;
+
+export type ExerciseWorkspaceData = Pick<
+  WorkspaceData,
+  "globalExercises" | "personalExercises"
+>;
+
+export type ProgramWorkspaceData = Pick<
+  WorkspaceData,
+  | "programCatalog"
+  | "schedulableProgramIds"
+  | "schedulablePrograms"
+  | "draftProgram"
+  | "activeProgram"
 >;

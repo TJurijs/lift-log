@@ -23,7 +23,12 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   assert.match(app, /onOpen=\{\(schedule\) => \{[\s\S]*?openWorkoutPreview\(schedule\)/);
   assert.match(app, /onStart=\{\(schedule\) => \{[\s\S]*?startWorkout\(schedule\)/);
   assert.match(app, /workoutPreviewSchedule/);
-  assert.match(app, /viewMode=\{!activeSession\}/);
+  assert.match(app, /viewMode=\{showingWorkoutPreview\}/);
+  assert.match(
+    app,
+    /const showingWorkoutPreview = Boolean\(workoutPreviewSchedule\)[\s\S]*?\(\(showingWorkoutPreview && workoutPreviewSchedule\)[\s\S]*?allowStart=\{!showingWorkoutPreview \|\| !activeSession\}/,
+    "another planned workout remains previewable while an active session is safely preserved",
+  );
   assert.match(app, /Workout preview/);
   assert.match(app, /Next workouts/);
   assert.match(app, /Set back to planned/);
@@ -69,28 +74,50 @@ test("mobile workout cards reserve stable action space", async () => {
   assert.match(styles, /\.workout-preview-actions\.started\s*\{[^}]*grid-template-columns:/s);
 });
 
-test("new scheduling only offers unscheduled workouts from current finalized versions", async () => {
-  const app = await readFile(appUrl, "utf8");
-
-  assert.match(app, /schedulableVersionIds=\{schedulablePrograms\.map/);
-  assert.match(
-    app,
-    /quickWorkoutVersionIds=\{schedulablePrograms[\s\S]*contentType === "quick_workout"/,
+test("new scheduling uses a bounded server page and offers only eligible workouts", async () => {
+  const [app, repository] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(repositoryUrl, "utf8"),
+  ]);
+  const scheduler = app.slice(app.indexOf("function ScheduleModal"));
+  const optionList = scheduler.slice(
+    scheduler.indexOf("{availableCandidates.map"),
+    scheduler.indexOf("</select>"),
   );
-  assert.match(app, /const schedulableVersions = new Set\(schedulableVersionIds\)/);
+
   assert.match(
     app,
-    /quickWorkoutVersions\.has\(schedule\.programVersionId\)[\s\S]*schedule\.workoutTitle[\s\S]*schedule\.programTitle.*schedule\.workoutTitle/,
+    /repository\.listSchedulableWorkouts\(\{[\s\S]*limit:\s*50[\s\S]*cursor:/,
+    "the scheduler must request a bounded keyset page instead of hydrating every program tree",
+  );
+  assert.match(repository, /async listSchedulableWorkouts\(/);
+  assert.match(repository, /rpc\("list_schedulable_workouts"/);
+  assert.match(repository, /page_limit:\s*limit \+ 1/);
+  assert.match(repository, /after_program_title:[\s\S]*after_week_index:[\s\S]*after_workout_position:[\s\S]*after_id:/);
+  assert.match(
+    scheduler,
+    /!candidate\.isQuickWorkout[\s\S]*latest\.status === "in_progress"[\s\S]*latest\.status === "completed"[\s\S]*latest\.status === "planned"/,
+    "a program workout already planned, active, or completed must not be offered again",
+  );
+  assert.match(
+    scheduler,
+    /candidate\.quickWorkout[\s\S]*candidate\.workoutTitle[\s\S]*candidate\.programTitle.*candidate\.workoutTitle/,
     "quick workouts use only their name while program options use program and workout names",
   );
   assert.doesNotMatch(
-    app.slice(app.indexOf("function ScheduleModal")),
-    /schedule\.slotLabel/,
+    optionList,
+    /scheduleLabel|slotLabel/,
+    "the compact picker label must omit version, week, and slot metadata",
   );
-  assert.match(app, /editingId[\s\S]*schedule\.id === editingId/);
   assert.match(
-    app,
-    /!schedule\.plannedDate &&[\s\S]*schedulableVersions\.has\(schedule\.programVersionId\)/,
+    scheduler,
+    /editingId[\s\S]*schedules\.find\(\(candidate\) => candidate\.id === editingId\)/,
+    "editing must retain the exact existing occurrence even when it is not in the current page",
+  );
+  assert.match(
+    scheduler,
+    /latest\?\.status === "planned" && !latest\.plannedDate/,
+    "an old unscheduled occurrence may be reused without creating duplicates",
   );
 });
 

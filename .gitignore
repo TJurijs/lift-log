@@ -48,6 +48,7 @@ yarn-error.log*
 /dist/
 /.wrangler/
 /outputs/
+/artifacts/
 /work/
 /supabase/.temp/
 /supabase/.branches/

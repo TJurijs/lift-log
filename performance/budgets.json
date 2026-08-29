@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "bundle": {
+    "initialJs": { "rawBytesMax": 460000, "gzipBytesMax": 130000 },
+    "largestAsyncJs": { "rawBytesMax": 180000, "gzipBytesMax": 45000 },
+    "totalJs": { "rawBytesMax": 810000, "gzipBytesMax": 225000 },
+    "css": { "rawBytesMax": 120000, "gzipBytesMax": 22000 }
+  },
+  "runtime": {
+    "bootstrap": {
+      "dataApiRequestsMax": 6,
+      "readyMsMax": 2500,
+      "domRowsMax": 250
+    },
+    "detail": {
+      "dataApiRequestsP95Max": 2,
+      "readyMsP95Max": 500,
+      "domRowsMax": 250
+    },
+    "navigation": {
+      "dataApiRequestsP95Max": 2,
+      "readyMsP95Max": 500,
+      "domRowsMax": 250,
+      "longTaskCountP95Max": 3,
+      "longTaskTotalMsP95Max": 200,
+      "interactionLatencyP75Max": 200,
+      "interactionLatencyRequired": false
+    }
+  }
+}

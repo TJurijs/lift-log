@@ -1,5 +1,5 @@
 import { Activity, ArrowRight, Check, LockKeyhole } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import TestPersonaSwitcher, { type TestPersonaChoice } from "./TestPersonaSwitcher";
 import { InlineError } from "./ui-primitives";
@@ -12,15 +12,35 @@ import {
 } from "../lib/auth";
 import type { WorkspaceData } from "../lib/domain";
 import { recordClientPerformance } from "../lib/performance";
-import { LiftLogRepository } from "../lib/repository";
-import { ActiveWorkoutDraftStore } from "../lib/active-workout-draft-storage";
+import {
+  createBrowserTelemetrySink,
+  createTelemetryCollector,
+  installBrowserTelemetry,
+} from "../lib/telemetry";
+import type { LiftLogRepository } from "../lib/repository";
 
 type AuthStatus = "loading" | "anonymous" | "authenticated" | "demo";
+type WorkspaceSource = "cache" | "server";
 const localDemoAvailable = import.meta.env.DEV;
 const jwtClockSkewRetryDelays = [750, 1_500];
 const transientWorkspaceRetryDelays = [800];
 const LiftLogApp = lazy(() => import("./LiftLogApp"));
-const activeWorkoutDraftStore = new ActiveWorkoutDraftStore();
+
+async function clearActiveWorkoutPersistenceForUser(userId: string) {
+  const persistence = await import(
+    "./features/active-workout/useActiveWorkoutPersistence"
+  );
+  return persistence.clearActiveWorkoutPersistenceForUser(userId);
+}
+
+async function loadCachedActiveWorkoutWorkspace(
+  viewer: ReturnType<typeof viewerFromSupabaseUser>,
+) {
+  const persistence = await import(
+    "./features/active-workout/useActiveWorkoutPersistence"
+  );
+  return persistence.loadCachedActiveWorkoutWorkspace(viewer);
+}
 
 const redundantSameUserAuthEvents = new Set<AuthChangeEvent>([
   "INITIAL_SESSION",
@@ -91,6 +111,8 @@ export default function AppEntry() {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
+  const [workspaceSource, setWorkspaceSource] =
+    useState<WorkspaceSource | null>(null);
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceRetryKey, setWorkspaceRetryKey] = useState(0);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
@@ -98,17 +120,58 @@ export default function AppEntry() {
   const [personaBusyKey, setPersonaBusyKey] = useState("");
   const [personaError, setPersonaError] = useState("");
   const [personaSwitcherOpen, setPersonaSwitcherOpen] = useState(false);
+  const [repositoryState, setRepositoryState] = useState<{
+    userId: string;
+    value: LiftLogRepository;
+  } | null>(null);
   const processedInvite = useRef(false);
   const activeUserId = useRef<string | null | undefined>(undefined);
   const testPersonasAvailable = testPersonaFeatureAvailable();
-  const repository = useMemo(() => {
-    if (!session) return null;
+  const repository =
+    session && repositoryState?.userId === session.user.id
+      ? repositoryState.value
+      : null;
+
+  useEffect(() => {
+    const environment = import.meta.env.PROD
+      ? "production"
+      : import.meta.env.MODE === "test"
+        ? "test"
+        : import.meta.env.MODE === "localdev" || import.meta.env.DEV
+          ? "local"
+          : "development";
+    return installBrowserTelemetry(
+      createTelemetryCollector({
+        sink: createBrowserTelemetrySink(),
+        environment,
+      }),
+    );
+  }, []);
+  useEffect(() => {
+    let active = true;
+    let nextRepository: LiftLogRepository | null = null;
+    if (!session) {
+      return () => { active = false; };
+    }
     const viewer = viewerFromSupabaseUser(session.user);
     const client = getSupabaseBrowserClient();
-    return client ? new LiftLogRepository(client, viewer.id, viewer.name) : null;
+    if (!client) return () => { active = false; };
+    void import("../lib/repository")
+      .then(({ LiftLogRepository: Repository }) => {
+        if (!active) return;
+        nextRepository = new Repository(client, viewer.id, viewer.name);
+        setRepositoryState({ userId: viewer.id, value: nextRepository });
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        console.warn("[LiftLog] Data layer failed to load", loadError);
+        setWorkspaceError("Your training workspace could not be opened. Please try again.");
+      });
+    return () => {
+      active = false;
+      nextRepository?.dispose();
+    };
   }, [session]);
-
-  useEffect(() => () => repository?.dispose(), [repository]);
 
   useEffect(() => {
     const client = getSupabaseBrowserClient();
@@ -120,11 +183,13 @@ export default function AppEntry() {
       const nextUserId = nextSession?.user.id ?? null;
       if (activeUserId.current !== nextUserId) {
         if (typeof activeUserId.current === "string") {
-          activeWorkoutDraftStore.clearOnSignOut(activeUserId.current);
+          void clearActiveWorkoutPersistenceForUser(activeUserId.current);
         }
         activeUserId.current = nextUserId;
         processedInvite.current = false;
+        setRepositoryState(null);
         setWorkspace(null);
+        setWorkspaceSource(null);
         setWorkspaceError("");
       }
       setSession(nextSession);
@@ -165,6 +230,7 @@ export default function AppEntry() {
 
   useEffect(() => {
     if (status !== "authenticated" || !session || !repository) return;
+    const authenticatedSession = session;
     const activeRepository = repository;
     let active = true;
     const loadStartedAt = performance.now();
@@ -183,11 +249,25 @@ export default function AppEntry() {
           throw inviteError;
         }
       }
-      return activeRepository.loadWorkspace();
+      return activeRepository.loadBootstrap();
     }
 
     async function loadWorkspace() {
+      let cachedWorkspace: WorkspaceData | null = null;
+      await Promise.resolve();
+      if (active) setWorkspaceLoading(true);
       try {
+        try {
+          cachedWorkspace = await loadCachedActiveWorkoutWorkspace(
+            viewerFromSupabaseUser(authenticatedSession.user),
+          );
+          if (active && cachedWorkspace) {
+            setWorkspace((current) => current ?? cachedWorkspace);
+            setWorkspaceSource((current) => current ?? "cache");
+          }
+        } catch {
+          // A damaged cache must never block the authoritative workspace load.
+        }
         let nextWorkspace: WorkspaceData | null = null;
         let lastError: unknown;
         let jwtRetry = 0;
@@ -211,17 +291,22 @@ export default function AppEntry() {
         if (active) {
           setWorkspaceError("");
           setWorkspace(nextWorkspace);
-          recordClientPerformance("workspace:load", loadStartedAt, {
+          setWorkspaceSource("server");
+          recordClientPerformance("bootstrap", loadStartedAt, {
+            phase: "shell",
             outcome: "success",
             retries: jwtRetry + transientRetry,
           });
         }
       } catch (loadError) {
-        const metric = recordClientPerformance("workspace:load", loadStartedAt, {
+        const metric = recordClientPerformance("bootstrap", loadStartedAt, {
+          phase: "shell",
           outcome: "failure",
         });
         console.warn("[LiftLog] Workspace load failed", { ...metric, error: loadError });
-        if (active) setWorkspaceError(workspaceLoadMessage(loadError));
+        if (active && !cachedWorkspace) {
+          setWorkspaceError(workspaceLoadMessage(loadError));
+        }
       } finally {
         if (active) setWorkspaceLoading(false);
       }
@@ -230,6 +315,27 @@ export default function AppEntry() {
     void loadWorkspace();
     return () => { active = false; };
   }, [repository, session, status, workspaceRetryKey]);
+
+  useEffect(() => {
+    if (
+      status !== "authenticated" ||
+      workspaceSource !== "cache" ||
+      workspaceLoading
+    ) {
+      return;
+    }
+    const refreshCachedWorkspace = () => {
+      if (!navigator.onLine) return;
+      setWorkspaceLoading(true);
+      setWorkspaceRetryKey((current) => current + 1);
+    };
+    window.addEventListener("online", refreshCachedWorkspace);
+    window.addEventListener("focus", refreshCachedWorkspace);
+    return () => {
+      window.removeEventListener("online", refreshCachedWorkspace);
+      window.removeEventListener("focus", refreshCachedWorkspace);
+    };
+  }, [status, workspaceLoading, workspaceSource]);
 
   function retryWorkspace() {
     setWorkspaceError("");
@@ -281,11 +387,15 @@ export default function AppEntry() {
     const client = getSupabaseBrowserClient();
     await client?.auth.signOut();
     if (signingOutUserId) {
-      activeWorkoutDraftStore.clearOnSignOut(signingOutUserId);
+      await clearActiveWorkoutPersistenceForUser(signingOutUserId).catch(
+        () => undefined,
+      );
     }
     activeUserId.current = null;
     setSession(null);
+    setRepositoryState(null);
     setWorkspace(null);
+    setWorkspaceSource(null);
     setStatus("anonymous");
   }
 
@@ -309,7 +419,7 @@ export default function AppEntry() {
     return <>
       <Suspense fallback={<ProductShellFallback />}>
         <LiftLogApp
-          key={session.user.id}
+          key={`${session.user.id}:${workspaceSource ?? "workspace"}`}
           viewer={viewerFromSupabaseUser(session.user)}
           onSignOut={signOut}
           onOpenTestPersonas={testPersonasAvailable ? () => setPersonaSwitcherOpen(true) : undefined}

@@ -2,12 +2,12 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  CalendarView,
   PlannedRpeSelect,
   RpeSelect,
   RpeChoiceButtons,
   scrollToAppTop,
 } from "../../app/LiftLogApp";
+import CalendarView from "../../app/features/calendar/CalendarView";
 import type {
   CompletedSession,
   PlannedWorkout,
@@ -167,7 +167,7 @@ describe("mobile and accessible interactions", () => {
     expect(hard).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("keeps planned RPE native and uses a guided in-app actual RPE menu", async () => {
+  it("uses the same compact guided RPE menu for planned and actual effort", async () => {
     const user = userEvent.setup();
     const onPlannedChange = vi.fn();
     const onActualChange = vi.fn();
@@ -178,11 +178,17 @@ describe("mobile and accessible interactions", () => {
       </>,
     );
 
-    const planned = screen.getByRole("combobox", { name: "Planned RPE" });
+    const planned = screen.getByRole("button", { name: "Planned RPE" });
     const actual = screen.getByRole("button", { name: "Actual RPE" });
-    expect(within(planned).getByRole("option", { name: /8 · Hard · about 2 reps left/ })).toBeVisible();
 
-    await user.selectOptions(planned, "8");
+    await user.click(planned);
+    expect(
+      screen.getByText(/sets the intended difficulty/i),
+    ).toBeVisible();
+    const plannedEight = screen.getByRole("option", {
+      name: /RPE 8: 2 left/,
+    });
+    await user.click(plannedEight);
     await user.click(actual);
     expect(
       screen.getByText(/shows how hard the set felt/i),

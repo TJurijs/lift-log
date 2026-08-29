@@ -317,6 +317,59 @@ function fixtureTimestamp(daysFromAsOf, hour = 12) {
   return date.toISOString();
 }
 
+async function createFixtureOccurrences(
+  client,
+  programId,
+  versionId,
+  firstDateOffset,
+  label,
+) {
+  const weeks = expectData(
+    await client
+      .from("program_weeks")
+      .select("id, week_index")
+      .eq("program_version_id", versionId)
+      .order("week_index"),
+    `Load ${label} published weeks`,
+  );
+  const weekIndexById = new Map(
+    weeks.map((week) => [week.id, week.week_index]),
+  );
+  const workouts = expectData(
+    await client
+      .from("workouts")
+      .select("id, program_week_id, position")
+      .in(
+        "program_week_id",
+        weeks.map((week) => week.id),
+      ),
+    `Load ${label} published workouts`,
+  ).sort(
+    (left, right) =>
+      weekIndexById.get(left.program_week_id) -
+        weekIndexById.get(right.program_week_id) ||
+      left.position - right.position ||
+      left.id.localeCompare(right.id),
+  );
+
+  for (const [workoutIndex, workout] of workouts.entries()) {
+    const plannedDate = new Date(`${asOf}T12:00:00Z`);
+    plannedDate.setUTCDate(
+      plannedDate.getUTCDate() + firstDateOffset + workoutIndex * 3,
+    );
+    expectData(
+      await client.rpc("create_scheduled_occurrence", {
+        target_workout_id: workout.id,
+        target_planned_date: isoDate(plannedDate),
+        target_idempotency_key: randomUUID(),
+        target_program_id: programId,
+        target_assignment_id: null,
+      }),
+      `Schedule ${label} workout ${workoutIndex + 1}`,
+    );
+  }
+}
+
 function completedHistory(userId, entries) {
   const now = new Date(`${asOf}T18:00:00Z`).getTime();
   return entries.map((entry, index) => {
@@ -363,9 +416,7 @@ async function completeFixtureOccurrence(
     label,
   );
   const sessionId = expectData(
-    await client.rpc("start_or_resume_workout", {
-      target_workout_id: occurrence.workout_id,
-      target_program_version_id: occurrence.program_version_id,
+    await client.rpc("start_scheduled_workout", {
       target_scheduled_workout_id: occurrence.id,
     }),
     `Start ${label} occurrence ${sequenceNumber}`,
@@ -902,65 +953,23 @@ async function main() {
   ].entries()) {
     const athleteClient = clients.get(athleteKey);
     const versionId = publishedVersions.get(athleteKey);
-    expectData(
-      await athleteClient.rpc("set_program_availability", {
-        target_program_id: programs.get(athleteKey),
-        make_available: true,
-      }),
-      `Make ${athleteKey} program available`,
+    await createFixtureOccurrences(
+      athleteClient,
+      programs.get(athleteKey),
+      versionId,
+      offset,
+      `${athleteKey} program`,
     );
-    const occurrences = expectData(
-      await athleteClient
-        .from("scheduled_workouts")
-        .select("id, sequence_number")
-        .eq("program_version_id", versionId)
-        .eq("status", "planned")
-        .order("sequence_number"),
-      `Load ${athleteKey} calendar workouts`,
-    );
-    for (const [workoutIndex, occurrence] of occurrences.entries()) {
-      const plannedDate = new Date(`${asOf}T12:00:00Z`);
-      plannedDate.setUTCDate(
-        plannedDate.getUTCDate() + offset + workoutIndex * 3,
-      );
-      expectData(
-        await athleteClient.rpc("schedule_workout", {
-          target_scheduled_workout_id: occurrence.id,
-          target_planned_date: isoDate(plannedDate),
-        }),
-        `Schedule ${athleteKey} workout ${workoutIndex + 1}`,
-      );
-    }
   }
 
   const sharedAthleteClient = clients.get("guntis-ulmanis");
-  expectData(
-    await sharedAthleteClient.rpc("set_program_availability", {
-      target_program_id: sharedCoachProgramId,
-      make_available: true,
-    }),
-    `Make ${sharedCoachProgramTitle} available`,
+  await createFixtureOccurrences(
+    sharedAthleteClient,
+    sharedCoachProgramId,
+    sharedCoachVersionId,
+    -5,
+    sharedCoachProgramTitle,
   );
-  const sharedCoachOccurrences = expectData(
-    await sharedAthleteClient
-      .from("scheduled_workouts")
-      .select("id, sequence_number")
-      .eq("program_version_id", sharedCoachVersionId)
-      .eq("status", "planned")
-      .order("sequence_number"),
-    `Load ${sharedCoachProgramTitle} calendar workouts`,
-  );
-  for (const [workoutIndex, occurrence] of sharedCoachOccurrences.entries()) {
-    const plannedDate = new Date(`${asOf}T12:00:00Z`);
-    plannedDate.setUTCDate(plannedDate.getUTCDate() - 5 + workoutIndex * 3);
-    expectData(
-      await sharedAthleteClient.rpc("schedule_workout", {
-        target_scheduled_workout_id: occurrence.id,
-        target_planned_date: isoDate(plannedDate),
-      }),
-      `Schedule ${sharedCoachProgramTitle} workout ${workoutIndex + 1}`,
-    );
-  }
 
   for (const exercise of [
     {
@@ -1018,9 +1027,7 @@ async function main() {
     "Reschedule Alberts active workout",
   );
   expectData(
-    await clients.get("alberts-kviesis").rpc("start_or_resume_workout", {
-      target_workout_id: albertsActiveOccurrence.workout_id,
-      target_program_version_id: albertsActiveOccurrence.program_version_id,
+    await clients.get("alberts-kviesis").rpc("start_scheduled_workout", {
       target_scheduled_workout_id: albertsActiveOccurrence.id,
     }),
     "Start Alberts active workout",
@@ -1139,9 +1146,7 @@ async function main() {
     "Load Jānis planned workout",
   );
   expectData(
-    await clients.get("janis-cakste").rpc("start_or_resume_workout", {
-      target_workout_id: janisOccurrence.workout_id,
-      target_program_version_id: janisOccurrence.program_version_id,
+    await clients.get("janis-cakste").rpc("start_scheduled_workout", {
       target_scheduled_workout_id: janisOccurrence.id,
     }),
     "Create Jānis in-progress session",

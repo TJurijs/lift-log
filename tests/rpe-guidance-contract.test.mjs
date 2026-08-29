@@ -17,18 +17,22 @@ test("planned and actual RPE remain distinct and guided", async () => {
   assert.match(app, /<span>Actual RPE<\/span>/);
   assert.match(app, /<span id="session-rpe-label">Session RPE<\/span>/);
   assert.match(app, /function PlannedRpeSelect/);
-  assert.match(app, /<select[\s\S]*aria-label=\{ariaLabel\}/);
+  assert.match(
+    app,
+    /function PlannedRpeSelect[\s\S]*?<RpeSelect[\s\S]*?intent="planned"/,
+    "planned and logged effort share the same compact RPE control",
+  );
   assert.doesNotMatch(app, /7–8", label/);
   assert.match(app, /function RpeSelect/);
   assert.match(app, /function RpeLegend/);
-  assert.match(app, /function workoutLogFields\(mode: EntryMode\)/);
-  assert.match(app, /if \(mode === "result"\) return \["duration", "distance", "heartRate", "rpe"\]/);
+  assert.match(app, /function workoutLogFields\(item: Pick<WorkoutItem, "mode" \| "fields">\)/);
+  assert.match(app, /trackingFieldsForMode\(item\.mode, item\.fields\)/);
   assert.doesNotMatch(app, /Athlete records/);
   assert.match(app, /detail: "2 left"/);
   assert.match(app, /rpe: "",/);
-  assert.match(styles, /\.rpe-select-trigger:is\(select\)/);
   assert.match(styles, /\.rpe-select-menu/);
-  assert.match(app, /RPE<\/strong> shows how hard the set felt/);
+  assert.match(app, /shows how hard the set felt by how many good reps you had left/);
+  assert.match(app, /sets the intended difficulty by how many good reps should remain/);
   assert.match(styles, /\.rpe-select-options > button\.rpe-very-hard strong/);
   assert.match(styles, /\.rpe-result-input > \.rpe-select[\s\S]*overflow: visible/);
   assert.match(styles, /\.planned-rpe-select/);

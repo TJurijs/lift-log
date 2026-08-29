@@ -323,7 +323,9 @@ test("fixture reset remains namespace-scoped, cross-account guarded, and service
     /"vaira-vike-freiberga",\s*"valdis-zatlers",\s*"raimonds-vejonis",[\s\S]*Verify Valdis assignment source/,
     "the active coach fixture must have a published Own program for assignment QA",
   );
-  assert.match(seedScript, /set_program_availability/);
+  assert.match(seedScript, /create_scheduled_occurrence/);
+  assert.match(seedScript, /start_scheduled_workout/);
+  assert.doesNotMatch(seedScript, /set_program_availability|prepare_program_schedule/);
   assert.match(seedScript, /target_scheduled_workout_id/);
   assert.match(seedScript, /persona\.liftlogId/);
   assert.doesNotMatch(seedScript, /ensure_starter_program/);

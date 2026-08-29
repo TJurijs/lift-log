@@ -167,6 +167,60 @@ describe("personal-exercise tracking defaults", () => {
     });
   });
 
+  it.each<[EntryMode, TrackingField[], TrackingField[]]>([
+    ["sets", ["reps", "rpe"], ["reps", "rpe"]],
+    ["result", ["distance", "load", "rpe"], ["distance", "load", "rpe"]],
+    [
+      "intervals",
+      ["rounds", "duration", "distance", "rpe"],
+      ["rounds", "duration", "distance", "rpe"],
+    ],
+  ])(
+    "preserves the compatible %s tracking variant",
+    async (mode, fields, expectedFields) => {
+      const { getInserted, repository } = repositoryWithInsertRecorder();
+
+      await repository.createPersonalExercise({
+        name: "Copied movement",
+        category: "Conditioning",
+        cue: "Stay smooth",
+        mode,
+        fields,
+      });
+
+      expect(getInserted()).toMatchObject({
+        default_entry_mode: mode,
+        default_tracking_fields: expectedFields,
+      });
+    },
+  );
+
+  it("filters incompatible requested fields and falls back when none remain", async () => {
+    const first = repositoryWithInsertRecorder();
+    await first.repository.createPersonalExercise({
+      name: "Loaded carry",
+      category: "Strength",
+      cue: "Walk tall",
+      mode: "result",
+      fields: ["reps", "load", "rpe", "load"],
+    });
+    expect(first.getInserted()).toMatchObject({
+      default_tracking_fields: ["load", "rpe"],
+    });
+
+    const second = repositoryWithInsertRecorder();
+    await second.repository.createPersonalExercise({
+      name: "Fallback result",
+      category: "General",
+      cue: "",
+      mode: "result",
+      fields: ["reps", "rounds"],
+    });
+    expect(second.getInserted()).toMatchObject({
+      default_tracking_fields: ["duration", "distance", "rpe"],
+    });
+  });
+
   it("updates only the supplied personal exercise defaults", async () => {
     const { getUpdated, repository } = repositoryWithUpdateRecorder();
 
@@ -183,6 +237,23 @@ describe("personal-exercise tracking defaults", () => {
       cue: "Keep the brace.",
       default_entry_mode: "sets",
       default_tracking_fields: ["reps", "load", "rpe"],
+    });
+  });
+
+  it("preserves a supplied compatible tracking variant while updating", async () => {
+    const { getUpdated, repository } = repositoryWithUpdateRecorder();
+
+    await repository.updatePersonalExercise("exercise-1", {
+      name: "Farmer carry",
+      category: "Strength",
+      cue: "Walk tall",
+      mode: "result",
+      fields: ["distance", "load", "rpe"],
+    });
+
+    expect(getUpdated()).toMatchObject({
+      default_entry_mode: "result",
+      default_tracking_fields: ["distance", "load", "rpe"],
     });
   });
 

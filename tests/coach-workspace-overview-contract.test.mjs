@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const domainUrl = new URL("../lib/domain.ts", import.meta.url);
+const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
 
 function sourceBetween(source, start, end) {
@@ -14,8 +16,12 @@ function sourceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
-test("coach athlete overview is scoped to the current coach's assignments", async () => {
-  const app = await readFile(appUrl, "utf8");
+test("coach athlete overview uses bounded aggregate assignment progress", async () => {
+  const [app, domain, repository] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(domainUrl, "utf8"),
+    readFile(repositoryUrl, "utf8"),
+  ]);
   const coaching = sourceBetween(
     app,
     "function CoachAthleteOverview",
@@ -33,11 +39,19 @@ test("coach athlete overview is scoped to the current coach's assignments", asyn
   assert.match(coaching, /athlete\.assignedPrograms\.map/);
   assert.match(coaching, /coachProgramStatusLabel\(assignedProgram\.status\)/);
   assert.match(
-    coaching,
-    /assignedProgram\.completedWorkouts[\s\S]*assignedProgram\.totalWorkouts/,
+    domain,
+    /scheduledWorkouts: number[\s\S]*scheduledPercent: number[\s\S]*completedWorkouts: number[\s\S]*completionPercent: number[\s\S]*nextWorkout\?:/,
   );
-  assert.match(coaching, /assignedProgram\.workoutProgress\.map/);
-  assert.match(coaching, /className="program-card-workout-progress"/);
+  assert.doesNotMatch(domain, /workoutProgress|hiddenWorkoutCount/);
+  assert.match(
+    repository,
+    /rpc\("get_coach_athlete_detail"[\s\S]*program_limit: 25[\s\S]*upcoming_limit: 6[\s\S]*completed_limit: 6/,
+  );
+  assert.match(
+    coaching,
+    /assignedProgram\.completionPercent[\s\S]*assignedProgram\.completedWorkouts[\s\S]*assignedProgram\.scheduledPercent[\s\S]*assignedProgram\.nextWorkout/,
+  );
+  assert.doesNotMatch(coaching, /workoutProgress|hiddenWorkoutCount/);
   assert.match(
     coaching,
     /<SourceTag[\s\S]*presentation=\{presentProvenance\(\{[\s\S]*origin: "coach"[\s\S]*viewerId,[\s\S]*athleteOwnerId: athlete\.id,[\s\S]*athleteOwnerName: athlete\.name,[\s\S]*authorId: viewerId,[\s\S]*\}\)\}[\s\S]*compact/,
@@ -55,11 +69,11 @@ test("coach agenda opens the exact historical program version", async () => {
 
   assert.match(
     app,
-    /programVersionId\s*\?\s*await repository\.loadProgramVersionForAthleteById\([\s\S]*athlete\.id,[\s\S]*assignedProgram\.id,[\s\S]*programVersionId/,
+    /programVersionId\s*\?\s*await repository\.loadProgramVersionForAthleteById\([\s\S]*athlete\.id,[\s\S]*assignedProgram\.programId \?\? assignedProgram\.id,[\s\S]*programVersionId,[\s\S]*assignedProgram\.assignmentId/,
   );
   assert.match(
     app,
-    /openCoachAgendaEntry[\s\S]*entry\.workoutId,[\s\S]*entry\.programVersionId/,
+    /openCoachAgendaEntry[\s\S]*candidate\.assignmentId === entry\.assignmentId[\s\S]*entry\.workoutId,[\s\S]*entry\.programVersionId/,
   );
 });
 

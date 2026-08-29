@@ -24,16 +24,18 @@ describe("repository data boundary", () => {
       { rpc, from } as never,
       "coach-1",
       "Coach One",
-    ) as unknown as {
-      loadCoachedAthletes: () => Promise<Array<Record<string, unknown>>>;
-    };
+    );
 
-    const rows = await repository.loadCoachedAthletes();
+    const rows = (await repository.listCoachAthletes({ limit: 25 })).items;
 
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(rpc).toHaveBeenCalledWith(
-      "list_authored_coach_athlete_overviews",
-      { target_limit: 250 },
+      "list_coach_athletes",
+      {
+        page_limit: 26,
+        after_display_name: null,
+        after_id: null,
+      },
     );
     expect(from).not.toHaveBeenCalled();
     expect(rows).toEqual([
@@ -53,43 +55,43 @@ describe("repository data boundary", () => {
   it("loads only the selected athlete's bounded detail", async () => {
     const rpc = vi.fn().mockResolvedValueOnce({
       data: {
-        id: "athlete-1",
-        relationshipId: "relationship-1",
-        displayName: "Athlete One",
+        athlete: {
+          id: "athlete-1",
+          relationshipId: "relationship-1",
+          displayName: "Athlete One",
+        },
         assignedProgramCount: 1,
-        assignedPrograms: [
+        programs: [
           {
-            id: "program-1",
+            kind: "assignment",
+            id: "assignment-1",
+            assignmentId: "assignment-1",
+            programId: "program-1",
             versionId: "version-1",
             title: "Snapshot title",
             assignedAt: "2026-08-20",
-            status: "in_progress",
             totalWorkouts: 4,
             scheduledWorkouts: 3,
-            scheduledPercent: 75,
             completedWorkouts: 2,
-            completionPercent: 50,
-            workoutProgress: [
-              "completed",
-              "completed",
-              "scheduled",
-              "unscheduled",
-            ],
+            nextWorkout: {
+              id: "schedule-1",
+              workoutTitle: "Workout one",
+              plannedDate: "2026-08-23",
+              status: "in_progress",
+            },
           },
         ],
-        agenda: [
+        upcoming: [],
+        completed: [
           {
-            id: "session:session-1",
-            kind: "completed",
-            status: "completed",
+            id: "session-1",
             programId: "program-1",
             programVersionId: "version-1",
             programTitle: "Snapshot title",
             workoutId: "workout-1",
             workoutTitle: "Workout one",
-            date: "2026-08-22",
-            rpe: "8",
-            sessionId: "session-1",
+            completedForDate: "2026-08-22",
+            sessionRpe: "8",
             athleteNote: "must not enter the view model",
           },
         ],
@@ -108,12 +110,11 @@ describe("repository data boundary", () => {
     const detail = await repository.loadCoachedAthleteDetail("athlete-1");
 
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledWith("get_authored_coach_athlete_detail", {
+    expect(rpc).toHaveBeenCalledWith("get_coach_athlete_detail", {
       target_athlete_id: "athlete-1",
-      target_program_limit: 250,
-      target_upcoming_limit: 6,
-      target_completed_limit: 6,
-      target_progress_limit: 104,
+      program_limit: 25,
+      upcoming_limit: 6,
+      completed_limit: 6,
     });
     expect(from).not.toHaveBeenCalled();
     expect(detail).toMatchObject({
@@ -122,7 +123,9 @@ describe("repository data boundary", () => {
       assignedProgramCount: 1,
       assignedPrograms: [
         {
-          id: "program-1",
+          id: "assignment-1",
+          assignmentId: "assignment-1",
+          programId: "program-1",
           title: "Snapshot title",
           completionPercent: 50,
         },
@@ -216,20 +219,23 @@ describe("repository data boundary", () => {
       readFile(
         resolve(
           process.cwd(),
-          "supabase/migrations/202608240008_bounded_coach_workspace_overview.sql",
+          "supabase/migrations/202608290001_v1_performance_data_architecture.sql",
         ),
         "utf8",
       ),
     ]);
 
-    expect(source).toContain('rpc("get_own_profile")');
-    expect(source).toContain('rpc("list_connected_profile_summaries")');
+    expect(source).toContain('rpc("get_workspace_bootstrap")');
+    expect(source).toContain('rpc("get_coaching_access_summary")');
     expect(source).toContain('rpc("get_own_session_notes"');
-    expect(source).toContain('"list_authored_coach_athlete_overviews"');
+    expect(source).toContain('rpc("list_coach_athletes"');
+    expect(source).toContain('rpc("get_coach_athlete_detail"');
+    expect(source).not.toContain("target_program_limit: 250");
+    expect(source).not.toContain("target_progress_limit");
     expect(source).not.toMatch(/\.from\("profiles"\)\s*\.select\(/);
     expect(source).not.toContain("athlete_note");
-    expect(source).toContain("title: version.title || row.title");
-    expect(source).toContain("description: version.description ?? row.description");
-    expect(overviewMigration).toContain("'programTitle', authored.program_title");
+    expect(overviewMigration).toContain("public.get_coach_athlete_detail");
+    expect(overviewMigration).toContain("public.get_coaching_access_summary");
+    expect(overviewMigration).not.toContain("'athleteNote'");
   });
 });

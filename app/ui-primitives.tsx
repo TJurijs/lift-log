@@ -124,6 +124,34 @@ export function WorkoutSectionHeading({
   );
 }
 
+export function PageHeader({
+  eyebrow,
+  title,
+  titleAction,
+  description,
+  children,
+}: {
+  eyebrow: string;
+  title: ReactNode;
+  titleAction?: ReactNode;
+  description?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <header className="page-header">
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <div className="page-title-row">
+          {typeof title === "string" ? <h1>{title}</h1> : title}
+          {titleAction}
+        </div>
+        {description && <p>{description}</p>}
+      </div>
+      {children && <div className="page-actions">{children}</div>}
+    </header>
+  );
+}
+
 export function PersonAvatar({
   initials,
   name,
@@ -353,6 +381,7 @@ export function ModalShell({
   onClose,
   dismissible = true,
   wide = false,
+  className,
   children,
 }: {
   title: string;
@@ -360,6 +389,7 @@ export function ModalShell({
   onClose: () => void;
   dismissible?: boolean;
   wide?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
@@ -429,7 +459,7 @@ export function ModalShell({
       />
       <section
         ref={dialogRef}
-        className={cn("modal", wide && "wide")}
+        className={cn("modal", wide && "wide", className)}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

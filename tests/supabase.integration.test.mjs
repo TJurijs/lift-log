@@ -597,6 +597,264 @@ test(
         ).error,
       );
 
+      const effectiveOn = new Date().toISOString().slice(0, 10);
+      const sharedProgramId = expectData(
+        await coach.rpc("create_blank_program", {
+          target_athlete_id: coachId,
+          target_title: "Shared coaching template",
+          target_planning_mode: "fixed_weeks",
+        }),
+        "coach creates own shared program",
+      );
+      const sharedDraftVersion = expectData(
+        await coach
+          .from("program_versions")
+          .select("id")
+          .eq("program_id", sharedProgramId)
+          .eq("status", "draft")
+          .single(),
+        "load shared program draft",
+      );
+      const sharedWeek = expectData(
+        await coach
+          .from("program_weeks")
+          .select("id")
+          .eq("program_version_id", sharedDraftVersion.id)
+          .single(),
+        "load shared program week",
+      );
+      const sharedWorkout = expectData(
+        await coach
+          .from("workouts")
+          .insert({
+            program_week_id: sharedWeek.id,
+            title: "Shared strength session",
+            day_of_week: null,
+            schedule_label: "Workout 1",
+            position: 0,
+            estimated_minutes: 40,
+          })
+          .select("id,title")
+          .single(),
+        "add shared program workout",
+      );
+      expectData(
+        await coach.rpc("publish_program_version", {
+          target_version_id: sharedDraftVersion.id,
+          effective_on: effectiveOn,
+        }),
+        "publish shared coaching program",
+      );
+      const assignmentRequestKey = randomUUID();
+      const sharedAssignments = expectData(
+        await coach.rpc("assign_published_program_version", {
+          target_program_id: sharedProgramId,
+          target_version_id: sharedDraftVersion.id,
+          target_athlete_ids: [athleteAId, athleteBId],
+          target_idempotency_key: assignmentRequestKey,
+        }),
+        "assign one immutable program version to two athletes",
+      );
+      assert.equal(sharedAssignments.length, 2);
+      assert.ok(sharedAssignments.every((assignment) => assignment.created));
+      assert.equal(
+        new Set(sharedAssignments.map((assignment) => assignment.assignment_id))
+          .size,
+        2,
+      );
+      const replayedAssignments = expectData(
+        await coach.rpc("assign_published_program_version", {
+          target_program_id: sharedProgramId,
+          target_version_id: sharedDraftVersion.id,
+          target_athlete_ids: [athleteAId, athleteBId],
+          target_idempotency_key: assignmentRequestKey,
+        }),
+        "replay shared assignment request",
+      );
+      assert.deepEqual(
+        replayedAssignments.map((assignment) => ({
+          athlete_id: assignment.athlete_id,
+          assignment_id: assignment.assignment_id,
+          created: assignment.created,
+        })),
+        sharedAssignments.map((assignment) => ({
+          athlete_id: assignment.athlete_id,
+          assignment_id: assignment.assignment_id,
+          created: false,
+        })),
+      );
+      const sharedAssignmentRows = expectData(
+        await coach
+          .from("program_assignments")
+          .select(
+            "id,athlete_id,assigned_by_id,source_program_id,source_version_id,customized_program_id,status",
+          )
+          .in(
+            "id",
+            sharedAssignments.map((assignment) => assignment.assignment_id),
+          )
+          .order("athlete_id"),
+        "load shared assignment identities",
+      );
+      assert.equal(sharedAssignmentRows.length, 2);
+      assert.ok(
+        sharedAssignmentRows.every(
+          (assignment) =>
+            assignment.assigned_by_id === coachId &&
+            assignment.source_program_id === sharedProgramId &&
+            assignment.source_version_id === sharedDraftVersion.id &&
+            assignment.customized_program_id === null &&
+            assignment.status === "active",
+        ),
+      );
+      assert.deepEqual(
+        expectData(
+          await admin
+            .from("programs")
+            .select("id")
+            .eq("assigned_from_program_id", sharedProgramId),
+          "verify shared assignment does not clone program trees",
+        ),
+        [],
+      );
+      const athleteAAssignment = sharedAssignments.find(
+        (assignment) => assignment.athlete_id === athleteAId,
+      );
+      const athleteBAssignment = sharedAssignments.find(
+        (assignment) => assignment.athlete_id === athleteBId,
+      );
+      assert.ok(athleteAAssignment);
+      assert.ok(athleteBAssignment);
+      assert.deepEqual(
+        expectData(
+          await athleteA
+            .from("program_assignments")
+            .select("id")
+            .in("id", [
+              athleteAAssignment.assignment_id,
+              athleteBAssignment.assignment_id,
+            ]),
+          "athlete reads only own shared assignment identity",
+        ),
+        [{ id: athleteAAssignment.assignment_id }],
+      );
+      const athleteASharedCandidates = expectData(
+        await athleteA.rpc("list_schedulable_workouts", { page_limit: 100 }),
+        "list athlete A shared scheduling candidates",
+      );
+      const athleteBSharedCandidates = expectData(
+        await athleteB.rpc("list_schedulable_workouts", { page_limit: 100 }),
+        "list athlete B shared scheduling candidates",
+      );
+      for (const [candidate, assignment] of [
+        [
+          athleteASharedCandidates.find(
+            (entry) => entry.workout_id === sharedWorkout.id,
+          ),
+          athleteAAssignment,
+        ],
+        [
+          athleteBSharedCandidates.find(
+            (entry) => entry.workout_id === sharedWorkout.id,
+          ),
+          athleteBAssignment,
+        ],
+      ]) {
+        assert.ok(candidate);
+        assert.equal(candidate.kind, "assignment");
+        assert.equal(candidate.program_id, sharedProgramId);
+        assert.equal(candidate.program_version_id, sharedDraftVersion.id);
+        assert.equal(candidate.assignment_id, assignment.assignment_id);
+        assert.equal(candidate.latest_occurrence_id, null);
+      }
+      const sharedOccurrenceKey = randomUUID();
+      const sharedOccurrenceDate = datePlus(effectiveOn, 3);
+      const sharedOccurrence = expectData(
+        await athleteB.rpc("create_scheduled_occurrence", {
+          target_workout_id: sharedWorkout.id,
+          target_planned_date: sharedOccurrenceDate,
+          target_idempotency_key: sharedOccurrenceKey,
+          target_assignment_id: athleteBAssignment.assignment_id,
+        }),
+        "create explicitly dated occurrence from shared assignment",
+      );
+      assert.deepEqual(
+        {
+          assignmentId: sharedOccurrence.assignmentId,
+          programVersionId: sharedOccurrence.programVersionId,
+          workoutId: sharedOccurrence.workoutId,
+          plannedDate: sharedOccurrence.plannedDate,
+          sequenceNumber: sharedOccurrence.sequenceNumber,
+          status: sharedOccurrence.status,
+          created: sharedOccurrence.created,
+        },
+        {
+          assignmentId: athleteBAssignment.assignment_id,
+          programVersionId: sharedDraftVersion.id,
+          workoutId: sharedWorkout.id,
+          plannedDate: sharedOccurrenceDate,
+          sequenceNumber: 1,
+          status: "planned",
+          created: true,
+        },
+      );
+      const sharedOccurrenceReplay = expectData(
+        await athleteB.rpc("create_scheduled_occurrence", {
+          target_workout_id: sharedWorkout.id,
+          target_planned_date: sharedOccurrenceDate,
+          target_idempotency_key: sharedOccurrenceKey,
+          target_assignment_id: athleteBAssignment.assignment_id,
+        }),
+        "replay shared-assignment occurrence creation",
+      );
+      assert.equal(sharedOccurrenceReplay.id, sharedOccurrence.id);
+      assert.equal(sharedOccurrenceReplay.created, false);
+      assert.deepEqual(
+        expectData(
+          await athleteA
+            .from("scheduled_workouts")
+            .select("id")
+            .eq("id", sharedOccurrence.id),
+          "other athlete cannot read shared-assignment occurrence",
+        ),
+        [],
+      );
+      assert.deepEqual(
+        expectData(
+          await coach
+            .from("scheduled_workouts")
+            .select(
+              "id,athlete_id,assignment_id,program_version_id,workout_id,planned_date,status",
+            )
+            .eq("id", sharedOccurrence.id)
+            .single(),
+          "author reads shared-assignment occurrence identity",
+        ),
+        {
+          id: sharedOccurrence.id,
+          athlete_id: athleteBId,
+          assignment_id: athleteBAssignment.assignment_id,
+          program_version_id: sharedDraftVersion.id,
+          workout_id: sharedWorkout.id,
+          planned_date: sharedOccurrenceDate,
+          status: "planned",
+        },
+      );
+      const athleteBUpdatedSharedCandidate = expectData(
+        await athleteB.rpc("list_schedulable_workouts", { page_limit: 100 }),
+        "reload shared candidate with latest occurrence metadata",
+      ).find((candidate) => candidate.workout_id === sharedWorkout.id);
+      assert.ok(athleteBUpdatedSharedCandidate);
+      assert.equal(
+        athleteBUpdatedSharedCandidate.latest_occurrence_id,
+        sharedOccurrence.id,
+      );
+      assert.equal(
+        athleteBUpdatedSharedCandidate.latest_planned_date,
+        sharedOccurrenceDate,
+      );
+      assert.equal(athleteBUpdatedSharedCandidate.latest_status, "planned");
+
       const originalProgramTitle = "Coach-authored test plan";
       const originalProgramDescription = "Original coaching description";
       const revisedProgramTitle = "Coach-authored test plan v2";
@@ -722,7 +980,6 @@ test(
           .single(),
         "coach adds second workout",
       );
-      const effectiveOn = new Date().toISOString().slice(0, 10);
       assert.equal(
         expectData(
           await athleteA
@@ -754,36 +1011,121 @@ test(
         0,
       );
 
+      const coachProgramCandidates = expectData(
+        await athleteA.rpc("list_schedulable_workouts", { page_limit: 100 }),
+        "list bounded coach-program scheduling candidates",
+      ).filter(
+        (candidate) =>
+          candidate.program_version_id === coachDraftVersion.id,
+      );
+      assert.deepEqual(
+        coachProgramCandidates.map((candidate) => ({
+          kind: candidate.kind,
+          program_id: candidate.program_id,
+          assignment_id: candidate.assignment_id,
+          program_version_id: candidate.program_version_id,
+          workout_id: candidate.workout_id,
+          latest_occurrence_id: candidate.latest_occurrence_id,
+        })),
+        [
+          {
+            kind: "program",
+            program_id: coachProgramId,
+            assignment_id: null,
+            program_version_id: coachDraftVersion.id,
+            workout_id: coachWorkout.id,
+            latest_occurrence_id: null,
+          },
+          {
+            kind: "program",
+            program_id: coachProgramId,
+            assignment_id: null,
+            program_version_id: coachDraftVersion.id,
+            workout_id: coachMobilityWorkout.id,
+            latest_occurrence_id: null,
+          },
+        ],
+      );
+      const firstOccurrenceKey = randomUUID();
+      const secondOccurrenceKey = randomUUID();
       assert.match(
         (
-          await coach.rpc("prepare_program_schedule", {
-            target_program_version_id: coachDraftVersion.id,
+          await coach.rpc("create_scheduled_occurrence", {
+            target_workout_id: coachWorkout.id,
+            target_planned_date: effectiveOn,
+            target_idempotency_key: randomUUID(),
+            target_program_id: coachProgramId,
           })
         ).error?.message ?? "",
-        /Only the athlete/i,
+        /Selected workout is not available/i,
       );
-      assert.equal(
-        expectData(
-          await athleteA.rpc("prepare_program_schedule", {
-            target_program_version_id: coachDraftVersion.id,
-          }),
-          "athlete prepares final coach program",
-        ),
-        2,
+      const createdFirstOccurrence = expectData(
+        await athleteA.rpc("create_scheduled_occurrence", {
+          target_workout_id: coachWorkout.id,
+          target_planned_date: effectiveOn,
+          target_idempotency_key: firstOccurrenceKey,
+          target_program_id: coachProgramId,
+        }),
+        "create one explicitly dated coach-program occurrence",
       );
-      assert.equal(
-        expectData(
-          await athleteA.rpc("prepare_program_schedule", {
-            target_program_version_id: coachDraftVersion.id,
-          }),
-          "repeat calendar preparation",
-        ),
-        0,
+      assert.deepEqual(
+        {
+          assignmentId: createdFirstOccurrence.assignmentId,
+          programVersionId: createdFirstOccurrence.programVersionId,
+          workoutId: createdFirstOccurrence.workoutId,
+          plannedDate: createdFirstOccurrence.plannedDate,
+          sequenceNumber: createdFirstOccurrence.sequenceNumber,
+          status: createdFirstOccurrence.status,
+          created: createdFirstOccurrence.created,
+        },
+        {
+          assignmentId: null,
+          programVersionId: coachDraftVersion.id,
+          workoutId: coachWorkout.id,
+          plannedDate: effectiveOn,
+          sequenceNumber: 1,
+          status: "planned",
+          created: true,
+        },
       );
+      const replayedFirstOccurrence = expectData(
+        await athleteA.rpc("create_scheduled_occurrence", {
+          target_workout_id: coachWorkout.id,
+          target_planned_date: effectiveOn,
+          target_idempotency_key: firstOccurrenceKey,
+          target_program_id: coachProgramId,
+        }),
+        "replay occurrence creation idempotently",
+      );
+      assert.equal(replayedFirstOccurrence.id, createdFirstOccurrence.id);
+      assert.equal(replayedFirstOccurrence.created, false);
+      assert.match(
+        (
+          await athleteA.rpc("create_scheduled_occurrence", {
+            target_workout_id: coachWorkout.id,
+            target_planned_date: datePlus(effectiveOn, 1),
+            target_idempotency_key: firstOccurrenceKey,
+            target_program_id: coachProgramId,
+          })
+        ).error?.message ?? "",
+        /Idempotency key was already used for another occurrence/i,
+      );
+      const createdSecondOccurrence = expectData(
+        await athleteA.rpc("create_scheduled_occurrence", {
+          target_workout_id: coachMobilityWorkout.id,
+          target_planned_date: datePlus(effectiveOn, 1),
+          target_idempotency_key: secondOccurrenceKey,
+          target_program_id: coachProgramId,
+        }),
+        "create second explicitly dated coach-program occurrence",
+      );
+      assert.equal(createdSecondOccurrence.sequenceNumber, 2);
       const occurrences = expectData(
         await athleteA
           .from("scheduled_workouts")
-          .select("*")
+          .select(
+            "id,athlete_id,scheduled_by_id,assignment_id,program_version_id,workout_id,planned_date,sequence_number,status,request_key",
+          )
           .eq("program_version_id", coachDraftVersion.id)
           .order("sequence_number"),
         "load occurrences",
@@ -793,30 +1135,36 @@ test(
         occurrences.map((occurrence) => ({
           athlete_id: occurrence.athlete_id,
           scheduled_by_id: occurrence.scheduled_by_id,
+          assignment_id: occurrence.assignment_id,
           program_version_id: occurrence.program_version_id,
           workout_id: occurrence.workout_id,
           planned_date: occurrence.planned_date,
           sequence_number: occurrence.sequence_number,
           status: occurrence.status,
+          request_key: occurrence.request_key,
         })),
         [
           {
             athlete_id: athleteAId,
             scheduled_by_id: athleteAId,
+            assignment_id: null,
             program_version_id: coachDraftVersion.id,
             workout_id: coachWorkout.id,
-            planned_date: null,
+            planned_date: effectiveOn,
             sequence_number: 1,
             status: "planned",
+            request_key: firstOccurrenceKey,
           },
           {
             athlete_id: athleteAId,
             scheduled_by_id: athleteAId,
+            assignment_id: null,
             program_version_id: coachDraftVersion.id,
             workout_id: coachMobilityWorkout.id,
-            planned_date: null,
+            planned_date: datePlus(effectiveOn, 1),
             sequence_number: 2,
             status: "planned",
+            request_key: secondOccurrenceKey,
           },
         ],
       );
@@ -832,23 +1180,36 @@ test(
         }),
         "athlete publishes own content",
       );
-      assert.equal(
-        expectData(
-          await athleteA.rpc("prepare_program_schedule", {
-            target_program_version_id: draftVersion.id,
-          }),
-          "athlete prepares own final program",
-        ),
-        1,
+      const athleteProgramCandidate = expectData(
+        await athleteA.rpc("list_schedulable_workouts", { page_limit: 100 }),
+        "list own-program scheduling candidate",
+      ).find((candidate) => candidate.workout_id === athleteWorkout.id);
+      assert.ok(athleteProgramCandidate);
+      assert.equal(athleteProgramCandidate.kind, "program");
+      assert.equal(athleteProgramCandidate.program_id, programId);
+      assert.equal(athleteProgramCandidate.assignment_id, null);
+      expectData(
+        await athleteA.rpc("create_scheduled_occurrence", {
+          target_workout_id: athleteWorkout.id,
+          target_planned_date: datePlus(effectiveOn, 5),
+          target_idempotency_key: randomUUID(),
+          target_program_id: programId,
+        }),
+        "create own-program occurrence",
       );
       const athleteAuthoredOccurrences = expectData(
         await athleteA
           .from("scheduled_workouts")
-          .select("id,program_version_id,workout_id")
+          .select("id,assignment_id,program_version_id,workout_id,planned_date")
           .eq("program_version_id", draftVersion.id),
         "load athlete-authored occurrence",
       );
       assert.equal(athleteAuthoredOccurrences.length, 1);
+      assert.equal(athleteAuthoredOccurrences[0].assignment_id, null);
+      assert.equal(
+        athleteAuthoredOccurrences[0].planned_date,
+        datePlus(effectiveOn, 5),
+      );
 
       const otherCoachProgramId = expectData(
         await otherCoach.rpc("create_blank_program", {
@@ -897,28 +1258,42 @@ test(
         }),
         "second coach publishes content",
       );
-      assert.equal(
-        expectData(
-          await athleteA.rpc("prepare_program_schedule", {
-            target_program_version_id: otherCoachDraftVersion.id,
-          }),
-          "athlete prepares second coach final program",
-        ),
-        1,
+      const otherCoachCandidate = expectData(
+        await athleteA.rpc("list_schedulable_workouts", { page_limit: 100 }),
+        "list second-coach scheduling candidate",
+      ).find((candidate) => candidate.workout_id === otherCoachWorkout.id);
+      assert.ok(otherCoachCandidate);
+      assert.equal(otherCoachCandidate.kind, "program");
+      assert.equal(otherCoachCandidate.program_id, otherCoachProgramId);
+      expectData(
+        await athleteA.rpc("create_scheduled_occurrence", {
+          target_workout_id: otherCoachWorkout.id,
+          target_planned_date: datePlus(effectiveOn, 6),
+          target_idempotency_key: randomUUID(),
+          target_program_id: otherCoachProgramId,
+        }),
+        "create second-coach occurrence",
       );
       const otherCoachOccurrences = expectData(
         await athleteA
           .from("scheduled_workouts")
-          .select("id,program_version_id,workout_id")
+          .select("id,assignment_id,program_version_id,workout_id,planned_date")
           .eq("program_version_id", otherCoachDraftVersion.id),
         "load second coach occurrence",
       );
       assert.equal(otherCoachOccurrences.length, 1);
+      assert.equal(otherCoachOccurrences[0].assignment_id, null);
+      assert.equal(
+        otherCoachOccurrences[0].planned_date,
+        datePlus(effectiveOn, 6),
+      );
       assert.deepEqual(
         expectData(
           await otherCoach
             .from("scheduled_workouts")
-            .select("id,program_version_id,workout_id")
+            .select(
+              "id,assignment_id,program_version_id,workout_id,planned_date",
+            )
             .eq("id", otherCoachOccurrences[0].id)
             .single(),
           "second coach reads own authored occurrence",
@@ -1076,20 +1451,6 @@ test(
       expectData(
         await athleteA.rpc("schedule_workout", {
           target_scheduled_workout_id: occurrences[0].id,
-          target_planned_date: effectiveOn,
-        }),
-        "schedule first",
-      );
-      expectData(
-        await athleteA.rpc("schedule_workout", {
-          target_scheduled_workout_id: occurrences[1].id,
-          target_planned_date: datePlus(effectiveOn, 1),
-        }),
-        "schedule second",
-      );
-      expectData(
-        await athleteA.rpc("schedule_workout", {
-          target_scheduled_workout_id: occurrences[0].id,
           target_planned_date: datePlus(effectiveOn, 2),
         }),
         "reschedule first",
@@ -1231,28 +1592,58 @@ test(
         ),
         [],
       );
-      assert.equal(
-        expectData(
-          await athleteA.rpc("prepare_program_schedule", {
-            target_program_version_id: freshDraft.id,
-          }),
-          "prepare replacement version calendar",
+      const replacementCandidates = expectData(
+        await athleteA.rpc("list_schedulable_workouts", { page_limit: 100 }),
+        "list replacement-version scheduling candidates",
+      ).filter((candidate) => candidate.program_version_id === freshDraft.id);
+      assert.equal(replacementCandidates.length, 2);
+      assert.ok(
+        replacementCandidates.every(
+          (candidate) =>
+            candidate.program_id === coachProgramId &&
+            candidate.assignment_id === null &&
+            candidate.latest_occurrence_id === null,
         ),
-        2,
+      );
+      const replacementRequestKeys = [randomUUID(), randomUUID()];
+      const replacementDates = [
+        datePlus(effectiveOn, 7),
+        datePlus(effectiveOn, 8),
+      ];
+      const createdReplacementOccurrences = [];
+      for (let index = 0; index < replacementCandidates.length; index += 1) {
+        createdReplacementOccurrences.push(
+          expectData(
+            await athleteA.rpc("create_scheduled_occurrence", {
+              target_workout_id: replacementCandidates[index].workout_id,
+              target_planned_date: replacementDates[index],
+              target_idempotency_key: replacementRequestKeys[index],
+              target_program_id: coachProgramId,
+            }),
+            `create replacement occurrence ${index + 1}`,
+          ),
+        );
+      }
+      const replayedReplacement = expectData(
+        await athleteA.rpc("create_scheduled_occurrence", {
+          target_workout_id: replacementCandidates[0].workout_id,
+          target_planned_date: replacementDates[0],
+          target_idempotency_key: replacementRequestKeys[0],
+          target_program_id: coachProgramId,
+        }),
+        "replay replacement occurrence creation",
       );
       assert.equal(
-        expectData(
-          await athleteA.rpc("prepare_program_schedule", {
-            target_program_version_id: freshDraft.id,
-          }),
-          "repeat replacement calendar preparation",
-        ),
-        0,
+        replayedReplacement.id,
+        createdReplacementOccurrences[0].id,
       );
+      assert.equal(replayedReplacement.created, false);
       const replacementOccurrences = expectData(
         await athleteA
           .from("scheduled_workouts")
-          .select("*")
+          .select(
+            "id,athlete_id,scheduled_by_id,assignment_id,program_version_id,workout_id,planned_date,sequence_number,status,request_key",
+          )
           .eq("program_version_id", freshDraft.id)
           .order("sequence_number"),
         "load replacement occurrences",
@@ -1263,10 +1654,12 @@ test(
           (occurrence, index) =>
             occurrence.athlete_id === athleteAId &&
             occurrence.scheduled_by_id === athleteAId &&
+            occurrence.assignment_id === null &&
             occurrence.program_version_id === freshDraft.id &&
-            occurrence.planned_date === null &&
+            occurrence.planned_date === replacementDates[index] &&
             occurrence.sequence_number === index + 1 &&
-            occurrence.status === "planned",
+            occurrence.status === "planned" &&
+            occurrence.request_key === replacementRequestKeys[index],
         ),
       );
       assert.equal(
@@ -1303,9 +1696,7 @@ test(
 
       const occurrence = occurrences[0];
       const sessionId = expectData(
-        await athleteA.rpc("start_or_resume_workout", {
-          target_workout_id: occurrence.workout_id,
-          target_program_version_id: occurrence.program_version_id,
+        await athleteA.rpc("start_scheduled_workout", {
           target_scheduled_workout_id: occurrence.id,
         }),
         "start workout",
@@ -1333,9 +1724,7 @@ test(
       );
       assert.equal(
         expectData(
-          await athleteA.rpc("start_or_resume_workout", {
-            target_workout_id: occurrence.workout_id,
-            target_program_version_id: occurrence.program_version_id,
+          await athleteA.rpc("start_scheduled_workout", {
             target_scheduled_workout_id: occurrence.id,
           }),
           "resume workout",

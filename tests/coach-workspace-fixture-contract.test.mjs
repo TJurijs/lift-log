@@ -9,7 +9,7 @@ test("coach workspace fixtures use real program occurrences and representative R
 
   assert.match(
     seed,
-    /async function completeFixtureOccurrence[\s\S]*start_or_resume_workout[\s\S]*save_workout_session_draft[\s\S]*complete_workout_session_confirmed/,
+    /async function completeFixtureOccurrence[\s\S]*start_scheduled_workout[\s\S]*save_workout_session_draft[\s\S]*complete_workout_session_confirmed/,
   );
   assert.match(
     seed,
