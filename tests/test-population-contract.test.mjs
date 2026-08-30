@@ -318,6 +318,11 @@ test("fixture reset remains namespace-scoped, cross-account guarded, and service
     /avatar_url: null,[\s\S]*timezone: "Europe\/Riga",[\s\S]*load_unit: "kg",[\s\S]*distance_unit: "km"/,
   );
   assert.match(seedScript, /create_blank_program/);
+  assert.match(seedScript, /title: "Exercises",\s*section_kind: "main"/);
+  assert.doesNotMatch(
+    seedScript,
+    /section_kind: "(?:warmup|conditioning|cooldown)"/,
+  );
   assert.match(
     seedScript,
     /"vaira-vike-freiberga",\s*"valdis-zatlers",\s*"raimonds-vejonis",[\s\S]*Verify Valdis assignment source/,

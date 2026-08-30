@@ -510,50 +510,34 @@ async function populateFixtureProgram(client, programId, title) {
       .insert([
         {
           workout_id: strength.id,
-          title: "Warm-up",
-          section_kind: "warmup",
-          notes: "5 minutes of easy movement and joint preparation.",
+          title: "Exercises",
+          section_kind: "main",
+          notes: "",
           position: 0,
         },
         {
-          workout_id: strength.id,
-          title: "Main work",
-          section_kind: "main",
-          notes: "Move with control and stop before technique changes.",
-          position: 1,
-        },
-        {
-          workout_id: strength.id,
-          title: "Cool-down",
-          section_kind: "cooldown",
-          notes: "Easy breathing and mobility for 5 minutes.",
-          position: 2,
-        },
-        {
           workout_id: cardio.id,
-          title: "Main work",
+          title: "Exercises",
           section_kind: "main",
-          notes: "Keep the effort sustainable.",
+          notes: "",
           position: 0,
         },
       ])
       .select("id, workout_id, section_kind"),
     `Create ${title} sections`,
   );
-  const strengthMain = sections.find(
-    (section) =>
-      section.workout_id === strength.id && section.section_kind === "main",
+  const strengthSection = sections.find(
+    (section) => section.workout_id === strength.id,
   );
-  const cardioMain = sections.find(
-    (section) =>
-      section.workout_id === cardio.id && section.section_kind === "main",
+  const cardioSection = sections.find(
+    (section) => section.workout_id === cardio.id,
   );
   const items = expectData(
     await client
       .from("workout_items")
       .insert([
         {
-          section_id: strengthMain.id,
+          section_id: strengthSection.id,
           source_exercise_id: null,
           snapshot_name: "Goblet squat",
           snapshot_cue: "Brace, sit between the hips, and stand smoothly.",
@@ -562,7 +546,7 @@ async function populateFixtureProgram(client, programId, title) {
           position: 0,
         },
         {
-          section_id: strengthMain.id,
+          section_id: strengthSection.id,
           source_exercise_id: null,
           snapshot_name: "Push-up",
           snapshot_cue: "Keep a straight line and use a controlled range.",
@@ -571,7 +555,7 @@ async function populateFixtureProgram(client, programId, title) {
           position: 1,
         },
         {
-          section_id: cardioMain.id,
+          section_id: cardioSection.id,
           source_exercise_id: null,
           snapshot_name: "Easy cardio",
           snapshot_cue: "Use any modality and keep a conversational pace.",
@@ -580,7 +564,7 @@ async function populateFixtureProgram(client, programId, title) {
           position: 0,
         },
         {
-          section_id: cardioMain.id,
+          section_id: cardioSection.id,
           source_exercise_id: null,
           snapshot_name: "Mobility flow",
           snapshot_cue: "Move continuously through comfortable ranges.",
