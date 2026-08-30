@@ -77,7 +77,6 @@ function buildProgramContent() {
   const sections = [];
   const items = [];
   const prescriptions = [];
-  const sectionKinds = ["warmup", "main", "conditioning", "cooldown"];
 
   for (let weekIndex = 1; weekIndex <= programShape.weeks; weekIndex += 1) {
     const weekId = deterministicUuid(`database-scale:week:${weekIndex}`);
@@ -106,26 +105,19 @@ function buildProgramContent() {
         schedule_label: `Workout ${sequencePosition + 1}`,
       });
 
-      const workoutSections = Array.from(
-        { length: programShape.sectionsPerWorkout },
-        (_, sectionPosition) => {
-          const sectionId = deterministicUuid(
-            `database-scale:section:${workoutKey}:${sectionPosition}`,
-          );
-          sections.push({
-            id: sectionId,
-            workout_id: workoutId,
-            title: ["Warm up", "Main work", "Functional", "Cooldown"][sectionPosition],
-            section_kind: sectionKinds[sectionPosition] ?? "custom",
-            notes: "Scale verification content",
-            position: sectionPosition,
-          });
-          return sectionId;
-        },
+      const sectionId = deterministicUuid(
+        `database-scale:section:${workoutKey}:0`,
       );
+      sections.push({
+        id: sectionId,
+        workout_id: workoutId,
+        title: "Exercises",
+        section_kind: "main",
+        notes: "",
+        position: 0,
+      });
 
       for (let itemIndex = 0; itemIndex < programShape.itemsPerWorkout; itemIndex += 1) {
-        const sectionPosition = itemIndex % workoutSections.length;
         const itemId = deterministicUuid(
           `database-scale:item:${workoutKey}:${itemIndex}`,
         );
@@ -134,13 +126,13 @@ function buildProgramContent() {
         ];
         items.push({
           id: itemId,
-          section_id: workoutSections[sectionPosition],
+          section_id: sectionId,
           source_exercise_id: sourceExerciseId,
           snapshot_name: `Scale movement ${sequencePosition + 1}-${itemIndex + 1}`,
           snapshot_cue: "Move with repeatable technique",
           entry_mode: "sets",
           tracking_fields: ["reps", "load", "rpe"],
-          position: Math.floor(itemIndex / workoutSections.length),
+          position: itemIndex,
         });
         for (
           let entryIndex = 0;
