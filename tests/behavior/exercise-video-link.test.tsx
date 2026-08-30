@@ -19,13 +19,19 @@ describe("exercise video link", () => {
     expect(player).toHaveAttribute(
       "src",
       expect.stringMatching(
-        /youtube-nocookie\.com\/embed\/nJmtGVutszE\?.*autoplay=1.*mute=1.*start=7.*playsinline=1.*controls=0.*loop=1/,
+        /youtube-nocookie\.com\/embed\/nJmtGVutszE\?.*autoplay=1.*mute=1.*start=7.*playsinline=1.*controls=0.*enablejsapi=1/,
       ),
     );
-    expect(screen.getByRole("link", { name: "YouTube" })).toHaveAttribute(
+    expect(player.getAttribute("src")).not.toContain("playlist=");
+    expect(player.getAttribute("src")).not.toContain("loop=");
+    expect(
+      screen.getByRole("link", { name: "Open Snatch on YouTube" }),
+    ).toHaveAttribute(
       "href",
       "https://www.youtube.com/watch?v=nJmtGVutszE",
     );
+    expect(screen.queryByText("Exercise demo")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Muted · starts/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close exercise video" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

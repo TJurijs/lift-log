@@ -1,6 +1,75 @@
 import { ExternalLink, Play, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+
+type YouTubePlayer = {
+  destroy: () => void;
+  mute: () => void;
+  playVideo: () => void;
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+};
+
+type YouTubePlayerEvent = { target: YouTubePlayer };
+type YouTubeStateEvent = YouTubePlayerEvent & { data: number };
+type YouTubeApi = {
+  Player: new (
+    iframe: HTMLIFrameElement,
+    options: {
+      events: {
+        onReady: (event: YouTubePlayerEvent) => void;
+        onStateChange: (event: YouTubeStateEvent) => void;
+      };
+    },
+  ) => YouTubePlayer;
+  PlayerState: { ENDED: number };
+};
+
+declare global {
+  interface Window {
+    YT?: YouTubeApi;
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+let youtubeApiPromise: Promise<YouTubeApi> | null = null;
+
+function loadYouTubeApi() {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (youtubeApiPromise) return youtubeApiPromise;
+
+  youtubeApiPromise = new Promise<YouTubeApi>((resolve, reject) => {
+    const previousReady = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      previousReady?.();
+      if (window.YT?.Player) resolve(window.YT);
+      else reject(new Error("YouTube player API did not become available"));
+    };
+
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src="https://www.youtube.com/iframe_api"]',
+    );
+    if (existing) {
+      existing.addEventListener(
+        "error",
+        () => reject(new Error("YouTube player API could not be loaded")),
+        { once: true },
+      );
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.async = true;
+    script.addEventListener(
+      "error",
+      () => reject(new Error("YouTube player API could not be loaded")),
+      { once: true },
+    );
+    document.head.appendChild(script);
+  });
+
+  return youtubeApiPromise;
+}
 
 function youtubeVideoId(url: string) {
   try {
@@ -25,11 +94,14 @@ function youtubeEmbedUrl(videoId: string) {
     start: "7",
     playsinline: "1",
     controls: "0",
-    loop: "1",
-    playlist: videoId,
+    enablejsapi: "1",
     rel: "0",
     fs: "0",
+    iv_load_policy: "3",
   });
+  if (typeof window !== "undefined" && window.location.origin !== "null") {
+    parameters.set("origin", window.location.origin);
+  }
   return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${parameters}`;
 }
 
@@ -44,6 +116,7 @@ export function ExerciseVideoLink({
 }) {
   const [open, setOpen] = useState(false);
   const titleId = useId();
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const videoId = url ? youtubeVideoId(url) : null;
 
   useEffect(() => {
@@ -59,6 +132,39 @@ export function ExerciseVideoLink({
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !videoId || !iframeRef.current) return;
+    let cancelled = false;
+    let player: YouTubePlayer | null = null;
+
+    void loadYouTubeApi()
+      .then((api) => {
+        if (cancelled || !iframeRef.current) return;
+        player = new api.Player(iframeRef.current, {
+          events: {
+            onReady: ({ target }) => {
+              target.mute();
+              target.seekTo(7, true);
+              target.playVideo();
+            },
+            onStateChange: ({ data, target }) => {
+              if (data !== api.PlayerState.ENDED) return;
+              target.seekTo(7, true);
+              target.playVideo();
+            },
+          },
+        });
+      })
+      .catch(() => {
+        // The privacy-enhanced iframe still autoplays if the optional API fails.
+      });
+
+    return () => {
+      cancelled = true;
+      player?.destroy();
+    };
+  }, [open, videoId]);
 
   if (!url) return null;
 
@@ -108,21 +214,30 @@ export function ExerciseVideoLink({
                 aria-labelledby={titleId}
               >
                 <header className="exercise-video-sheet-header">
-                  <div>
-                    <span>Exercise demo</span>
-                    <strong id={titleId}>{exerciseName}</strong>
+                  <strong id={titleId}>{exerciseName}</strong>
+                  <div className="exercise-video-sheet-actions">
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Open ${exerciseName} on YouTube`}
+                      title="Open on YouTube"
+                    >
+                      <ExternalLink aria-hidden="true" size={15} />
+                    </a>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      aria-label="Close exercise video"
+                      onClick={() => setOpen(false)}
+                    >
+                      <X aria-hidden="true" size={18} />
+                    </button>
                   </div>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    aria-label="Close exercise video"
-                    onClick={() => setOpen(false)}
-                  >
-                    <X aria-hidden="true" size={18} />
-                  </button>
                 </header>
                 <div className="exercise-video-frame">
                   <iframe
+                    ref={iframeRef}
                     src={youtubeEmbedUrl(videoId)}
                     title={`${exerciseName} exercise demonstration`}
                     allow="autoplay; encrypted-media; picture-in-picture"
@@ -130,13 +245,6 @@ export function ExerciseVideoLink({
                     loading="eager"
                   />
                 </div>
-                <footer className="exercise-video-sheet-footer">
-                  <span>Muted · starts at 0:07 · loops</span>
-                  <a href={url} target="_blank" rel="noopener noreferrer">
-                    YouTube
-                    <ExternalLink aria-hidden="true" size={13} />
-                  </a>
-                </footer>
               </section>
             </div>,
             document.body,

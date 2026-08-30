@@ -1442,31 +1442,38 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
 }
 .exercise-video-sheet-header {
-  min-height: 66px;
-  padding: 13px 14px 12px 17px;
+  min-height: 50px;
+  padding: 7px 8px 7px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-}
-.exercise-video-sheet-header > div {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-.exercise-video-sheet-header span {
-  color: var(--accent);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  gap: 10px;
 }
 .exercise-video-sheet-header strong {
+  min-width: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 15px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.exercise-video-sheet-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.exercise-video-sheet-actions > a {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.exercise-video-sheet-actions > a:hover,
+.exercise-video-sheet-actions > a:focus-visible {
+  color: var(--accent);
+  background: var(--panel-soft);
 }
 .exercise-video-frame {
   position: relative;
@@ -1479,28 +1486,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   height: 100%;
   border: 0;
   display: block;
-}
-.exercise-video-sheet-footer {
-  min-height: 43px;
-  padding: 9px 17px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--muted-dark);
-  font-size: 10px;
-}
-.exercise-video-sheet-footer a {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
-  font-weight: 700;
-  text-decoration: none;
-}
-.exercise-video-sheet-footer a:hover,
-.exercise-video-sheet-footer a:focus-visible {
-  color: var(--accent);
 }
 @media (max-width: 640px) {
   .exercise-video-backdrop {
