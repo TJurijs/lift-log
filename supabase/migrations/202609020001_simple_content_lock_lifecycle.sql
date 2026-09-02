@@ -203,6 +203,35 @@ begin
       );
     end if;
 
+    -- Delete from the leaves upward while the draft row still exists. The
+    -- immutable-tree trigger resolves each parent back to this draft; relying
+    -- on ON DELETE CASCADE would remove that identity before child triggers run.
+    delete from public.prescribed_entries entry
+    using public.workout_items item, public.workout_sections section,
+      public.workouts workout, public.program_weeks week
+    where entry.workout_item_id = item.id
+      and item.section_id = section.id
+      and section.workout_id = workout.id
+      and workout.program_week_id = week.id
+      and week.program_version_id = candidate.draft_version_id;
+    delete from public.workout_items item
+    using public.workout_sections section, public.workouts workout,
+      public.program_weeks week
+    where item.section_id = section.id
+      and section.workout_id = workout.id
+      and workout.program_week_id = week.id
+      and week.program_version_id = candidate.draft_version_id;
+    delete from public.workout_sections section
+    using public.workouts workout, public.program_weeks week
+    where section.workout_id = workout.id
+      and workout.program_week_id = week.id
+      and week.program_version_id = candidate.draft_version_id;
+    delete from public.workouts workout
+    using public.program_weeks week
+    where workout.program_week_id = week.id
+      and week.program_version_id = candidate.draft_version_id;
+    delete from public.program_weeks week
+    where week.program_version_id = candidate.draft_version_id;
     delete from public.program_versions
     where id = candidate.draft_version_id;
 
