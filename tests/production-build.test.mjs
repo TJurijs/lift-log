@@ -87,7 +87,6 @@ test("keeps user data behind Supabase and wires every MVP mutation", async () =>
     "addWorkout",
     "addWorkoutItem",
     "removeWorkoutItem",
-    "publishProgram",
     "startOrResumeSession",
     "saveSessionDraft",
     "completeSession",

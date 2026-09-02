@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   CalendarPlus,
   ChevronRight,
+  Copy,
   Dumbbell,
   Layers3,
   LoaderCircle,
@@ -36,6 +37,7 @@ import type {
   Exercise,
   PlannedWorkout,
   Program,
+  CoachAgendaEntry,
   WorkoutItem,
 } from "../../../lib/domain";
 import {
@@ -55,7 +57,7 @@ import {
   StatusBadge,
 } from "../../ui-primitives";
 
-type ProgramActionKind = "delete" | "publish" | "edit" | "open";
+type ProgramActionKind = "delete" | "save" | "duplicate" | "edit" | "open";
 
 export interface ProgramViewProps {
   program: Program;
@@ -75,13 +77,15 @@ export interface ProgramViewProps {
   onRemoveItem: (id: string) => void;
   onReorderItems: (ids: string[]) => void;
   onSave: (title: string, description: string) => void;
-  onCreateDraft: () => void;
+  onDuplicate?: () => void;
   onBack: () => void;
   onAssignProgram?: () => void;
   onEditWorkout: () => void;
   onSchedule?: () => void;
   renderWorkoutDetails: (workout: PlannedWorkout) => ReactNode;
   renderWorkoutItem: (item: WorkoutItem) => ReactNode;
+  workoutActivity?: CoachAgendaEntry[];
+  onOpenActivity?: (entry: CoachAgendaEntry) => void;
 }
 
 const programMobileExercisePickerCss = `
@@ -96,6 +100,10 @@ const programMobileExercisePickerCss = `
 .exercise-picker-modal .picker-results small{font-size:8px}
 .exercise-reorder-row{min-height:28px;display:flex;justify-content:flex-end;align-items:center}
 .workout-reorder-toggle{width:auto!important;margin:0!important}
+.workout-activity{margin:0 0 18px;padding:12px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.015)}
+.workout-activity-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.workout-activity-heading strong{font-size:12px}.workout-activity-heading span{font-size:10px;color:var(--muted)}
+.workout-activity-list{display:grid;gap:6px}.workout-activity-list button{display:flex;align-items:center;justify-content:space-between;width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-soft);color:var(--text);text-align:left}.workout-activity-list button>span:first-child{display:grid;gap:2px}.workout-activity-list small{color:var(--muted)}
+.workout-activity-rpe{padding:4px 7px;border-radius:999px;font-size:10px}.workout-activity-rpe.low{color:#75bfff;background:rgba(63,159,255,.12)}.workout-activity-rpe.balanced{color:var(--lime);background:rgba(187,255,77,.1)}.workout-activity-rpe.high{color:#ffad58;background:rgba(255,158,64,.12)}
 @media(max-width:700px){
   .modal-backdrop:has(.exercise-picker-modal){padding:10px;place-items:end center}
   .exercise-picker-modal .picker-results{min-height:0;grid-template-columns:1fr;grid-auto-rows:minmax(56px,auto);gap:5px;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
@@ -124,13 +132,15 @@ export default function ProgramView({
   onRemoveItem,
   onReorderItems,
   onSave,
-  onCreateDraft,
+  onDuplicate,
   onBack,
   onAssignProgram,
   onEditWorkout,
   onSchedule,
   renderWorkoutDetails,
   renderWorkoutItem,
+  workoutActivity = [],
+  onOpenActivity,
 }: ProgramViewProps) {
   const [pickerQuery, setPickerQuery] = useState("");
   const [pickerResults, setPickerResults] = useState<Exercise[]>([]);
@@ -148,15 +158,14 @@ export default function ProgramView({
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
-  const isDraft = program.versionStatus === "draft";
+  const isEditable = program.versionStatus === "draft";
   const isQuickWorkout = program.contentType === "quick_workout";
   const headerTitle = isQuickWorkout
     ? (selectedWorkout?.title ?? program.title)
     : program.title;
   const [title, setTitle] = useState(headerTitle);
   const [description, setDescription] = useState(program.description);
-  const canEdit = capabilities.edit;
-  const editable = isDraft && capabilities.edit;
+  const editable = isEditable && capabilities.edit;
   const dragEnabled = editable && !mutationPending;
   const exerciseDragEnabled = dragEnabled && reorderingExercises;
   useEffect(() => {
@@ -272,16 +281,16 @@ export default function ProgramView({
       disabled={Boolean(action) || !title.trim()}
       onClick={() => onSave(title, description)}
     >
-      {action === "publish" ? "Saving…" : "Save"}
+      {action === "save" ? "Saving…" : "Save"}
     </button>
-  ) : !isDraft && canEdit ? (
+  ) : onDuplicate ? (
     <button
       type="button"
       className="detail-navigation-primary"
       disabled={Boolean(action)}
-      onClick={onCreateDraft}
+      onClick={onDuplicate}
     >
-      {action === "edit" ? "Opening…" : "Edit"}
+      {action === "duplicate" ? "Duplicating…" : "Duplicate"}
     </button>
   ) : undefined;
   return (
@@ -337,7 +346,7 @@ export default function ProgramView({
           <SourceTag
             presentation={presentProgramProvenance(program, viewerId)}
           />
-          <StatusBadge status={isDraft ? "draft" : "ready"} />
+          <StatusBadge status={isEditable ? "editable" : "locked"} />
           {(onSchedule || onAssignProgram) && (
             <div className="program-editor-secondary-actions">
               {onSchedule && (
@@ -364,7 +373,7 @@ export default function ProgramView({
               disabled={Boolean(action) || !title.trim()}
               onClick={() => onSave(title, description)}
             >
-              {action === "publish" ? (
+              {action === "save" ? (
                 <>
                   <LoaderCircle className="button-spinner" size={15} />
                   Saving…
@@ -377,22 +386,21 @@ export default function ProgramView({
               )}
             </button>
           ) : (
-            !isDraft &&
-            canEdit && (
+            onDuplicate && (
               <button
                 className="button primary small program-editor-primary-action desktop-detail-action"
                 disabled={Boolean(action)}
-                onClick={onCreateDraft}
+                onClick={onDuplicate}
               >
-                {action === "edit" ? (
+                {action === "duplicate" ? (
                   <>
                     <LoaderCircle className="button-spinner" size={15} />
-                    Opening…
+                    Duplicating…
                   </>
                 ) : (
                   <>
-                    <Pencil size={15} />
-                    {isQuickWorkout ? "Edit workout" : "Edit program"}
+                    <Copy size={15} />
+                    Duplicate
                   </>
                 )}
               </button>
@@ -505,6 +513,34 @@ export default function ProgramView({
                     )}
                   </div>
                 </div>
+                {!editable && workoutActivity.length > 0 && (
+                  <section className="workout-activity" aria-label="Athlete activity">
+                    <div className="workout-activity-heading">
+                      <strong>Athlete activity</strong>
+                      <span>{workoutActivity.length}</span>
+                    </div>
+                    <div className="workout-activity-list">
+                      {workoutActivity.map((entry) => (
+                        <button
+                          type="button"
+                          key={entry.id}
+                          disabled={!onOpenActivity || (entry.kind === "completed" && !entry.sessionId)}
+                          onClick={() => onOpenActivity?.(entry)}
+                        >
+                          <span>
+                            <strong>{entry.kind === "completed" ? "Completed" : entry.status === "in_progress" ? "In progress" : "Scheduled"}</strong>
+                            <small>{coachActivityDate(entry.date)}</small>
+                          </span>
+                          {entry.kind === "completed" && entry.rpe ? (
+                            <span className={cn("workout-activity-rpe", entry.rpe >= 9 ? "high" : entry.rpe >= 5 ? "balanced" : "low")}>RPE {entry.rpe}</span>
+                          ) : (
+                            <ChevronRight size={15} />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
                 {editable ? (
                   <div className="builder-section-list exercise-group-list">
                     {workoutItems.length > 1 && (
@@ -564,6 +600,14 @@ export default function ProgramView({
       </div>
     </>
   );
+}
+
+function coachActivityDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${value}T12:00:00`));
 }
 
 function ExercisePickerRow({

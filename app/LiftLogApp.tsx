@@ -197,6 +197,7 @@ type ModalName =
   | "delete-content"
   | "invite"
   | "assign-program"
+  | "coach-schedule"
   | "program"
   | "quick-workout"
   | "deactivate-program"
@@ -206,6 +207,7 @@ type ModalName =
 type ContentDeleteTarget =
   | { kind: "workout"; id: string; title: string }
   | { kind: "workout-item"; id: string; title: string }
+  | { kind: "assignment"; id: string; title: string }
   | { kind: "program"; program: Program };
 type SetLog = SessionSetValue;
 const emptySetLogs: SetLog[] = [];
@@ -252,7 +254,7 @@ function mergeProgramCatalog(
 type ProgramSourceTab = "own" | "coach";
 type ProgramAction = {
   id: string;
-  kind: "delete" | "publish" | "edit" | "open";
+  kind: "delete" | "save" | "duplicate" | "edit" | "open";
 } | null;
 type ExerciseLibraryFilters = {
   disciplines: ExerciseDiscipline[];
@@ -681,6 +683,8 @@ export default function LiftLogApp({
     programId?: string;
     athleteIds?: string[];
   }>({});
+  const [coachScheduleProgram, setCoachScheduleProgram] =
+    useState<CoachAssignedProgramSummary | null>(null);
   const [respondingInvite, setRespondingInvite] = useState<{
     id: string;
     response: "accepted" | "declined";
@@ -2173,7 +2177,7 @@ export default function LiftLogApp({
     }
   }
 
-  async function publishProgram(title: string, description: string) {
+  async function saveProgram(title: string, description: string) {
     if (!program || programAction) return;
     const nextTitle = title.trim();
     const nextDescription = description.trim();
@@ -2182,9 +2186,9 @@ export default function LiftLogApp({
       notify("Program saved for the local demo");
       return;
     }
-    setProgramAction({ id: program.id, kind: "publish" });
+    setProgramAction({ id: program.id, kind: "save" });
     try {
-      requireCapability(capabilitiesForProgram(program), "publish");
+      requireCapability(capabilitiesForProgram(program), "save");
       if (
         program.contentType === "quick_workout" &&
         selectedWorkout &&
@@ -2202,41 +2206,21 @@ export default function LiftLogApp({
       if (nextDescription !== program.description) {
         await repository.updateProgramDescription(program.id, nextDescription);
       }
-      await repository.publishProgram(program.versionId);
       await refreshProgramWorkspace(program.id);
       setProgram(null);
       setProgramOwnerId(viewer.id);
       notify(
         program.contentType === "quick_workout"
-          ? "Workout saved. It is ready to schedule or assign."
+          ? "Workout saved. It stays editable until you schedule or assign it."
           : program.sourceType === "coach"
-          ? "Coach program saved · the athlete can schedule it"
-          : "Program saved. It is ready to schedule.",
+          ? "Coach program saved."
+          : "Program saved. It stays editable until you schedule or assign it.",
       );
     } catch (error) {
       notify(
         error instanceof Error
           ? error.message
           : "The program could not be updated",
-      );
-    } finally {
-      setProgramAction(null);
-    }
-  }
-
-  async function createEditableDraft() {
-    if (!program || !repository || programAction) return;
-    setProgramAction({ id: program.id, kind: "edit" });
-    try {
-      selectProgram(
-        await repository.loadEditableProgram(program.athleteId, program.id),
-      );
-      notify("Editable future plan created");
-    } catch (error) {
-      notify(
-        error instanceof Error
-          ? error.message
-          : "An editable plan could not be created",
       );
     } finally {
       setProgramAction(null);
@@ -2264,6 +2248,28 @@ export default function LiftLogApp({
         error instanceof Error
           ? error.message
           : "The program could not be opened for editing",
+      );
+    } finally {
+      setProgramAction(null);
+    }
+  }
+
+  async function duplicateProgram(targetProgram: Program) {
+    if (!repository || programAction) return;
+    setProgramAction({ id: targetProgram.id, kind: "duplicate" });
+    try {
+      requireCapability(capabilitiesForProgram(targetProgram), "copyToOwn");
+      const copyId = await repository.copyProgramToOwn(targetProgram.id);
+      await refreshProgramWorkspace(copyId);
+      const copy = await repository.loadEditableProgram(viewer.id, copyId);
+      selectProgram(copy);
+      setActiveView("program");
+      notify(`${targetProgram.title} duplicated. The new copy is editable.`);
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "The content could not be duplicated",
       );
     } finally {
       setProgramAction(null);
@@ -2495,14 +2501,13 @@ export default function LiftLogApp({
     const sourceProgram = assignableOwnPrograms.find(
       (candidate) => candidate.id === programId,
     );
-    if (!sourceProgram) throw new Error("Choose a finished Own program.");
+    if (!sourceProgram) throw new Error("Choose one of your programs.");
     requireCapability(capabilitiesForProgram(sourceProgram), "assign");
     if (!athleteIds.length) throw new Error("Choose at least one athlete.");
     const assignments = repository
       ? await repository.assignOwnProgramToAthletes(
           programId,
           athleteIds,
-          sourceProgram.versionId,
         )
       : athleteIds.map((athleteId) => ({
           athleteId,
@@ -2557,6 +2562,7 @@ export default function LiftLogApp({
 
     let refreshFailed = false;
     if (repository) {
+      await refreshProgramWorkspace(programId);
       refreshFailed = !(await refreshCoachWorkspace());
     }
     const createdCount = assignments.filter(
@@ -2566,42 +2572,6 @@ export default function LiftLogApp({
       createdCount
         ? `${sourceProgram.title} assigned to ${createdCount} ${createdCount === 1 ? "athlete" : "athletes"}${refreshFailed ? " · refresh to sync details" : ""}`
         : `${sourceProgram.title} was already assigned to the selected athletes${refreshFailed ? " · refresh to sync details" : ""}`,
-    );
-    return assignments;
-  }
-
-  async function assignQuickWorkoutToAthletes(
-    programId: string,
-    athleteIds: string[],
-    plannedDate: string,
-  ): Promise<ProgramAssignment[]> {
-    const workout = assignableOwnPrograms.find(
-      (candidate) => candidate.id === programId,
-    );
-    if (!workout || workout.contentType !== "quick_workout")
-      throw new Error("Choose a finished quick workout.");
-    requireCapability(
-      capabilitiesForProgram(workout),
-      "provideInitialAssignmentDate",
-    );
-    if (!athleteIds.length) throw new Error("Choose at least one athlete.");
-    const assignments = repository
-      ? await repository.assignQuickWorkoutToAthletes(
-          programId,
-          athleteIds,
-          plannedDate,
-        )
-      : athleteIds.map((athleteId) => ({
-          athleteId,
-          assignmentId: `assignment-${programId}-${athleteId}`,
-          programId: `assigned-${programId}-${athleteId}`,
-          created: true,
-        }));
-    if (repository) await refreshCoachWorkspace();
-    setAssignmentSeed({});
-    setModal(null);
-    notify(
-      `${workout.title} scheduled for ${athleteIds.length} ${athleteIds.length === 1 ? "athlete" : "athletes"}`,
     );
     return assignments;
   }
@@ -2763,6 +2733,15 @@ export default function LiftLogApp({
     setModal("delete-content");
   }
 
+  function unassignProgram(assignmentId: string | undefined, title: string) {
+    if (!assignmentId) {
+      notify("This assignment cannot be removed.");
+      return;
+    }
+    setContentDeleteTarget({ kind: "assignment", id: assignmentId, title });
+    setModal("delete-content");
+  }
+
   async function performProgramDeletion(targetProgram: Program) {
     setProgramAction({ id: targetProgram.id, kind: "delete" });
     try {
@@ -2817,6 +2796,16 @@ export default function LiftLogApp({
       if (repository) await repository.removeWorkoutItem(target.id);
       removeItemFromProgram(target.id);
       notify(`${target.title} removed from the workout`);
+      return;
+    }
+    if (target.kind === "assignment") {
+      if (!repository) throw new Error("The program could not be unassigned.");
+      await repository.unassignProgram(target.id);
+      setProgram((current) =>
+        current?.assignmentId === target.id ? null : current,
+      );
+      await Promise.all([refreshProgramWorkspace(), refreshCoachWorkspace()]);
+      notify(`${target.title} unassigned · completed history preserved`);
       return;
     }
     await performProgramDeletion(target.program);
@@ -2939,6 +2928,70 @@ export default function LiftLogApp({
     if (!scheduleId) void loadScheduleCandidates(true);
   }
 
+  async function openScheduleForProgram(targetProgram: Program) {
+    try {
+      const detail = targetProgram.detailsLoaded === false && repository
+        ? await repository.loadProgramDetail(
+            targetProgram.athleteId,
+            targetProgram.id,
+            targetProgram.versionId,
+            targetProgram.assignmentId,
+          )
+        : targetProgram;
+      if (!detail) throw new Error("This content is no longer available.");
+      const candidates = detail.weeks.flatMap((week) =>
+        week.workouts.map((workout, workoutPosition) => {
+          const latestOccurrence = workspace.scheduledWorkouts
+            .filter(
+              (occurrence) =>
+                occurrence.programVersionId === detail.versionId &&
+                occurrence.workoutId === workout.id,
+            )
+            .sort((left, right) => right.sequenceNumber - left.sequenceNumber)[0];
+          return {
+            kind: detail.assignmentId ? "assignment" as const : "program" as const,
+            programId: detail.id,
+            assignmentId: detail.assignmentId,
+            programVersionId: detail.versionId,
+            workoutId: workout.id,
+            programTitle: detail.title,
+            workoutTitle: workout.title,
+            contentType: detail.contentType ?? "program",
+            isQuickWorkout: detail.contentType === "quick_workout",
+            weekIndex: week.index,
+            weekLabel: week.label,
+            workoutPosition,
+            scheduleLabel: workout.dayLabel,
+            estimatedMinutes: workout.durationMinutes,
+            ...(latestOccurrence
+              ? {
+                  latestOccurrence: {
+                    id: latestOccurrence.id,
+                    plannedDate: latestOccurrence.plannedDate,
+                    status: latestOccurrence.status,
+                    sequenceNumber: latestOccurrence.sequenceNumber,
+                  },
+                }
+              : {}),
+          } satisfies SchedulableWorkoutCandidate;
+        }),
+      );
+      setScheduleCandidates(candidates);
+      setFrequentScheduleCandidates([]);
+      setScheduleCandidateCursor(undefined);
+      setScheduleCandidatesError("");
+      setScheduleEditingId(null);
+      setScheduleInitialDate(null);
+      setModal("schedule");
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "The workout could not be prepared for scheduling",
+      );
+    }
+  }
+
   async function saveSchedule(scheduleId: string, date: string | null) {
     const targetSchedule = workspace.scheduledWorkouts.find(
       (schedule) => schedule.id === scheduleId,
@@ -3010,6 +3063,9 @@ export default function LiftLogApp({
     }
     if (!date) throw new Error("Choose a date for this workout.");
 
+    const sourceProgram = programCatalog.find(
+      (candidateProgram) => candidateProgram.id === candidate.programId,
+    );
     const demoScheduleId = `schedule-${Date.now()}`;
     const created = repository
       ? await repository.createScheduledOccurrence(
@@ -3070,6 +3126,9 @@ export default function LiftLogApp({
     setModal(null);
     setScheduleEditingId(null);
     setScheduleInitialDate(null);
+    if (repository && sourceProgram?.versionStatus === "draft") {
+      await refreshProgramWorkspace(candidate.programId);
+    }
     notify("Workout added to your calendar");
   }
 
@@ -3602,9 +3661,13 @@ export default function LiftLogApp({
             onRemoveItem={removeWorkoutItem}
             onReorderItems={reorderWorkoutItems}
             onSave={(title, description) =>
-              void publishProgram(title, description)
+              void saveProgram(title, description)
             }
-            onCreateDraft={createEditableDraft}
+            onDuplicate={
+              capabilitiesForProgram(program).copyToOwn
+                ? () => void duplicateProgram(program)
+                : undefined
+            }
             onBack={() => {
               setProgram(null);
               if (program.athleteId !== viewer.id) {
@@ -3620,7 +3683,7 @@ export default function LiftLogApp({
             onEditWorkout={() => setModal("workout-settings")}
             onSchedule={
               capabilitiesForProgram(program).schedule
-                ? () => openSchedule()
+                ? () => void openScheduleForProgram(program)
                 : undefined
             }
             renderWorkoutDetails={(workout) => (
@@ -3646,6 +3709,22 @@ export default function LiftLogApp({
                 onUpdateResult={() => undefined}
               />
             )}
+            workoutActivity={
+              program.athleteId !== viewer.id && selectedAthlete && selectedWorkout
+                ? selectedAthlete.agenda.filter(
+                    (entry) =>
+                      entry.workoutId === selectedWorkout.id &&
+                      (entry.assignmentId === program.assignmentId ||
+                        entry.programId === program.id ||
+                        entry.programVersionId === program.versionId),
+                  )
+                : []
+            }
+            onOpenActivity={
+              program.athleteId !== viewer.id && selectedAthlete
+                ? (entry) => openCoachAgendaEntry(selectedAthlete, entry)
+                : undefined
+            }
             />
           </Suspense>
         )}
@@ -3678,7 +3757,11 @@ export default function LiftLogApp({
               capabilitiesForProgram={capabilitiesForProgram}
               onOpen={(targetProgram) => void openProgram(targetProgram)}
               onEdit={editProgram}
+              onDuplicate={duplicateProgram}
               onDelete={deleteOwnProgram}
+              onUnassign={(targetProgram) =>
+                unassignProgram(targetProgram.assignmentId, targetProgram.title)
+              }
               onSource={setProgramSource}
               onCreate={() => {
                 setProgramTarget({
@@ -3688,7 +3771,7 @@ export default function LiftLogApp({
                 setModal("program");
               }}
               onCreateWorkout={() => setModal("quick-workout")}
-              onSchedule={() => openSchedule()}
+              onSchedule={(targetProgram) => void openScheduleForProgram(targetProgram)}
               onLoadMore={() => void loadMorePrograms()}
             />
           ))}
@@ -3823,9 +3906,18 @@ export default function LiftLogApp({
             onOpenAssignedProgram={(athlete, assignedProgram, workoutId) =>
               void openAthleteProgram(athlete, assignedProgram, workoutId)
             }
-            onOpenAgendaEntry={openCoachAgendaEntry}
             onAssignAthlete={(athlete) =>
               void openAssignmentModal({ athleteIds: [athlete.id] })
+            }
+            onScheduleAthlete={(_athlete, assignedProgram) => {
+              setCoachScheduleProgram(assignedProgram ?? null);
+              setModal("coach-schedule");
+            }}
+            onUnassignAthlete={(_athlete, assignedProgram) =>
+              unassignProgram(
+                assignedProgram.assignmentId,
+                assignedProgram.title,
+              )
             }
           />
         )}
@@ -3947,8 +4039,43 @@ export default function LiftLogApp({
             setModal(null);
           }}
           onAssign={assignProgramToAthletes}
-          onAssignQuickWorkout={assignQuickWorkoutToAthletes}
           onLoadMoreAthletes={() => void loadMoreCoachAthletes()}
+        />
+      )}
+      {modal === "coach-schedule" && selectedAthlete && (
+        <CoachScheduleModal
+          athlete={selectedAthlete}
+          initialProgram={coachScheduleProgram}
+          onClose={() => {
+            setCoachScheduleProgram(null);
+            setModal(null);
+          }}
+          onLoadProgram={(assignedProgram) => {
+            if (!repository)
+              return Promise.resolve(
+                program?.id === assignedProgram.programId ? program : null,
+              );
+            return repository.loadProgramForAthleteById(
+              selectedAthlete.id,
+              assignedProgram.programId,
+              assignedProgram.assignmentId,
+            );
+          }}
+          onSchedule={async (assignedProgram, workoutId, plannedDate) => {
+            if (!assignedProgram.assignmentId)
+              throw new Error("This assignment cannot be scheduled.");
+            if (repository) {
+              await repository.createCoachScheduledOccurrence(
+                assignedProgram.assignmentId,
+                workoutId,
+                plannedDate,
+              );
+              await refreshCoachWorkspace();
+            }
+            setCoachScheduleProgram(null);
+            setModal(null);
+            notify(`Workout added to ${selectedAthlete.name}'s calendar`);
+          }}
         />
       )}
       {modal === "program" && (
@@ -4283,7 +4410,7 @@ function NextWorkoutsView({
           {hasProgram
             ? hasPublishedProgram
               ? "Schedule workouts for any date. Your upcoming calendar sessions will appear here."
-              : "Finish and publish your program before placing workouts on the calendar."
+              : "Open your editable program to schedule its first workout."
             : "Browse the collapsed program library or build a plan from scratch."}
         </p>
         <div className="empty-actions">
@@ -5325,25 +5452,31 @@ function ProgramRow({
   program,
   viewerId,
   canEdit,
+  canDuplicate,
   canDelete,
   workoutStates,
   workoutStatus,
   action,
   onOpen,
   onEdit,
+  onDuplicate,
   onDelete,
+  deleteLabel = "Delete",
   onSchedule,
 }: {
   program: Program;
   viewerId: string;
   canEdit: boolean;
+  canDuplicate: boolean;
   canDelete: boolean;
   workoutStates?: ProgramWorkoutProgressState[];
   workoutStatus?: SingleWorkoutStatusSummary;
   action: Exclude<ProgramAction, null>["kind"] | null;
   onOpen: () => void;
   onEdit: () => void;
+  onDuplicate?: () => void;
   onDelete?: () => void;
+  deleteLabel?: "Delete" | "Unassign";
   onSchedule?: () => void;
 }) {
   const isQuickWorkout = program.contentType === "quick_workout";
@@ -5357,7 +5490,7 @@ function ProgramRow({
     workoutStates?.filter((state) => state === "completed").length ?? 0;
   const singleWorkoutStatus =
     workoutStatus?.status ??
-    (program.versionStatus === "draft" ? "draft" : "ready");
+    (program.versionStatus === "draft" ? "editable" : "locked");
   const showProgress =
     !isQuickWorkout &&
     program.versionStatus === "published";
@@ -5388,7 +5521,7 @@ function ProgramRow({
     if (workoutStatus.status === "needs_attention") {
       return `Overdue ${cardDateLabel(workoutStatus.overdueDate)}`;
     }
-    if (workoutStatus.status === "ready" && workoutStatus.lastCompletedDate) {
+    if (workoutStatus.status === "locked" && workoutStatus.lastCompletedDate) {
       return `Last completed ${cardDateLabel(workoutStatus.lastCompletedDate)}`;
     }
     return "";
@@ -5480,6 +5613,21 @@ function ProgramRow({
               )}
             </button>
           )}
+          {canDuplicate && onDuplicate && (
+            <button
+              className="icon-button"
+              disabled={Boolean(action)}
+              onClick={onDuplicate}
+              aria-label={`Duplicate ${program.title} ${objectLabel.toLowerCase()}`}
+              title={`Duplicate ${objectLabel.toLowerCase()}`}
+            >
+              {action === "duplicate" ? (
+                <LoaderCircle className="button-spinner" size={15} />
+              ) : (
+                <Copy size={15} />
+              )}
+            </button>
+          )}
           {onSchedule && (
             <button
               className="icon-button"
@@ -5496,8 +5644,8 @@ function ProgramRow({
               className="icon-button danger"
               disabled={Boolean(action)}
               onClick={onDelete}
-              aria-label={`Delete ${program.title} ${objectLabel.toLowerCase()}`}
-              title={`Delete ${objectLabel.toLowerCase()}`}
+              aria-label={`${deleteLabel} ${program.title}`}
+              title={deleteLabel === "Unassign" ? "Unassign program" : `Delete ${objectLabel.toLowerCase()}`}
             >
               {action === "delete" ? (
                 <LoaderCircle className="button-spinner" size={15} />
@@ -5525,7 +5673,9 @@ function ProgramsHome({
   capabilitiesForProgram,
   onOpen,
   onEdit,
+  onDuplicate,
   onDelete,
+  onUnassign,
   onSource,
   onCreate,
   onCreateWorkout,
@@ -5544,11 +5694,13 @@ function ProgramsHome({
   capabilitiesForProgram: (program: Program) => TrainingContentCapabilities;
   onOpen: (program: Program) => void;
   onEdit: (program: Program) => void;
+  onDuplicate: (program: Program) => void;
   onDelete: (program: Program) => void;
+  onUnassign: (program: Program) => void;
   onSource: (source: ProgramSourceTab) => void;
   onCreate: () => void;
   onCreateWorkout: () => void;
-  onSchedule: () => void;
+  onSchedule: (program: Program) => void;
   onLoadMore: () => void;
 }) {
   const [contentQuery, setContentQuery] = useState("");
@@ -5611,8 +5763,8 @@ function ProgramsHome({
     };
   const content = source === "own" ? own : coach;
   const statusOptions: ProgramRunStatus[] = [
-    "draft",
-    "ready",
+    "editable",
+    "locked",
     "scheduled",
     "in_progress",
     "needs_attention",
@@ -5684,12 +5836,24 @@ function ProgramsHome({
       viewerId={viewerId}
       {...scheduleProgress(item)}
       canEdit={capabilitiesForProgram(item).edit}
-      canDelete={capabilitiesForProgram(item).deleteOwn}
+      canDuplicate={capabilitiesForProgram(item).copyToOwn}
+      canDelete={
+        capabilitiesForProgram(item).deleteOwn ||
+        (item.sourceType === "coach" && Boolean(item.assignmentId))
+      }
       action={action?.id === item.id ? action.kind : null}
       onOpen={() => onOpen(item)}
       onEdit={() => onEdit(item)}
-      onDelete={capabilitiesForProgram(item).deleteOwn ? () => onDelete(item) : undefined}
-      onSchedule={capabilitiesForProgram(item).schedule ? onSchedule : undefined}
+      onDuplicate={capabilitiesForProgram(item).copyToOwn ? () => onDuplicate(item) : undefined}
+      onDelete={
+        capabilitiesForProgram(item).deleteOwn
+          ? () => onDelete(item)
+          : item.sourceType === "coach" && item.assignmentId
+            ? () => onUnassign(item)
+            : undefined
+      }
+      deleteLabel={item.sourceType === "coach" ? "Unassign" : "Delete"}
+      onSchedule={capabilitiesForProgram(item).schedule ? () => onSchedule(item) : undefined}
     />
   );
   return (
@@ -5697,7 +5861,7 @@ function ProgramsHome({
       <PageHeader
         eyebrow="Your training"
         title="Programs"
-        description="Draft content stays editable. Final programs and workouts are ready to schedule."
+        description="Edit freely until first scheduled or assigned. Used content stays locked; duplicate it to make changes."
       >
         <button className="button primary small" onClick={onCreateWorkout}>
           <Activity size={15} />
@@ -6741,22 +6905,9 @@ function coachProgramStatusLabel(
 function coachProgramDisplayStatus(
   status: CoachAssignedProgramSummary["status"],
 ) {
-  if (status === "awaiting_schedule") return "ready" as const;
+  if (status === "awaiting_schedule") return "locked" as const;
   if (status === "scheduled") return "in_schedule" as const;
   return status;
-}
-
-function coachRpeTone(rpe: number) {
-  if (rpe <= 4) return "low";
-  if (rpe >= 9) return "high";
-  return "balanced";
-}
-
-function coachAgendaStatusLabel(status: CoachAgendaEntry["status"]) {
-  if (status === "in_progress") return "In progress";
-  if (status === "overdue") return "Overdue";
-  if (status === "completed") return "Completed";
-  return "Planned";
 }
 
 function CoachingView({
@@ -6784,8 +6935,9 @@ function CoachingView({
   onSelectAthlete,
   onLoadMoreAthletes,
   onOpenAssignedProgram,
-  onOpenAgendaEntry,
   onAssignAthlete,
+  onScheduleAthlete,
+  onUnassignAthlete,
 }: {
   mode: "athlete" | "coach";
   viewerId: string;
@@ -6821,11 +6973,15 @@ function CoachingView({
     program: CoachAssignedProgramSummary,
     workoutId?: string,
   ) => void;
-  onOpenAgendaEntry: (
-    athlete: AthleteSummary,
-    entry: CoachAgendaEntry,
-  ) => void;
   onAssignAthlete: (athlete: AthleteSummary) => void;
+  onScheduleAthlete: (
+    athlete: AthleteSummary,
+    program?: CoachAssignedProgramSummary,
+  ) => void;
+  onUnassignAthlete: (
+    athlete: AthleteSummary,
+    program: CoachAssignedProgramSummary,
+  ) => void;
 }) {
   const hasAthleteWorkspace = athletes.length > 0 || pendingInvites.length > 0;
   return (
@@ -7156,15 +7312,18 @@ function CoachingView({
               viewerId={viewerId}
               openingProgramId={openingProgramId}
               onAssign={() => onAssignAthlete(selectedAthlete)}
+              onSchedule={(assignedProgram) =>
+                onScheduleAthlete(selectedAthlete, assignedProgram)
+              }
+              onUnassign={(assignedProgram) =>
+                onUnassignAthlete(selectedAthlete, assignedProgram)
+              }
               onOpenProgram={(assignedProgram, workoutId) =>
                 onOpenAssignedProgram(
                   selectedAthlete,
                   assignedProgram,
                   workoutId,
                 )
-              }
-              onOpenAgenda={(entry) =>
-                onOpenAgendaEntry(selectedAthlete, entry)
               }
             />
           ) : (
@@ -7185,34 +7344,21 @@ function CoachAthleteOverview({
   viewerId,
   openingProgramId,
   onAssign,
+  onSchedule,
+  onUnassign,
   onOpenProgram,
-  onOpenAgenda,
 }: {
   athlete: AthleteSummary;
   viewerId: string;
   openingProgramId: string | null;
   onAssign: () => void;
+  onSchedule: (program?: CoachAssignedProgramSummary) => void;
+  onUnassign: (program: CoachAssignedProgramSummary) => void;
   onOpenProgram: (
     program: CoachAssignedProgramSummary,
     workoutId?: string,
   ) => void;
-  onOpenAgenda: (entry: CoachAgendaEntry) => void;
 }) {
-  const upcomingEntries = athlete.agenda
-    .filter((entry) => entry.kind === "upcoming")
-    .sort((left, right) => {
-      const priority = { in_progress: 0, overdue: 1, planned: 2, completed: 3 };
-      return (
-        priority[left.status] - priority[right.status] ||
-        left.date.localeCompare(right.date)
-      );
-    })
-    .slice(0, 6);
-  const completedEntries = athlete.agenda
-    .filter((entry) => entry.kind === "completed")
-    .sort((left, right) => right.date.localeCompare(left.date))
-    .slice(0, 6);
-
   return (
     <section className="athlete-overview">
       <div className="panel athlete-hero">
@@ -7225,6 +7371,14 @@ function CoachAthleteOverview({
           </div>
         </div>
         <div className="athlete-hero-actions">
+          <button
+            className="button secondary"
+            disabled={!athlete.assignedPrograms.length}
+            onClick={() => onSchedule()}
+          >
+            <CalendarPlus size={15} />
+            Schedule workout
+          </button>
           <button className="button primary" onClick={onAssign}>
             <Dumbbell size={15} />
             Assign program
@@ -7284,17 +7438,16 @@ function CoachAthleteOverview({
                   </span>
                   <span
                     className="program-card-workout-progress"
-                    aria-label={`${assignedProgram.title}: ${assignedProgram.completedWorkouts} of ${assignedProgram.totalWorkouts} workouts completed; ${assignedProgram.scheduledWorkouts} scheduled`}
+                    aria-label={`${assignedProgram.title}: ${assignedProgram.completedWorkouts} of ${assignedProgram.totalWorkouts} workouts completed${assignedProgram.nextWorkout ? `; next workout ${assignedProgram.nextWorkout.title}` : "; no workout currently scheduled"}`}
                   >
                     <small>
                       <strong>{assignedProgram.completionPercent}% complete</strong>
                       {` · ${assignedProgram.completedWorkouts} of ${assignedProgram.totalWorkouts}`}
                     </small>
                     <small>
-                      {assignedProgram.scheduledPercent}% scheduled
                       {assignedProgram.nextWorkout
-                        ? ` · Next: ${assignedProgram.nextWorkout.title}`
-                        : ""}
+                        ? `Next: ${assignedProgram.nextWorkout.title}`
+                        : "No workout currently scheduled"}
                     </small>
                   </span>
                   <span className="program-card-meta">
@@ -7310,6 +7463,22 @@ function CoachAthleteOverview({
                     label={coachProgramStatusLabel(assignedProgram.status)}
                   />
                   <div className="program-card-actions">
+                    <button
+                      className="icon-button"
+                      onClick={() => onSchedule(assignedProgram)}
+                      aria-label={`Schedule a workout from ${assignedProgram.title}`}
+                      title="Schedule workout"
+                    >
+                      <CalendarPlus size={15} />
+                    </button>
+                    <button
+                      className="icon-button danger"
+                      onClick={() => onUnassign(assignedProgram)}
+                      aria-label={`Unassign ${assignedProgram.title}`}
+                      title="Unassign program"
+                    >
+                      <Trash2 size={15} />
+                    </button>
                     <button
                       className="icon-button"
                       disabled={Boolean(openingProgramId)}
@@ -7342,120 +7511,6 @@ function CoachAthleteOverview({
         )}
       </section>
 
-      <section className="panel coach-agenda-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Athlete calendar</p>
-            <h3>Your programs on their agenda</h3>
-          </div>
-          <span className="read-only-pill">
-            <LockKeyhole size={13} />
-            Read only
-          </span>
-        </div>
-        <div className="coach-agenda-grid">
-          <CoachAgendaGroup
-            title="Scheduled"
-            empty="No scheduled workouts from your programs."
-            entries={upcomingEntries}
-            onOpen={onOpenAgenda}
-          />
-          <CoachAgendaGroup
-            title="Recently completed"
-            empty="No workouts from your programs have been completed yet."
-            entries={completedEntries}
-            onOpen={onOpenAgenda}
-          />
-        </div>
-        <div className="coach-rpe-legend" aria-label="RPE color guide">
-          <span className="low">RPE 1–4 · low</span>
-          <span className="balanced">RPE 5–8 · usual range</span>
-          <span className="high">RPE 9–10 · high</span>
-        </div>
-      </section>
-    </section>
-  );
-}
-
-function CoachAgendaGroup({
-  title,
-  empty,
-  entries,
-  onOpen,
-}: {
-  title: string;
-  empty: string;
-  entries: CoachAgendaEntry[];
-  onOpen: (entry: CoachAgendaEntry) => void;
-}) {
-  return (
-    <section className="coach-agenda-group">
-      <div className="coach-agenda-heading">
-        <strong>{title}</strong>
-        <span>{entries.length}</span>
-      </div>
-      {entries.length ? (
-        <div className="coach-agenda-list">
-          {entries.map((entry) => {
-            const canOpen =
-              entry.kind === "upcoming" || Boolean(entry.sessionId);
-            const dateParts = coachDateLabel(entry.date).split(" ");
-            return (
-              <button
-                key={entry.id}
-                disabled={!canOpen}
-                onClick={() => onOpen(entry)}
-                aria-label={
-                  `${entry.workoutTitle}, ${entry.programTitle}, ${coachAgendaStatusLabel(entry.status)} ${coachDateLabel(entry.date, true)}${entry.kind === "completed" ? `, RPE ${entry.rpe ?? "unavailable"}` : ""}`
-                }
-              >
-                <span
-                  className={cn(
-                    "coach-agenda-date",
-                    entry.kind === "completed" && "completed",
-                  )}
-                >
-                  <small>{dateParts[0]}</small>
-                  <strong>{dateParts[1]}</strong>
-                </span>
-                <span className="coach-agenda-copy">
-                  <strong>{entry.workoutTitle}</strong>
-                  <small>{entry.programTitle}</small>
-                </span>
-                {entry.kind === "completed" ? (
-                  <span
-                    className={cn(
-                      "coach-rpe",
-                      entry.rpe ? coachRpeTone(entry.rpe) : "unavailable",
-                    )}
-                    aria-label={
-                      entry.rpe
-                        ? "Completed, RPE " + entry.rpe
-                        : "Completed, RPE unavailable"
-                    }
-                  >
-                    {entry.rpe ? "RPE " + entry.rpe : "Completed · RPE —"}
-                  </span>
-                ) : (
-                  <span
-                    className={cn("coach-agenda-state", entry.status)}
-                  >
-                    {entry.status === "planned" ? (
-                      <CalendarDays size={13} />
-                    ) : (
-                      <Clock3 size={13} />
-                    )}
-                    {coachAgendaStatusLabel(entry.status)}
-                  </span>
-                )}
-                <ChevronRight size={15} />
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="coach-agenda-empty">{empty}</p>
-      )}
     </section>
   );
 }
@@ -7913,6 +7968,13 @@ function DeleteContentModal({
         label: "Delete workout",
       };
     }
+    if (target.kind === "assignment") {
+      return {
+        title: `Unassign ${target.title}?`,
+        description: "It will disappear from Programs and any unstarted calendar entries from this assignment will be removed. Completed workout history will stay.",
+        label: "Unassign program",
+      };
+    }
     if (target.kind === "workout-item") {
       return {
         title: `Remove ${target.title}?`,
@@ -7969,7 +8031,7 @@ function DeleteContentModal({
           {deleting ? (
             <>
               <LoaderCircle className="button-spinner" size={15} />
-              Deleting…
+              {target.kind === "assignment" ? "Unassigning…" : "Deleting…"}
             </>
           ) : (
             <>
@@ -8745,7 +8807,7 @@ function InviteModal({
             </span>
             <span>
               <Check size={14} />
-              Create and publish future program content
+              Create and assign future program content
             </span>
             <span>
               <LockKeyhole size={14} />
@@ -8833,6 +8895,120 @@ function InviteModal({
   );
 }
 
+function CoachScheduleModal({
+  athlete,
+  initialProgram,
+  onClose,
+  onLoadProgram,
+  onSchedule,
+}: {
+  athlete: AthleteSummary;
+  initialProgram: CoachAssignedProgramSummary | null;
+  onClose: () => void;
+  onLoadProgram: (program: CoachAssignedProgramSummary) => Promise<Program | null>;
+  onSchedule: (
+    program: CoachAssignedProgramSummary,
+    workoutId: string,
+    plannedDate: string,
+  ) => Promise<void>;
+}) {
+  const [programId, setProgramId] = useState(
+    initialProgram?.id ?? athlete.assignedPrograms[0]?.id ?? "",
+  );
+  const [loadedProgram, setLoadedProgram] = useState<Program | null>(null);
+  const [workoutId, setWorkoutId] = useState("");
+  const [plannedDate, setPlannedDate] = useState(() => localDateOnly(new Date()));
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const selectedProgram = athlete.assignedPrograms.find(
+    (candidate) => candidate.id === programId,
+  );
+  const workouts = loadedProgram
+    ? loadedProgram.weeks.flatMap((week) => week.workouts)
+    : [];
+
+  useEffect(() => {
+    if (!selectedProgram) return;
+    let active = true;
+    void onLoadProgram(selectedProgram)
+      .then((next) => {
+        if (!active) return;
+        setLoadedProgram(next);
+        setWorkoutId(next?.weeks.flatMap((week) => week.workouts)[0]?.id ?? "");
+      })
+      .catch((loadError: unknown) => {
+        if (active)
+          setError(loadError instanceof Error ? loadError.message : "The program could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [onLoadProgram, selectedProgram]);
+
+  async function save() {
+    if (!selectedProgram || !workoutId || !plannedDate || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onSchedule(selectedProgram, workoutId, plannedDate);
+    } catch (scheduleError) {
+      setError(scheduleError instanceof Error ? scheduleError.message : "The workout could not be scheduled.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ModalShell
+      title={`Schedule for ${athlete.name}`}
+      description="Choose an assigned program, workout and date—the same way you schedule your own training."
+      onClose={onClose}
+      dismissible={!saving}
+    >
+      <div className="form-grid">
+        <label className="form-field full">
+          <span>Program or workout</span>
+          <select value={programId} disabled={saving} onChange={(event) => {
+            setProgramId(event.target.value);
+            setLoading(true);
+            setError("");
+            setLoadedProgram(null);
+            setWorkoutId("");
+          }}>
+            {athlete.assignedPrograms.map((candidate) => (
+              <option value={candidate.id} key={candidate.id}>{candidate.title}</option>
+            ))}
+          </select>
+        </label>
+        <label className="form-field full">
+          <span>Workout</span>
+          <select value={workoutId} disabled={loading || saving} onChange={(event) => setWorkoutId(event.target.value)}>
+            {loading && <option value="">Loading workouts…</option>}
+            {!loading && !workouts.length && <option value="">No workouts available</option>}
+            {workouts.map((workout) => (
+              <option value={workout.id} key={workout.id}>{workout.title}</option>
+            ))}
+          </select>
+        </label>
+        <label className="form-field full">
+          <span>Date</span>
+          <input type="date" value={plannedDate} disabled={saving} onChange={(event) => setPlannedDate(event.target.value)} />
+        </label>
+      </div>
+      {error && <InlineError>{error}</InlineError>}
+      <div className="modal-actions">
+        <button className="button secondary" disabled={saving} onClick={onClose}>Cancel</button>
+        <button className="button primary" disabled={!workoutId || !plannedDate || loading || saving} onClick={save}>
+          {saving ? <><LoaderCircle className="button-spinner" size={15} />Scheduling…</> : <><CalendarPlus size={15} />Add to calendar</>}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
 function AssignProgramModal({
   programs,
   athletes,
@@ -8843,7 +9019,6 @@ function AssignProgramModal({
   initialAthleteIds = [],
   onClose,
   onAssign,
-  onAssignQuickWorkout,
   onLoadMoreAthletes,
 }: {
   programs: Program[];
@@ -8858,11 +9033,6 @@ function AssignProgramModal({
     programId: string,
     athleteIds: string[],
   ) => Promise<ProgramAssignment[]>;
-  onAssignQuickWorkout: (
-    programId: string,
-    athleteIds: string[],
-    plannedDate: string,
-  ) => Promise<ProgramAssignment[]>;
   onLoadMoreAthletes: () => void;
 }) {
   const lockedProgram = Boolean(initialProgramId);
@@ -8874,11 +9044,6 @@ function AssignProgramModal({
     () => new Set(initialAthleteIds),
   );
   const [saving, setSaving] = useState(false);
-  const [plannedDate, setPlannedDate] = useState(() => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return localDateOnly(tomorrow);
-  });
   const savingRef = useRef(false);
   const [error, setError] = useState("");
   const selectedProgram = programs.find(
@@ -8887,7 +9052,6 @@ function AssignProgramModal({
   const selectedAthletes = athletes.filter((athlete) =>
     athleteIds.has(athlete.id),
   );
-  const quickWorkout = selectedProgram?.contentType === "quick_workout";
 
   function toggleAthlete(athleteId: string) {
     setAthleteIds((previous) => {
@@ -8904,11 +9068,7 @@ function AssignProgramModal({
     setSaving(true);
     setError("");
     try {
-      if (quickWorkout) {
-        await onAssignQuickWorkout(programId, [...athleteIds], plannedDate);
-      } else {
-        await onAssign(programId, [...athleteIds]);
-      }
+      await onAssign(programId, [...athleteIds]);
     } catch (assignmentError) {
       setError(
         assignmentError instanceof Error
@@ -8923,12 +9083,8 @@ function AssignProgramModal({
 
   return (
     <ModalShell
-      title={quickWorkout ? "Assign and schedule workout" : "Assign a program"}
-      description={
-        quickWorkout
-          ? "Each athlete receives an independent copy and the session is placed on the date you choose."
-          : "Each athlete receives an independent copy. Their calendar stays unchanged until they schedule workouts."
-      }
+      title="Assign training"
+      description="Give an athlete access to one of your programs or workouts. Scheduling is a separate step."
       onClose={onClose}
       dismissible={!saving}
       wide
@@ -8936,8 +9092,8 @@ function AssignProgramModal({
       {!programs.length ? (
         <div className="empty-state modal-empty compact">
           <Dumbbell size={26} />
-          <h3>No finished Own programs</h3>
-          <p>Finish an Own program before assigning it to an athlete.</p>
+          <h3>No Own programs</h3>
+          <p>Create a program or workout before assigning it to an athlete.</p>
           <button className="button secondary" onClick={onClose}>
             Close
           </button>
@@ -8958,12 +9114,8 @@ function AssignProgramModal({
               <div className="assignment-step-heading">
                 <span>1</span>
                 <div>
-                  <strong>{quickWorkout ? "Quick workout" : "Own program"}</strong>
-                  <small>
-                    {quickWorkout
-                      ? "This one session will be scheduled for every athlete"
-                      : "Only finished programs can be assigned"}
-                  </small>
+                  <strong>Program or workout</strong>
+                  <small>Choose training from your Programs list</small>
                 </div>
               </div>
               {lockedProgram && selectedProgram ? (
@@ -8999,26 +9151,6 @@ function AssignProgramModal({
                 </label>
               )}
             </div>
-            {quickWorkout && (
-              <div className="assignment-step">
-                <div className="assignment-step-heading">
-                  <span>3</span>
-                  <div>
-                    <strong>Schedule date</strong>
-                    <small>All selected athletes get this session on this day</small>
-                  </div>
-                </div>
-                <label className="form-field full">
-                  <span>Date</span>
-                  <input
-                    type="date"
-                    value={plannedDate}
-                    disabled={saving}
-                    onChange={(event) => setPlannedDate(event.target.value)}
-                  />
-                </label>
-              </div>
-            )}
             <div className="assignment-step">
               <div className="assignment-step-heading">
                 <span>2</span>
@@ -9097,9 +9229,7 @@ function AssignProgramModal({
             <div className="assignment-progress" role="status">
               <LoaderCircle className="button-spinner" size={17} />
               <span>
-                {quickWorkout
-                  ? "Scheduling workout for selected athletes"
-                  : "Assigning shared program to"}{" "}
+                Assigning training to{" "}
                 {athleteIds.size} {athleteIds.size === 1 ? "athlete" : "athletes"}…
               </span>
             </div>
@@ -9115,18 +9245,18 @@ function AssignProgramModal({
             </button>
             <button
               className="button primary"
-              disabled={!programId || !athleteIds.size || !plannedDate || saving}
+              disabled={!programId || !athleteIds.size || saving}
               onClick={assign}
             >
               {saving ? (
                 <>
                   <LoaderCircle className="button-spinner" size={15} />
-                  {quickWorkout ? "Scheduling…" : "Assigning…"}
+                  Assigning…
                 </>
               ) : (
                 <>
                   <UserPlus size={15} />
-                  {quickWorkout ? "Assign & schedule" : "Assign to"}{" "}
+                  Assign to{" "}
                   {athleteIds.size || 0}{" "}
                   {athleteIds.size === 1 ? "athlete" : "athletes"}
                 </>

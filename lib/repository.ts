@@ -2054,22 +2054,11 @@ export class LiftLogRepository {
       assignmentId === undefined
         ? this.programSelectors.get(programId)?.assignmentId
         : assignmentId;
-    let program = await this.getProgramVersionDetail(
+    const program = await this.getProgramVersionDetail(
       inferred ? { assignmentId: inferred } : { programId },
     );
     if (program?.versionStatus === "draft") return program;
-    if (inferred) {
-      await this.forkProgramAssignment(inferred);
-      this.queryCache.invalidate(`program-detail:assignment:${inferred}:`);
-      program = await this.getProgramVersionDetail({ assignmentId: inferred });
-    } else {
-      await this.createProgramDraft(programId);
-      this.queryCache.invalidate(`program-detail:program:${programId}:`);
-      program = await this.getProgramVersionDetail({ programId });
-    }
-    if (!program || program.versionStatus !== "draft")
-      throw new Error("The editable program copy could not be loaded");
-    return program;
+    throw new Error("This content is locked. Duplicate it to make changes.");
   }
 
   private syncTimezoneIfChanged(savedTimezone: string | null) {
@@ -2225,14 +2214,13 @@ export class LiftLogRepository {
       target_program_id: programId,
     });
     if (result.error || !result.data)
-      fail("Could not copy the program", result.error);
+      fail("Could not duplicate the content", result.error);
     return String(result.data);
   }
 
   async assignOwnProgramToAthletes(
     programId: string,
     athleteIds: string[],
-    versionId: string,
     idempotencyKey = crypto.randomUUID(),
   ): Promise<ProgramAssignment[]> {
     const uniqueAthleteIds = Array.from(new Set(athleteIds));
@@ -2240,12 +2228,8 @@ export class LiftLogRepository {
       throw new Error("Choose at least one athlete");
     }
 
-    if (!versionId) {
-      throw new Error("Choose a published program version to assign");
-    }
-    const result = await this.client.rpc("assign_published_program_version", {
+    const result = await this.client.rpc("assign_program_for_use", {
       target_program_id: programId,
-      target_version_id: versionId,
       target_athlete_ids: uniqueAthleteIds,
       target_idempotency_key: idempotencyKey,
     });
@@ -2317,7 +2301,7 @@ export class LiftLogRepository {
   ): Promise<ProgramAssignment[]> {
     const uniqueAthleteIds = Array.from(new Set(athleteIds));
     if (!uniqueAthleteIds.length) throw new Error("Choose at least one athlete");
-    const result = await this.client.rpc("assign_quick_workout_to_athletes", {
+    const result = await this.client.rpc("assign_quick_workout_for_use", {
       target_program_id: programId,
       target_athlete_ids: uniqueAthleteIds,
       target_planned_date: plannedDate,
@@ -2371,15 +2355,6 @@ export class LiftLogRepository {
     if (result.error) fail("Could not reorder exercises", result.error);
   }
 
-  async createProgramDraft(programId: string) {
-    const result = await this.client.rpc("create_program_draft", {
-      target_program_id: programId,
-    });
-    if (result.error || !result.data)
-      fail("Could not create an editable program copy", result.error);
-    return String(result.data);
-  }
-
   async scheduleWorkout(
     scheduledWorkoutId: string,
     plannedDate: string | null,
@@ -2399,7 +2374,7 @@ export class LiftLogRepository {
     plannedDate: string,
     idempotencyKey = crypto.randomUUID(),
   ): Promise<ScheduledWorkout> {
-    const result = await this.client.rpc("create_scheduled_occurrence", {
+    const result = await this.client.rpc("create_scheduled_occurrence_for_use", {
       target_program_id: assignmentId ? null : programId,
       target_assignment_id: assignmentId ?? null,
       target_workout_id: workoutId,
@@ -2422,6 +2397,47 @@ export class LiftLogRepository {
     this.invalidateCalendarMutation(scheduleId);
     this.bootstrapLoadPromise = null;
     return schedule;
+  }
+
+  async createCoachScheduledOccurrence(
+    assignmentId: string,
+    workoutId: string,
+    plannedDate: string,
+    idempotencyKey = crypto.randomUUID(),
+  ): Promise<string> {
+    const result = await this.client.rpc("create_coach_scheduled_occurrence", {
+      target_assignment_id: assignmentId,
+      target_workout_id: workoutId,
+      target_planned_date: plannedDate,
+      target_idempotency_key: idempotencyKey,
+    });
+    if (result.error)
+      fail("Could not add the workout to the athlete's calendar", result.error);
+    const row = firstJsonRecord(result.data);
+    const scheduleId = row
+      ? jsonString(row, "id", "schedule_id", "scheduled_workout_id")
+      : typeof result.data === "string"
+        ? result.data
+        : undefined;
+    if (!scheduleId)
+      fail("Could not add the workout to the athlete's calendar", null);
+    this.queryCache.invalidate("coach-athlete:");
+    this.queryCache.invalidate("feature:coaching:");
+    this.bootstrapLoadPromise = null;
+    return scheduleId;
+  }
+
+  async unassignProgram(assignmentId: string): Promise<void> {
+    const result = await this.client.rpc("unassign_program_assignment", {
+      target_assignment_id: assignmentId,
+    });
+    if (result.error) fail("Could not unassign the program", result.error);
+    this.queryCache.invalidate("coach-athlete:");
+    this.queryCache.invalidate("feature:coaching:");
+    this.queryCache.invalidate("program-page:");
+    this.queryCache.invalidate(`program-detail:assignment:${assignmentId}:`);
+    this.invalidateCalendarMutation();
+    this.bootstrapLoadPromise = null;
   }
 
   async setScheduledWorkoutStatus(
@@ -2715,14 +2731,6 @@ export class LiftLogRepository {
     });
     if (result.error)
       fail("Could not save the exercise prescription", result.error);
-  }
-
-  async publishProgram(versionId: string, effectiveOn = localDateOnly()) {
-    const result = await this.client.rpc("publish_program_version", {
-      target_version_id: versionId,
-      effective_on: effectiveOn,
-    });
-    if (result.error) fail("Could not publish the program", result.error);
   }
 
   async startOrResumeSession(scheduledWorkoutId: string) {
@@ -3070,7 +3078,7 @@ export class LiftLogRepository {
             ? "completed"
             : nextStatus === "in_progress"
               ? "in_progress"
-              : scheduledWorkouts > 0
+              : nextStatus === "planned"
                 ? "scheduled"
                 : "awaiting_schedule";
         const nextId = next ? jsonString(next, "id") : undefined;

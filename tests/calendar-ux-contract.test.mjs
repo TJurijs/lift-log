@@ -258,7 +258,7 @@ test("Calendar owns removal while permanent deletion stays in Programs", async (
   const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
 
   assert.doesNotMatch(programsHome, /In schedule|availabilityAction|onAvailability/);
-  assert.match(programsHome, /Final programs and workouts are ready to schedule/);
+  assert.match(programsHome, /Used content stays locked; duplicate it to make changes/);
   assert.match(programsHome, /programItems[\s\S]*workoutItems/);
   assert.match(programsHome, />Programs<[/]strong>/);
   assert.match(programsHome, />Single workouts<[/]strong>/);
@@ -266,13 +266,14 @@ test("Calendar owns removal while permanent deletion stays in Programs", async (
   assert.match(programRow, /canDelete && onDelete/);
 });
 
-test("Programs have no template-copy route and remain readable", async () => {
+test("Programs have no template route and locked content can be duplicated", async () => {
   const [app, styles] = await Promise.all([
     readFile(appUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
   ]);
   assert.doesNotMatch(app, /function LibraryProgramsView|function LibraryTemplateCard/);
-  assert.doesNotMatch(app, /handleTemplateAction|copyProgramToOwn/);
+  assert.doesNotMatch(app, /handleTemplateAction/);
+  assert.match(app, /copyProgramToOwn/);
   assert.match(
     styles,
     /\.program-card-description\s*\{[^}]*color: var\(--text-soft\)[^}]*font-size: 10px[^}]*white-space: normal/,

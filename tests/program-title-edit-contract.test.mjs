@@ -29,7 +29,7 @@ test("editable program and workout headers expose persisted name and description
   assert.match(app, /aria-label=\{`\$\{isQuickWorkout \? "Workout" : "Program"\} name`\}/);
   assert.match(app, /className="form-field program-editor-description-field"/);
   assert.match(app, /onClick=\{\(\) => onSave\(title, description\)\}/);
-  assert.match(app, /async function publishProgram\(title: string, description: string\)/);
+  assert.match(app, /async function saveProgram\(title: string, description: string\)/);
   assert.match(app, /repository\.updateProgramTitle\(program\.id, nextTitle\)/);
   assert.match(app, /repository\.updateProgramDescription\(program\.id, nextDescription\)/);
   assert.match(

@@ -61,7 +61,7 @@ test("coach assignment stores shared immutable references and forks only for exp
   );
   assert.match(
     repository,
-    /async assignOwnProgramToAthletes\([\s\S]*rpc\("assign_published_program_version"[\s\S]*target_program_id: programId,[\s\S]*target_version_id: versionId,[\s\S]*target_athlete_ids: uniqueAthleteIds,[\s\S]*target_idempotency_key: idempotencyKey/,
+    /async assignOwnProgramToAthletes\([\s\S]*rpc\("assign_program_for_use"[\s\S]*target_program_id: programId,[\s\S]*target_athlete_ids: uniqueAthleteIds,[\s\S]*target_idempotency_key: idempotencyKey/,
   );
   assert.match(
     repository,
@@ -73,6 +73,6 @@ test("coach assignment stores shared immutable references and forks only for exp
   );
   assert.match(
     repository,
-    /async assignQuickWorkoutToAthletes\([\s\S]*rpc\("assign_quick_workout_to_athletes"[\s\S]*target_athlete_ids: uniqueAthleteIds,[\s\S]*target_planned_date: plannedDate,[\s\S]*target_idempotency_key: idempotencyKey/,
+    /async assignQuickWorkoutToAthletes\([\s\S]*rpc\("assign_quick_workout_for_use"[\s\S]*target_athlete_ids: uniqueAthleteIds,[\s\S]*target_planned_date: plannedDate,[\s\S]*target_idempotency_key: idempotencyKey/,
   );
 });

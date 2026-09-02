@@ -49,7 +49,7 @@ const capabilities: TrainingContentCapabilities = {
   view: true,
   copyToOwn: false,
   edit: true,
-  publish: true,
+  save: true,
   schedule: false,
   assign: false,
   provideInitialAssignmentDate: false,
@@ -81,7 +81,6 @@ describe("mobile program exercise picker", () => {
         onRemoveItem={vi.fn()}
         onReorderItems={vi.fn()}
         onSave={vi.fn()}
-        onCreateDraft={vi.fn()}
         onBack={vi.fn()}
         onEditWorkout={vi.fn()}
         renderWorkoutDetails={() => null}

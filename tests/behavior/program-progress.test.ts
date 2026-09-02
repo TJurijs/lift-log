@@ -25,9 +25,9 @@ describe("program progress", () => {
   });
 
   it.each([
-    [true, [], "draft"],
-    [false, ["unscheduled", "unscheduled"], "ready"],
-    [false, ["skipped", "unscheduled"], "ready"],
+    [true, [], "editable"],
+    [false, ["unscheduled", "unscheduled"], "locked"],
+    [false, ["skipped", "unscheduled"], "locked"],
     [false, ["scheduled", "unscheduled"], "scheduled"],
     [false, ["due", "unscheduled"], "scheduled"],
     [false, ["completed", "scheduled"], "in_progress"],
@@ -42,8 +42,8 @@ describe("program progress", () => {
 
   it("uses the approved user-facing status labels", () => {
     const statuses: ProgramRunStatus[] = [
-      "draft",
-      "ready",
+      "editable",
+      "locked",
       "scheduled",
       "in_progress",
       "needs_attention",
@@ -52,8 +52,8 @@ describe("program progress", () => {
     expect(
       statuses.map(programRunStatusLabel),
     ).toEqual([
-      "Draft",
-      "Ready",
+      "Editable",
+      "Locked",
       "Scheduled",
       "In progress",
       "Needs attention",
@@ -100,7 +100,7 @@ describe("program progress", () => {
     });
   });
 
-  it("returns reusable workouts to Ready while retaining completion context", () => {
+  it("returns reusable workouts to Locked while retaining completion context", () => {
     expect(
       deriveSingleWorkoutStatus(
         false,
@@ -111,7 +111,7 @@ describe("program progress", () => {
         "2026-08-25",
       ),
     ).toEqual({
-      status: "ready",
+      status: "locked",
       upcomingCount: 0,
       lastCompletedDate: "2026-08-20",
     });

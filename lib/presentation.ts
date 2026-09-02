@@ -6,8 +6,8 @@ export type EntitySource = {
 };
 
 export type DisplayStatus =
-  | "draft"
-  | "ready"
+  | "editable"
+  | "locked"
   | "in_schedule"
   | "planned"
   | "in_progress"

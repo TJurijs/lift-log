@@ -9,8 +9,8 @@ export type ProgramWorkoutProgressState =
   | "skipped";
 
 export type ProgramRunStatus =
-  | "draft"
-  | "ready"
+  | "editable"
+  | "locked"
   | "scheduled"
   | "in_progress"
   | "needs_attention"
@@ -40,10 +40,10 @@ export function deriveProgramWorkoutProgressState(
 }
 
 export function deriveProgramRunStatus(
-  draft: boolean,
+  editable: boolean,
   workoutStates: ProgramWorkoutProgressState[],
 ): ProgramRunStatus {
-  if (draft) return "draft";
+  if (editable) return "editable";
   if (
     workoutStates.length > 0 &&
     workoutStates.every((state) => state === "completed")
@@ -55,13 +55,13 @@ export function deriveProgramRunStatus(
   if (workoutStates.some((state) => ["scheduled", "due"].includes(state))) {
     return "scheduled";
   }
-  return "ready";
+  return "locked";
 }
 
 export function programRunStatusLabel(status: ProgramRunStatus) {
   return {
-    draft: "Draft",
-    ready: "Ready",
+    editable: "Editable",
+    locked: "Locked",
     scheduled: "Scheduled",
     in_progress: "In progress",
     needs_attention: "Needs attention",
@@ -83,7 +83,7 @@ export function programWorkoutProgressLabel(
 }
 
 export function deriveSingleWorkoutStatus(
-  draft: boolean,
+  editable: boolean,
   schedules: Array<Pick<ScheduledWorkout, "plannedDate" | "status">>,
   today: string,
 ): SingleWorkoutStatusSummary {
@@ -98,7 +98,7 @@ export function deriveSingleWorkoutStatus(
     upcomingCount: 0,
     lastCompletedDate: completedDates.at(-1),
   };
-  if (draft) return { ...base, status: "draft" };
+  if (editable) return { ...base, status: "editable" };
 
   const active = schedules.find((schedule) => schedule.status === "in_progress");
   if (active) {
@@ -144,5 +144,5 @@ export function deriveSingleWorkoutStatus(
     };
   }
 
-  return { ...base, status: "ready" };
+  return { ...base, status: "locked" };
 }

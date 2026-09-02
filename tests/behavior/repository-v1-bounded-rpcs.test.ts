@@ -773,7 +773,7 @@ describe("v1 bounded repository RPCs", () => {
 
   it("uses exact idempotent shared assignment and occurrence mutations", async () => {
     const rpc = vi.fn(async (name: string) => {
-      if (name === "assign_published_program_version") {
+      if (name === "assign_program_for_use") {
         return {
           data: [
             {
@@ -785,7 +785,7 @@ describe("v1 bounded repository RPCs", () => {
           error: null,
         };
       }
-      if (name === "create_scheduled_occurrence") {
+      if (name === "create_scheduled_occurrence_for_use") {
         return { data: { id: "schedule-1" }, error: null };
       }
       if (name === "get_scheduled_workout_detail") {
@@ -813,7 +813,6 @@ describe("v1 bounded repository RPCs", () => {
       repository.assignOwnProgramToAthletes(
         "program-1",
         ["athlete-1", "athlete-1"],
-        "version-1",
         "11111111-1111-4111-8111-111111111111",
       ),
     ).resolves.toEqual([
@@ -833,16 +832,15 @@ describe("v1 bounded repository RPCs", () => {
     );
 
     expect(rpc.mock.calls[0]).toEqual([
-      "assign_published_program_version",
+      "assign_program_for_use",
       {
         target_program_id: "program-1",
-        target_version_id: "version-1",
         target_athlete_ids: ["athlete-1"],
         target_idempotency_key: "11111111-1111-4111-8111-111111111111",
       },
     ]);
     expect(rpc.mock.calls[1]).toEqual([
-      "create_scheduled_occurrence",
+      "create_scheduled_occurrence_for_use",
       {
         target_program_id: null,
         target_assignment_id: "assignment-1",
@@ -855,7 +853,7 @@ describe("v1 bounded repository RPCs", () => {
 
   it("uses the idempotent quick-assignment and scheduled-start contracts directly", async () => {
     const rpc = vi.fn(async (name: string) => {
-      if (name === "assign_quick_workout_to_athletes") {
+      if (name === "assign_quick_workout_for_use") {
         return {
           data: [
             {
@@ -914,7 +912,7 @@ describe("v1 bounded repository RPCs", () => {
 
     expect(rpc.mock.calls).toEqual([
       [
-        "assign_quick_workout_to_athletes",
+        "assign_quick_workout_for_use",
         {
           target_program_id: "program-1",
           target_athlete_ids: ["athlete-1"],

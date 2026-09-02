@@ -5,6 +5,11 @@ import test from "node:test";
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
 const primitivesUrl = new URL("../app/ui-primitives.tsx", import.meta.url);
+const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
+const lifecycleMigrationUrl = new URL(
+  "../supabase/migrations/202609020001_simple_content_lock_lifecycle.sql",
+  import.meta.url,
+);
 
 function sourceBetween(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -145,7 +150,7 @@ test("coach-only workspace tabs stay hidden until they have relevant coaching da
   assert.doesNotMatch(app, /Open any workout/);
 });
 
-test("published Own programs can be assigned from either coaching entry point", async () => {
+test("Own programs lock and can be assigned from either coaching entry point", async () => {
   const app = await readFile(appUrl, "utf8");
   const appShell = sourceBetween(
     app,
@@ -166,7 +171,7 @@ test("published Own programs can be assigned from either coaching entry point", 
   assert.match(
     appShell,
     /capabilitiesForProgram\(program\)\.assign[\s\S]{0,160}openAssignmentModal\(\{ programId: program\.id \}\)/,
-    "an opened program must expose assignment only for the viewer's published Own program",
+    "an opened Own program must expose assignment for coached athletes",
   );
   assert.match(
     appShell,
@@ -181,19 +186,22 @@ test("published Own programs can be assigned from either coaching entry point", 
   assert.match(assignmentModal, /dismissible=\{!saving\}/);
   assert.match(
     assignmentModal,
-    /className="assignment-progress"[\s\S]*Assigning shared program to/,
+    /className="assignment-progress"[\s\S]*Assigning training to/,
   );
   assert.doesNotMatch(assignmentModal, /independent program|copies/);
   assert.match(
     appShell,
-    /repository\.assignOwnProgramToAthletes\([\s\S]*programId,[\s\S]*athleteIds,[\s\S]*sourceProgram\.versionId/,
-    "assignment must send the selected immutable version to the set-based RPC gateway",
+    /repository\.assignOwnProgramToAthletes\([\s\S]*programId,[\s\S]*athleteIds/,
+    "assignment must send the selected program through the atomic assignment gateway",
   );
   assert.match(
     assignmentModal,
     /LoaderCircle[\s\S]*Assigning…/,
     "the assignment action must visibly show that work is in progress",
   );
+  assert.doesNotMatch(assignmentModal, /Schedule date|Assign & schedule/);
+  assert.match(app, /function CoachScheduleModal/);
+  assert.match(app, /createCoachScheduledOccurrence/);
 });
 
 test("coaching requests and assignment controls collapse for mobile", async () => {
@@ -241,4 +249,21 @@ test("coaching requests and assignment controls collapse for mobile", async () =
     mobile,
     /\.assignment-actions \.button\.primary\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/,
   );
+});
+
+test("athlete and assigning coach can unassign while completed history is preserved", async () => {
+  const [app, repository, migration] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(repositoryUrl, "utf8"),
+    readFile(lifecycleMigrationUrl, "utf8"),
+  ]);
+  assert.match(app, /item\.sourceType === "coach"[\s\S]*onUnassign\(item\)/);
+  assert.match(app, /aria-label=\{`Unassign \$\{assignedProgram\.title\}`\}/);
+  assert.match(app, /kind: "assignment"[\s\S]*Unassign program/);
+  assert.match(repository, /async unassignProgram[\s\S]*rpc\("unassign_program_assignment"/);
+  assert.match(migration, /candidate\.athlete_id = current_user_id[\s\S]*candidate\.assigned_by_id = current_user_id/);
+  assert.match(migration, /session\.status = 'in_progress'/);
+  assert.match(migration, /delete from public\.scheduled_workouts[\s\S]*status in \('planned', 'skipped'\)/);
+  assert.match(migration, /set status = 'archived'/);
+  assert.doesNotMatch(migration, /delete from public\.workout_sessions/);
 });

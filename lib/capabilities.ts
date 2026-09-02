@@ -21,7 +21,7 @@ export interface TrainingContentCapabilities {
   view: boolean;
   copyToOwn: boolean;
   edit: boolean;
-  publish: boolean;
+  save: boolean;
   schedule: boolean;
   assign: boolean;
   provideInitialAssignmentDate: boolean;
@@ -52,12 +52,13 @@ export function deriveTrainingContentCapabilities(
   const view =
     !archived &&
     (input.source === "library" || viewerIsOwner || coachCanView);
-  const published = input.lifecycle === "published";
+  const editable = input.lifecycle === "draft";
+  const locked = input.lifecycle === "published";
 
   const assign =
     view &&
     !archived &&
-    published &&
+    (editable || locked) &&
     input.source === "self" &&
     viewerIsOwner &&
     viewerIsAuthor &&
@@ -67,23 +68,24 @@ export function deriveTrainingContentCapabilities(
     view,
     copyToOwn:
       view &&
-      published &&
+      locked &&
       (input.source === "library" ||
-        (input.source === "coach" && viewerIsOwner)),
+        (input.source === "coach" && viewerIsOwner) ||
+        (input.source === "self" && viewerIsOwner && viewerIsAuthor)),
     edit:
       view &&
       !archived &&
       viewerCanAuthor &&
-      input.lifecycle !== "superseded",
-    publish:
+      editable,
+    save:
       view &&
       !archived &&
       viewerCanAuthor &&
-      input.lifecycle === "draft",
+      editable,
     schedule:
       view &&
       !archived &&
-      published &&
+      (editable || locked) &&
       viewerIsOwner &&
       input.source !== "library",
     assign,
@@ -94,7 +96,8 @@ export function deriveTrainingContentCapabilities(
       !archived &&
       input.source === "self" &&
       viewerIsOwner &&
-      viewerIsAuthor,
+      viewerIsAuthor &&
+      editable,
     archiveInstance:
       view &&
       !archived &&

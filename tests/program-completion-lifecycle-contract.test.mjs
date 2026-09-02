@@ -63,7 +63,7 @@ test("finalized Own and assigned programs schedule one selected occurrence", asy
   assert.match(repository, /rpc\("list_schedulable_workouts"/);
   assert.match(
     repository,
-    /async createScheduledOccurrence[\s\S]*rpc\("create_scheduled_occurrence"[\s\S]*target_idempotency_key: idempotencyKey/,
+    /async createScheduledOccurrence[\s\S]*rpc\("create_scheduled_occurrence_for_use"[\s\S]*target_idempotency_key: idempotencyKey/,
   );
   assert.doesNotMatch(repository, /prepareProgramSchedule/);
   assert.doesNotMatch(app, /availabilityAction|onAvailability|In schedule/);
@@ -72,7 +72,7 @@ test("finalized Own and assigned programs schedule one selected occurrence", asy
     /schedule\.status === "completed"[\s\S]*schedule\.status === "skipped"[\s\S]*plannedDate < today[\s\S]*"overdue"/,
     "completion, skipping, and overdue dates must remain distinct workout states",
   );
-  assert.match(primitives, /ready: "Final"[\s\S]*completed: "Completed"/);
+  assert.match(primitives, /editable: "Editable"[\s\S]*locked: "Locked"[\s\S]*completed: "Completed"/);
   assert.match(
     app,
     /No workouts available to schedule[\s\S]*Save a workout or program first/,
@@ -88,13 +88,13 @@ test("program assignment is hidden without active coachees", async () => {
   );
 });
 
-test("saving a program makes it directly schedulable", async () => {
+test("saving stays editable and first use locks content", async () => {
   const app = await readAppSource();
   assert.doesNotMatch(app, /onRemoveAvailable/);
   assert.match(
     app,
-    /await repository\.publishProgram\(program\.versionId\);[\s\S]*?Program saved\. It is ready to schedule\./,
-    "saving must make an Own program ready to schedule",
+    /Program saved\. It stays editable until you schedule or assign it\./,
+    "saving must not lock unused content",
   );
   assert.match(
     app,
@@ -103,8 +103,8 @@ test("saving a program makes it directly schedulable", async () => {
   );
   assert.match(
     app,
-    /onSchedule=\{capabilitiesForProgram\(item\)\.schedule \? onSchedule : undefined\}/,
-    "final Own and Coach rows must expose one Schedule action",
+    /onSchedule=\{capabilitiesForProgram\(item\)\.schedule \? \(\) => onSchedule\(item\) : undefined\}/,
+    "schedulable Own and Coach rows must expose one Schedule action",
   );
   assert.doesNotMatch(
     app,
@@ -113,8 +113,8 @@ test("saving a program makes it directly schedulable", async () => {
   );
   assert.match(
     app,
-    /capabilitiesForProgram\(program\)\.schedule[\s\S]*?\? \(\) => openSchedule\(\)/,
-    "a program can be scheduled only after it is made available",
+    /capabilitiesForProgram\(program\)\.schedule[\s\S]*?openScheduleForProgram\(program\)/,
+    "a program can be scheduled directly from its detail",
   );
   assert.doesNotMatch(app, /This is the stable version used by scheduled workouts\./);
   assert.match(
@@ -132,7 +132,7 @@ test("available programs visualize every workout's scheduling state", async () =
     readFile(progressPath, "utf8"),
   ]);
 
-  assert.match(progress, /"draft"[\s\S]*"ready"[\s\S]*"scheduled"[\s\S]*"in_progress"[\s\S]*"needs_attention"[\s\S]*"completed"/);
+  assert.match(progress, /"editable"[\s\S]*"locked"[\s\S]*"scheduled"[\s\S]*"in_progress"[\s\S]*"needs_attention"[\s\S]*"completed"/);
   assert.match(progress, /workoutStates\.includes\("overdue"\)[\s\S]*"needs_attention"/);
   assert.match(app, /className="program-card-workout-progress"/);
   assert.match(styles, /\.program-card-workout-progress i\.due/);

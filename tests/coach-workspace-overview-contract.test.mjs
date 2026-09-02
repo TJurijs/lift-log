@@ -6,6 +6,7 @@ const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const domainUrl = new URL("../lib/domain.ts", import.meta.url);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
+const programViewUrl = new URL("../app/features/programs/ProgramView.tsx", import.meta.url);
 
 function sourceBetween(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -25,7 +26,7 @@ test("coach athlete overview uses bounded aggregate assignment progress", async 
   const coaching = sourceBetween(
     app,
     "function CoachAthleteOverview",
-    "function CoachAgendaGroup",
+    "function ExerciseModal",
   );
 
   assert.doesNotMatch(
@@ -49,8 +50,9 @@ test("coach athlete overview uses bounded aggregate assignment progress", async 
   );
   assert.match(
     coaching,
-    /assignedProgram\.completionPercent[\s\S]*assignedProgram\.completedWorkouts[\s\S]*assignedProgram\.scheduledPercent[\s\S]*assignedProgram\.nextWorkout/,
+    /assignedProgram\.completionPercent[\s\S]*assignedProgram\.completedWorkouts[\s\S]*assignedProgram\.nextWorkout[\s\S]*No workout currently scheduled/,
   );
+  assert.doesNotMatch(coaching, /assignedProgram\.scheduledPercent/);
   assert.doesNotMatch(coaching, /workoutProgress|hiddenWorkoutCount/);
   assert.match(
     coaching,
@@ -77,10 +79,10 @@ test("coach agenda opens the exact historical program version", async () => {
   );
 });
 
-test("coach agenda separates future and completed work with readable RPE states", async () => {
-  const [app, styles] = await Promise.all([
+test("athlete activity lives inside the program drill-in instead of a separate calendar", async () => {
+  const [app, programView] = await Promise.all([
     readFile(appUrl, "utf8"),
-    readFile(stylesUrl, "utf8"),
+    readFile(programViewUrl, "utf8"),
   ]);
   const overview = sourceBetween(
     app,
@@ -88,27 +90,13 @@ test("coach agenda separates future and completed work with readable RPE states"
     "function ExerciseModal",
   );
 
-  assert.match(overview, /entry\.kind === "upcoming"/);
-  assert.match(overview, /entry\.kind === "completed"/);
-  assert.match(overview, /title="Scheduled"/);
-  assert.match(overview, /title="Recently completed"/);
-  assert.match(overview, /Read only/);
-  assert.match(overview, /entry\.workoutTitle/);
-  assert.match(overview, /entry\.programTitle/);
-  assert.match(overview, /"RPE " \+ entry\.rpe/);
-  assert.match(overview, /"Completed · RPE —"/);
-  assert.match(overview, /coachAgendaStatusLabel\(entry\.status\)/);
-  assert.match(overview, /\.slice\(0, 6\)/);
-  assert.match(overview, /RPE 1–4 · low/);
-  assert.match(overview, /RPE 5–8 · usual range/);
-  assert.match(overview, /RPE 9–10 · high/);
-  assert.match(styles, /\.coach-rpe\.low[\s\S]*var\(--blue\)/);
-  assert.match(styles, /\.coach-rpe\.balanced[\s\S]*var\(--accent\)/);
-  assert.match(styles, /\.coach-rpe\.high[\s\S]*var\(--orange\)/);
-  assert.match(
-    styles,
-    /\.coach-agenda-state\.overdue[\s\S]*var\(--orange\)/,
-  );
+  assert.doesNotMatch(overview, /Athlete calendar|Your programs on their agenda|CoachAgendaGroup/);
+  assert.match(overview, /Schedule workout/);
+  assert.match(programView, /workoutActivity\?: CoachAgendaEntry\[\]/);
+  assert.match(programView, /Athlete activity/);
+  assert.match(programView, /entry\.kind === "completed"/);
+  assert.match(programView, /RPE \{entry\.rpe\}/);
+  assert.match(programView, /onOpenActivity\?\.\(entry\)/);
 });
 
 test("coach rows remain keyboard-visible and stack without mobile overflow", async () => {
@@ -120,13 +108,5 @@ test("coach rows remain keyboard-visible and stack without mobile overflow", asy
   );
 
   assert.match(styles, /\.program-catalog-card:hover/);
-  assert.match(
-    styles,
-    /\.coach-agenda-list > button:hover,\s*\.coach-agenda-list > button:focus-visible/,
-  );
   assert.match(mobile, /\.coach-assigned-program\s*\{[^}]*min-height:\s*0/);
-  assert.match(
-    mobile,
-    /\.coach-agenda-list > button\s*\{[^}]*min-height:\s*68px[^}]*grid-template-columns:\s*38px minmax\(0, 1fr\) 15px/,
-  );
 });

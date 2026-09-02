@@ -40,7 +40,7 @@ function expectNoContentCapabilities(
     view: false,
     copyToOwn: false,
     edit: false,
-    publish: false,
+    save: false,
     schedule: false,
     assign: false,
     provideInitialAssignmentDate: false,
@@ -72,7 +72,7 @@ describe("deriveTrainingContentCapabilities", () => {
           view: true,
           copyToOwn,
           edit: false,
-          publish: false,
+          save: false,
           schedule: false,
           assign: false,
           deleteOwn: false,
@@ -93,7 +93,7 @@ describe("deriveTrainingContentCapabilities", () => {
         view: true,
         copyToOwn: true,
         edit: false,
-        publish: false,
+        save: false,
         schedule: false,
         assign: false,
         provideInitialAssignmentDate: false,
@@ -109,16 +109,16 @@ describe("deriveTrainingContentCapabilities", () => {
         "draft",
         {
           edit: true,
-          publish: true,
-          schedule: false,
-          assign: false,
+          save: true,
+          schedule: true,
+          assign: true,
         },
       ],
       [
         "published",
         {
-          edit: true,
-          publish: false,
+          edit: false,
+          save: false,
           schedule: true,
           assign: true,
         },
@@ -127,7 +127,7 @@ describe("deriveTrainingContentCapabilities", () => {
         "superseded",
         {
           edit: false,
-          publish: false,
+          save: false,
           schedule: false,
           assign: false,
         },
@@ -143,8 +143,8 @@ describe("deriveTrainingContentCapabilities", () => {
 
       expect(capabilities).toMatchObject({
         view: true,
-        copyToOwn: false,
-        deleteOwn: true,
+        copyToOwn: lifecycle === "published",
+        deleteOwn: lifecycle === "draft",
         archiveInstance: false,
         ...expected,
       });
@@ -158,14 +158,14 @@ describe("deriveTrainingContentCapabilities", () => {
       expect(capabilities).toMatchObject({
         view: true,
         edit: false,
-        publish: false,
+        save: false,
         schedule: true,
         assign: false,
         deleteOwn: false,
       });
     });
 
-    it("requires an assignable athlete and a published source before assignment", () => {
+    it("requires an assignable athlete before assignment", () => {
       const withoutTarget = deriveTrainingContentCapabilities(contentInput());
       const withTarget = deriveTrainingContentCapabilities(
         contentInput({ hasAssignableAthletes: true }),
@@ -179,7 +179,7 @@ describe("deriveTrainingContentCapabilities", () => {
 
       expect(withoutTarget.assign).toBe(false);
       expect(withTarget.assign).toBe(true);
-      expect(draftWithTarget.assign).toBe(false);
+      expect(draftWithTarget.assign).toBe(true);
     });
 
     it("limits the initial-date exception to assignable quick workouts", () => {
@@ -225,8 +225,8 @@ describe("deriveTrainingContentCapabilities", () => {
           view: true,
           copyToOwn: published,
           edit: false,
-          publish: false,
-          schedule: published,
+          save: false,
+          schedule: lifecycle !== "superseded",
           assign: false,
           provideInitialAssignmentDate: false,
           deleteOwn: false,
@@ -237,11 +237,11 @@ describe("deriveTrainingContentCapabilities", () => {
 
     it.each([
       ["draft", true, true],
-      ["published", true, false],
+      ["published", false, false],
       ["superseded", false, false],
     ] as const)(
       "lets the active authoring coach handle a %s version according to lifecycle",
-      (lifecycle, edit, publish) => {
+      (lifecycle, edit, save) => {
         const capabilities = deriveTrainingContentCapabilities(
           contentInput({
             viewerId: coachId,
@@ -257,7 +257,7 @@ describe("deriveTrainingContentCapabilities", () => {
           view: true,
           copyToOwn: false,
           edit,
-          publish,
+          save,
           schedule: false,
           assign: false,
           deleteOwn: false,
@@ -514,19 +514,19 @@ describe("requireCapability", () => {
   });
 
   it("throws a typed error carrying the denied capability", () => {
-    const capabilities: Pick<TrainingContentCapabilities, "publish"> = {
-      publish: false,
+    const capabilities: Pick<TrainingContentCapabilities, "save"> = {
+      save: false,
     };
 
     try {
-      requireCapability(capabilities, "publish");
+      requireCapability(capabilities, "save");
       throw new Error("Expected requireCapability to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(CapabilityDeniedError);
       expect(error).toMatchObject({
         name: "CapabilityDeniedError",
-        message: "Capability denied: publish",
-        capability: "publish",
+        message: "Capability denied: save",
+        capability: "save",
       });
     }
   });

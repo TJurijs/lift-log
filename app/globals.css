@@ -197,7 +197,52 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   display: none;
 }
 .detail-navigation {
-  display: none;
+  position: sticky;
+  z-index: 30;
+  top: 0;
+  min-height: 54px;
+  margin: -24px 0 28px;
+  padding: 7px 10px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 1.4fr) minmax(180px, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(10, 15, 18, 0.94);
+  backdrop-filter: blur(18px);
+}
+.detail-navigation > strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detail-navigation-back,
+.detail-navigation-primary {
+  min-height: 38px;
+  padding: 5px 8px;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 680;
+  cursor: pointer;
+}
+.detail-navigation-back {
+  justify-self: start;
+}
+.detail-navigation-action {
+  display: flex;
+  justify-content: flex-end;
+}
+.desktop-detail-action {
+  display: none !important;
 }
 
 /* Authentication */
@@ -1125,7 +1170,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   box-shadow: 0 0 0 3px rgba(111, 214, 162, 0.08);
 }
 .status-badge.skipped i,
-.status-badge.ready i {
+.status-badge.locked i {
   background: var(--muted-dark);
   box-shadow: none;
 }
@@ -1134,7 +1179,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   background: var(--blue);
   box-shadow: 0 0 0 3px rgba(115, 184, 255, 0.08);
 }
-.status-badge.draft i,
+.status-badge.editable i,
 .status-badge.pending i {
   background: var(--orange);
   box-shadow: 0 0 0 3px rgba(242, 169, 107, 0.08);
