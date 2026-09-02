@@ -232,6 +232,8 @@ begin
       and week.program_version_id = candidate.draft_version_id;
     delete from public.program_weeks week
     where week.program_version_id = candidate.draft_version_id;
+    delete from public.program_phases phase
+    where phase.program_version_id = candidate.draft_version_id;
     delete from public.program_versions
     where id = candidate.draft_version_id;
 
