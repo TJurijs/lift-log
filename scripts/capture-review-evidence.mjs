@@ -1,6 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium, devices } from "@playwright/test";
+import { loadEnv } from "vite";
+import { signInSeededPersona } from "./lib/test-persona-browser-auth.mjs";
 
 try {
   process.loadEnvFile(".env.test-personas");
@@ -10,6 +12,7 @@ try {
 
 const password = process.env.TEST_PERSONA_PASSWORD;
 const baseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000";
+const browserEnvironment = loadEnv("nonprod", process.cwd(), "");
 const target = new URL(baseUrl);
 if (!password) throw new Error("TEST_PERSONA_PASSWORD is required.");
 if (target.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(target.hostname)) {
@@ -24,12 +27,13 @@ function evidencePath(filename) {
 }
 
 async function signIn(page) {
-  await page.goto(baseUrl);
-  await page.getByRole("button", { name: /Test population/i }).click();
-  await page
-    .getByPlaceholder("Enter once, then choose an account")
-    .fill(password);
-  await page.getByRole("button", { name: /Jānis Čakste/i }).click();
+  await signInSeededPersona(page, {
+    personaName: "Jānis Čakste",
+    password,
+    supabaseUrl: browserEnvironment.VITE_SUPABASE_URL,
+    publishableKey: browserEnvironment.VITE_SUPABASE_PUBLISHABLE_KEY,
+    appUrl: baseUrl,
+  });
   await page.getByRole("heading", { name: "Next workouts" }).waitFor();
 }
 

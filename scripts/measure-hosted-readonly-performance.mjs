@@ -5,6 +5,7 @@ import process from "node:process";
 
 import { chromium } from "@playwright/test";
 import { ENVIRONMENT_BINDINGS } from "./lib/environment-bindings.mjs";
+import { signInSeededPersona } from "./lib/test-persona-browser-auth.mjs";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:3000";
 const DEFAULT_ITERATIONS = 9;
@@ -174,6 +175,7 @@ function assertSafeEnvironment(baseUrlValue, dataEnvironment) {
   return {
     baseUrl: baseUrl.origin,
     devSupabaseOrigin,
+    devSupabasePublishableKey: selected.VITE_SUPABASE_PUBLISHABLE_KEY,
     productionSiteOrigin,
     productionSupabaseOrigin,
     dataEnvironment,
@@ -536,19 +538,6 @@ function firstProgramDetailTrigger(page) {
     .first();
 }
 
-async function openNextWorkoutsList(page) {
-  await navigate(page, "Next workouts");
-  const back = appContent(page).getByRole("button", {
-    name: /^(?:Next workouts|Back to Next(?: workouts)?)$/u,
-  });
-  if (await back.isVisible()) await back.click();
-  await firstProgramRunDetailTrigger(page).waitFor({ state: "visible" });
-}
-
-function firstProgramRunDetailTrigger(page) {
-  return appContent(page).getByRole("button", { name: /^View plan$/u }).first();
-}
-
 async function startResponsivenessProbe(page) {
   await page.evaluate(() => {
     const probe = { longTasks: [], interactions: [], observers: [] };
@@ -635,21 +624,22 @@ async function signInPersona({
   cdpSession,
   safetyState,
 }) {
-  await page.goto(environment.baseUrl, { waitUntil: "domcontentloaded" });
+  await signInSeededPersona(page, {
+    personaName,
+    password,
+    supabaseUrl: environment.devSupabaseOrigin,
+    publishableKey: environment.devSupabasePublishableKey,
+    appUrl: environment.baseUrl,
+  });
   if (new URL(page.url()).origin !== environment.baseUrl) {
     throw new Error("The local app navigated away from its guarded loopback origin.");
   }
-  await page.getByRole("button", { name: /Test population/iu }).click();
-  await page
-    .getByPlaceholder("Enter once, then choose an account")
-    .fill(password);
 
   return measureWindow({
     name: `${personaName}:bootstrap`,
-    action: () =>
-      page
-        .getByRole("button", { name: new RegExp(personaName, "iu") })
-        .click(),
+    // Authentication is set up out of band so test personas never appear in
+    // the product UI. Measure the resulting shell bootstrap instead.
+    action: async () => undefined,
     // A seeded persona may resume straight into an active workout, in which
     // case the app shell is ready even though the Next navigation item is not
     // the current page until the user leaves that detail.
@@ -836,19 +826,6 @@ function raimondsTargets(page) {
   const myAthletes = page.getByRole("tab", { name: /My athletes/u });
 
   return [
-    {
-      id: "program-run-detail",
-      label: "Active program detail",
-      kind: "detail",
-      setup: () => openNextWorkoutsList(page),
-      action: () => firstProgramRunDetailTrigger(page).click(),
-      ready: () =>
-        appContent(page)
-          .getByRole("button", {
-            name: /^(?:Next workouts|Back to Next(?: workouts)?)$/u,
-          })
-          .waitFor({ state: "visible" }),
-    },
     {
       id: "coaching-my-coaches",
       label: "Coaching · My coaches",

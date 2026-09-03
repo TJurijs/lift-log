@@ -84,7 +84,6 @@ test("performance harness uses semantic selected state and supports isolated loc
   }
   for (const targetId of [
     "program-detail",
-    "program-run-detail",
     "coach-athlete-detail",
   ]) {
     assert.match(

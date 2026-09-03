@@ -1,4 +1,6 @@
 import { expect, type Page } from "@playwright/test";
+import { loadEnv } from "vite";
+import { signInSeededPersona } from "../../scripts/lib/test-persona-browser-auth.mjs";
 
 let personaPassword: string | undefined;
 
@@ -22,12 +24,14 @@ function getPersonaPassword() {
 }
 
 export async function signInAsTestPersona(page: Page, personaName: string) {
-  await page.goto("/");
-  await page.getByRole("button", { name: /Test population/i }).click();
-  await page
-    .getByPlaceholder("Enter once, then choose an account")
-    .fill(getPersonaPassword());
-  await page.getByRole("button", { name: new RegExp(personaName, "i") }).click();
+  const environment = loadEnv("nonprod", process.cwd(), "");
+  await signInSeededPersona(page, {
+    personaName,
+    password: getPersonaPassword(),
+    supabaseUrl: environment.VITE_SUPABASE_URL,
+    publishableKey: environment.VITE_SUPABASE_PUBLISHABLE_KEY,
+    appUrl: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000",
+  });
   await expect(
     page.getByRole("button", { name: "Next workouts", exact: true }),
   ).toBeVisible();
