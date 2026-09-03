@@ -10,6 +10,10 @@ const previousLifecycleUrl = new URL(
   "../supabase/migrations/202608290001_v1_performance_data_architecture.sql",
   import.meta.url,
 );
+const readGrantMigrationUrl = new URL(
+  "../supabase/migrations/202609030011_grant_program_run_read_access.sql",
+  import.meta.url,
+);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 
 function sqlFunction(source, name, schema = "public") {
@@ -530,7 +534,10 @@ test("authenticated owners retain the explicit publish compatibility path", asyn
 });
 
 test("run participant RLS can execute its guarded authorization predicate", async () => {
-  const sql = await readFile(migrationUrl, "utf8");
+  const [sql, grants] = await Promise.all([
+    readFile(migrationUrl, "utf8"),
+    readFile(readGrantMigrationUrl, "utf8"),
+  ]);
 
   assert.match(
     sql,
@@ -544,4 +551,6 @@ test("run participant RLS can execute its guarded authorization predicate", asyn
     sql,
     /grant execute on function private\.can_read_program_run\(uuid\)[\s\S]*?to authenticated;/i,
   );
+  assert.match(grants, /grant select on public\.program_runs to authenticated;/i);
+  assert.match(grants, /grant select on public\.program_run_workouts to authenticated;/i);
 });
