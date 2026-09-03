@@ -553,4 +553,6 @@ test("run participant RLS can execute its guarded authorization predicate", asyn
   );
   assert.match(grants, /grant select on public\.program_runs to authenticated;/i);
   assert.match(grants, /grant select on public\.program_run_workouts to authenticated;/i);
+  assert.match(grants, /grant select, insert, update, delete on public\.program_runs to service_role;/i);
+  assert.match(grants, /grant select, insert, update, delete on public\.program_run_workouts to service_role;/i);
 });
