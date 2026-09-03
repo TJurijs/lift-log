@@ -219,7 +219,7 @@ describe("CoachWorkspace", () => {
     const user = userEvent.setup();
     const { callbacks } = renderWorkspace();
 
-    expect(screen.getByText("In use · 1/3 completed")).toBeVisible();
+    expect(screen.getByText("In progress · 1/3 completed")).toBeVisible();
     expect(screen.getByText("3 workouts")).toBeVisible();
 
     await user.click(screen.getByRole("tab", { name: "History" }));

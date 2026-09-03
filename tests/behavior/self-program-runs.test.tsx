@@ -53,7 +53,7 @@ describe("SelfProgramRuns", () => {
     const user = userEvent.setup();
     const { callbacks } = renderRuns([activeRun]);
 
-    expect(screen.getByText("In use · 11/40 completed")).toBeVisible();
+    expect(screen.getByText("In progress · 11/40 completed")).toBeVisible();
     expect(screen.getByText("40 workouts")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Open active Ten-week plan training" }));

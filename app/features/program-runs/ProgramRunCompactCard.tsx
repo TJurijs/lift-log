@@ -16,6 +16,13 @@ function assignmentDate(value: string) {
   }).format(new Date(value));
 }
 
+function shortDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${value}T12:00:00`));
+}
+
 export function ProgramRunCompactCard({
   run,
   sourceLabel,
@@ -35,9 +42,15 @@ export function ProgramRunCompactCard({
 }) {
   const quickWorkout = run.contentType === "quick_workout";
   const unscheduled = Math.max(0, run.totalWorkouts - run.scheduledWorkouts);
-  const progress = quickWorkout
-    ? "In use"
-    : `In use · ${run.completedWorkouts}/${run.totalWorkouts} completed`;
+  const progress = run.status === "in_progress"
+    ? quickWorkout
+      ? "In progress"
+      : `In progress · ${run.completedWorkouts}/${run.totalWorkouts} completed`
+    : run.scheduledWorkouts > 0
+      ? `Scheduled${run.nextWorkout?.plannedDate ? ` · ${shortDate(run.nextWorkout.plannedDate)}` : ""}`
+      : sourceLabel
+        ? "Assigned"
+        : "Ready to schedule";
 
   return (
     <article className="program-catalog-card panel program-run-compact-card">

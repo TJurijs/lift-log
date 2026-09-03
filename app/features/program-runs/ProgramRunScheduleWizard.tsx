@@ -67,6 +67,7 @@ export default function ProgramRunScheduleWizard({
   );
   const [dates, setDates] = useState<Record<string, string>>({});
   const idempotencyRef = useRef({ fingerprint: "", key: "" });
+  const isQuickWorkout = run.contentType === "quick_workout";
 
   useEffect(() => {
     let active = true;
@@ -206,25 +207,68 @@ export default function ProgramRunScheduleWizard({
     (workout) => Boolean(dates[workout.workoutId]),
   ).length;
   const undatedCount = editableWorkouts.length - datedCount;
+  const quickWorkout = isQuickWorkout ? editableWorkouts[0] : undefined;
+  const quickDate = quickWorkout ? dates[quickWorkout.workoutId] ?? "" : "";
+  const today = localDateOnly(new Date());
+  const tomorrow = addCalendarDays(today, 1);
 
   return (
     <ModalShell
       title={`Schedule ${run.title}`}
       description={
         athleteName
-          ? `Add or adjust future workout dates for ${athleteName}.`
-          : "Add or adjust future workout dates."
+          ? isQuickWorkout
+            ? `Scheduling for ${athleteName}.`
+            : `Add or adjust future workout dates for ${athleteName}.`
+          : isQuickWorkout
+            ? "Choose when this workout happens."
+            : "Add or adjust future workout dates."
       }
       onClose={onClose}
       dismissible={!saving}
       className="program-run-schedule-wizard"
-      wide
+      wide={!isQuickWorkout}
     >
       {loading ? (
         <div className="program-run-schedule-loading" role="status">
           <LoaderCircle className="button-spinner" size={22} />
           Loading the workout sequence…
         </div>
+      ) : detail && quickWorkout ? (
+        <section className="quick-workout-scheduler" aria-label="Choose workout date">
+          <div className="quick-workout-date-presets">
+            <button
+              type="button"
+              className={quickDate === today ? "selected" : ""}
+              aria-pressed={quickDate === today}
+              onClick={() => setDates({ [quickWorkout.workoutId]: today })}
+            >
+              <strong>Today</strong>
+              <small>{readableDate(today)}</small>
+            </button>
+            <button
+              type="button"
+              className={quickDate === tomorrow ? "selected" : ""}
+              aria-pressed={quickDate === tomorrow}
+              onClick={() => setDates({ [quickWorkout.workoutId]: tomorrow })}
+            >
+              <strong>Tomorrow</strong>
+              <small>{readableDate(tomorrow)}</small>
+            </button>
+          </div>
+          <label className="form-field">
+            <span>Choose another date</span>
+            <input
+              type="date"
+              aria-label={`Date for ${quickWorkout.title}`}
+              value={quickDate}
+              onChange={(event) => {
+                setSaveError("");
+                setDates({ [quickWorkout.workoutId]: event.target.value });
+              }}
+            />
+          </label>
+        </section>
       ) : detail && editableWorkouts.length ? (
         <>
           <section className="program-run-generator" aria-label="Date generator">
@@ -373,13 +417,13 @@ export default function ProgramRunScheduleWizard({
         <button
           type="button"
           className="button primary"
-          disabled={loading || saving || !editableWorkouts.length}
+          disabled={loading || saving || !editableWorkouts.length || (isQuickWorkout && !quickDate)}
           onClick={() => void save()}
         >
           {saving ? (
             <><LoaderCircle className="button-spinner" size={16} />Saving…</>
           ) : (
-            <><Check size={16} />Save all dates</>
+            <><Check size={16} />{isQuickWorkout ? "Add to calendar" : "Save all dates"}</>
           )}
         </button>
       </div>

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import ProgramRunScheduleWizard from "../../app/features/program-runs/ProgramRunScheduleWizard";
 import type { ProgramRunDetail } from "../../lib/domain";
+import { localDateOnly } from "../../lib/date-only";
 
 const detail: ProgramRunDetail = {
   id: "run-1",
@@ -79,6 +80,52 @@ function renderWizard(onSave = vi.fn().mockResolvedValue(undefined)) {
 }
 
 describe("ProgramRunScheduleWizard", () => {
+  it("uses a one-date flow for a single workout", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const quickWorkout: ProgramRunDetail = {
+      ...detail,
+      id: "quick-run",
+      title: "Quick strength",
+      contentType: "quick_workout",
+      status: "not_started",
+      totalWorkouts: 1,
+      scheduledWorkouts: 0,
+      completedWorkouts: 0,
+      completionPercent: 0,
+      workouts: [{
+        id: "quick-slot",
+        runId: "quick-run",
+        workoutId: "quick-workout",
+        title: "Quick strength",
+        position: 0,
+        estimatedMinutes: 45,
+        status: "unscheduled",
+        prescriptionOverrides: {},
+      }],
+    };
+
+    render(
+      <ProgramRunScheduleWizard
+        run={quickWorkout}
+        athleteName="Elina"
+        onLoad={vi.fn().mockResolvedValue(quickWorkout)}
+        onClose={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+
+    expect(await screen.findByText("Scheduling for Elina.")).toBeVisible();
+    expect(screen.queryByText("Generate a schedule")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to calendar" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /Today/ }));
+    await user.click(screen.getByRole("button", { name: "Add to calendar" }));
+    expect(onSave).toHaveBeenCalledWith(
+      [{ workoutId: "quick-workout", plannedDate: localDateOnly(new Date()) }],
+      expect.any(String),
+    );
+  });
+
   it("keeps manual training-day choices synchronized with frequency", async () => {
     const user = userEvent.setup();
     renderWizard();

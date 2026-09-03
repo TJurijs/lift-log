@@ -6,6 +6,38 @@
   overflow: hidden;
 }
 
+.quick-workout-scheduler {
+  display: grid;
+  gap: 14px;
+}
+
+.quick-workout-date-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.quick-workout-date-presets button {
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  display: grid;
+  gap: 3px;
+  color: var(--text);
+  background: var(--panel-soft);
+  text-align: left;
+}
+
+.quick-workout-date-presets button.selected {
+  border-color: var(--accent);
+  background: rgba(197, 243, 107, 0.08);
+}
+
+.quick-workout-date-presets small {
+  color: var(--muted);
+}
+
 .program-run-schedule-wizard > .program-run-generator,
 .program-run-schedule-wizard > .program-run-date-list,
 .program-run-schedule-wizard > .inline-error,
