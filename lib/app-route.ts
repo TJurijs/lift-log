@@ -28,7 +28,7 @@ export type AppDetailData =
       kind: "workout-log";
       session: CompletedSession;
       athleteId?: string;
-      returnView: "calendar" | "coaching" | "program";
+      returnView: "today" | "calendar" | "coaching" | "program";
     }
   | {
       kind: "coach-athlete";
@@ -136,7 +136,8 @@ export function appDetailDataFromHistory(
     typeof session.date !== "string" ||
     typeof session.durationMinutes !== "number" ||
     typeof session.rpe !== "number" ||
-    (value.returnView !== "calendar" &&
+    (value.returnView !== "today" &&
+      value.returnView !== "calendar" &&
       value.returnView !== "coaching" &&
       value.returnView !== "program")
   ) {

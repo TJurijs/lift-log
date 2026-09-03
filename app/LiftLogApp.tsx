@@ -283,7 +283,7 @@ type CompletedWorkoutViewState = {
   detail: CompletedSessionDetail | null;
   loading: boolean;
   error: string;
-  returnView: "calendar" | "coaching" | "program";
+  returnView: "today" | "calendar" | "coaching" | "program";
 };
 type DetailState =
   | {
@@ -861,6 +861,14 @@ export default function LiftLogApp({
   const [upcomingCursor, setUpcomingCursor] = useState<CalendarCursor>();
   const [upcomingLoading, setUpcomingLoading] = useState(false);
   const [upcomingLoadError, setUpcomingLoadError] = useState("");
+  const [completedHistory, setCompletedHistory] = useState<CompletedSession[]>(
+    initialWorkspace.completedSessions,
+  );
+  const [completedHistoryLoaded, setCompletedHistoryLoaded] = useState(
+    !repository,
+  );
+  const [completedHistoryLoading, setCompletedHistoryLoading] = useState(false);
+  const [completedHistoryError, setCompletedHistoryError] = useState("");
   const upcomingLoadingRef = useRef(false);
   const upcomingInitializedRef = useRef(false);
   const upcomingCursorRef = useRef<CalendarCursor | undefined>(undefined);
@@ -1009,6 +1017,23 @@ export default function LiftLogApp({
     [repository],
   );
   upcomingLoaderRef.current = loadUpcomingWorkouts;
+
+  const loadCompletedHistory = useCallback(async () => {
+    if (!repository || completedHistoryLoaded || completedHistoryLoading) return;
+    setCompletedHistoryLoading(true);
+    setCompletedHistoryError("");
+    try {
+      const page = await repository.listCompletedSessionSummaries({ limit: 20 });
+      setCompletedHistory(page.items);
+      setCompletedHistoryLoaded(true);
+    } catch (error) {
+      setCompletedHistoryError(
+        error instanceof Error ? error.message : "Completed workouts could not be loaded.",
+      );
+    } finally {
+      setCompletedHistoryLoading(false);
+    }
+  }, [completedHistoryLoaded, completedHistoryLoading, repository]);
 
   useEffect(() => {
     if (
@@ -2369,6 +2394,7 @@ export default function LiftLogApp({
 
         await clearConfirmedActiveSession(activeSession, "completed");
         completionTokenRef.current = null;
+        setCompletedHistoryLoaded(false);
         const visibleRange = lastCalendarRangeRef.current;
         await Promise.allSettled([
           refreshProgramRunSummaries(),
@@ -4078,7 +4104,7 @@ export default function LiftLogApp({
   async function openCalendarResults(
     session: CompletedSession,
     athleteId?: string,
-    returnView: "calendar" | "coaching" | "program" = "calendar",
+    returnView: "today" | "calendar" | "coaching" | "program" = "calendar",
   ) {
     setActiveView("today");
     pushAppDetailHistory("workout-log", "today", {
@@ -4508,6 +4534,9 @@ export default function LiftLogApp({
           !workoutPreviewSchedule && (
           <NextWorkoutsView
             schedules={upcomingWorkouts}
+            completedSessions={completedHistory}
+            completedLoading={completedHistoryLoading}
+            completedError={completedHistoryError}
             hasMore={Boolean(upcomingCursor)}
             loading={upcomingLoading}
             error={upcomingLoadError}
@@ -4516,6 +4545,10 @@ export default function LiftLogApp({
                 upcomingFailedResetRef.current ||
                   !upcomingInitializedRef.current,
               )
+            }
+            onLoadCompleted={() => void loadCompletedHistory()}
+            onOpenCompleted={(session) =>
+              void openCalendarResults(session, undefined, "today")
             }
             hasProgram={programCatalog.some(
               (candidate) =>
@@ -5380,6 +5413,7 @@ function Sidebar({
 
 function NextWorkoutsView({
   schedules,
+  completedSessions,
   hasProgram,
   hasPublishedProgram,
   startingScheduleId,
@@ -5394,8 +5428,13 @@ function NextWorkoutsView({
   loading = false,
   error = null,
   onLoadMore,
+  completedLoading = false,
+  completedError = null,
+  onLoadCompleted,
+  onOpenCompleted,
 }: {
   schedules: ScheduledWorkout[];
+  completedSessions: CompletedSession[];
   hasProgram: boolean;
   hasPublishedProgram: boolean;
   startingScheduleId: string | null;
@@ -5410,7 +5449,82 @@ function NextWorkoutsView({
   loading?: boolean;
   error?: string | null;
   onLoadMore?: () => void;
+  completedLoading?: boolean;
+  completedError?: string | null;
+  onLoadCompleted?: () => void;
+  onOpenCompleted: (session: CompletedSession) => void;
 }) {
+  const [showCompleted, setShowCompleted] = useState(false);
+  const completedHistory = [...completedSessions].sort((left, right) =>
+    right.date.localeCompare(left.date),
+  );
+  const toggleCompletedHistory = () => {
+    const nextVisible = !showCompleted;
+    setShowCompleted(nextVisible);
+    if (nextVisible) onLoadCompleted?.();
+  };
+  const completedControl = (
+    <button
+      type="button"
+      className="button secondary"
+      aria-pressed={showCompleted}
+      onClick={toggleCompletedHistory}
+    >
+      <Check size={15} />
+      {showCompleted ? "Hide completed" : "Show completed"}
+    </button>
+  );
+  const completedSection = showCompleted ? (
+    <section className="next-workouts-list" aria-label="Completed workouts">
+      <div className="section-heading">
+        <span>Completed workouts</span>
+        <small>{completedHistory.length === 1 ? "1 workout" : `${completedHistory.length} workouts`}</small>
+      </div>
+      {completedLoading ? (
+        <div className="feature-load-status" role="status">
+          <LoaderCircle size={16} className="spin" />
+          Loading completed workouts…
+        </div>
+      ) : completedError ? (
+        <div className="feature-load-status error" role="alert">
+          <span>{completedError}</span>
+          <button className="text-button" onClick={onLoadCompleted}>Try again</button>
+        </div>
+      ) : completedHistory.length ? completedHistory.map((session) => {
+        const date = new Date(`${session.date}T12:00:00`);
+        const dateLabel = date.toLocaleDateString("en", {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+        });
+        return (
+          <article className="panel next-workout-card" key={session.id}>
+            <div className="next-workout-date">
+              <Check size={17} />
+              <div>
+                <small>Completed</small>
+                <strong>{dateLabel}</strong>
+              </div>
+            </div>
+            <button
+              className="next-workout-summary"
+              onClick={() => onOpenCompleted(session)}
+            >
+              <p>Workout results</p>
+              <h2>{session.workoutTitle}</h2>
+              <small>
+                {session.durationMinutes ? formatDuration(session.durationMinutes) : "Completed"}
+                {session.rpe ? ` · RPE ${session.rpe}` : ""}
+              </small>
+            </button>
+            <StatusBadge status="completed" compact />
+          </article>
+        );
+      }) : (
+        <p className="calendar-day-agenda-empty">No completed workouts yet.</p>
+      )}
+    </section>
+  ) : null;
   const loadMoreControl = error ? (
     <div className="feature-load-status error" role="alert">
       <span>{error}</span>
@@ -5439,7 +5553,9 @@ function NextWorkoutsView({
           eyebrow="Your schedule"
           title="Next workouts"
           description="Every workout scheduled from today onward. Start any one whenever you are ready."
-        />
+        >
+          {completedControl}
+        </PageHeader>
         <section className="next-workouts-list" aria-label="Scheduled workouts">
           {schedules.map((schedule) => {
             const date = new Date(`${schedule.plannedDate}T12:00:00`);
@@ -5498,6 +5614,7 @@ function NextWorkoutsView({
           })}
         </section>
         {loadMoreControl}
+        {completedSection}
       </>
     );
   }
@@ -5509,8 +5626,11 @@ function NextWorkoutsView({
           eyebrow="Your schedule"
           title="Next workouts"
           description="Scheduled workouts will appear here as they load."
-        />
+        >
+          {completedControl}
+        </PageHeader>
         {loadMoreControl}
+        {completedSection}
       </>
     );
   }
@@ -5525,7 +5645,9 @@ function NextWorkoutsView({
             ? "Start a program to schedule the full workout sequence, or keep its dates flexible."
             : "Start only when you choose a program or create one of your own."
         }
-      />
+      >
+        {completedControl}
+      </PageHeader>
       <div className="panel empty-state today-empty">
         <CalendarDays size={28} />
         <h3>
@@ -5556,6 +5678,7 @@ function NextWorkoutsView({
           </button>
         </div>
       </div>
+      {completedSection}
     </>
   );
 }
@@ -7176,7 +7299,9 @@ function CompletedWorkoutView({
     { weekday: "long", month: "long", day: "numeric" },
   );
   const returnLabel =
-    state.returnView === "calendar"
+    state.returnView === "today"
+      ? "Next workouts"
+      : state.returnView === "calendar"
       ? "Calendar"
       : state.returnView === "program"
         ? "Program"
