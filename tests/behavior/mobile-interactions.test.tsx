@@ -132,10 +132,10 @@ describe("mobile and accessible interactions", () => {
     const agenda = container.querySelector(".calendar-day-agenda");
     expect(agenda).not.toBeNull();
     expect(within(agenda as HTMLElement).getByText("Fixture workout")).toBeVisible();
-    expect(within(agenda as HTMLElement).queryByText("Completed fixture")).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: "Show completed" }));
     expect(within(agenda as HTMLElement).getByText("Completed fixture")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Hide completed" }));
+    expect(within(agenda as HTMLElement).queryByText("Completed fixture")).toBeNull();
 
     await user.click(
       (agenda as HTMLElement).querySelector(

@@ -144,13 +144,13 @@ test("calendar event clicks open plans and immutable completed results", async (
   assert.doesNotMatch(app, /function CalendarWorkoutModal/);
 });
 
-test("completed history is hidden from the calendar until requested", async () => {
+test("completed history is visible in the calendar by default", async () => {
   const calendarView = await readFile(calendarViewUrl, "utf8");
 
-  assert.match(calendarView, /const \[showCompleted, setShowCompleted\] = useState\(false\)/);
+  assert.match(calendarView, /const \[showCompleted, setShowCompleted\] = useState\(true\)/);
   assert.match(calendarView, /aria-pressed=\{showCompleted\}/);
   assert.match(calendarView, /showCompleted \? "Hide completed" : "Show completed"/);
-  assert.match(calendarView, /if \(!showCompleted\) return result/);
+  assert.match(calendarView, /for \(const session of sessions\)/);
 });
 
 test("completed workout logs mirror the active logging grid and RPE palette", async () => {

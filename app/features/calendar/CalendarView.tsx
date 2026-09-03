@@ -72,7 +72,7 @@ export default function CalendarView({
   onVisibleRangeChange,
 }: CalendarViewProps) {
   const [monthOffset, setMonthOffset] = useState(0);
-  const [showCompleted, setShowCompleted] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(true);
   const [draggingScheduleId, setDraggingScheduleId] = useState<string | null>(
     null,
   );
