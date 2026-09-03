@@ -48,6 +48,7 @@ const ids = {
   phase: deterministicUuid("database-scale:phase"),
   assignmentRequest: deterministicUuid("database-scale:assignment-request"),
   occurrenceRequest: deterministicUuid("database-scale:occurrence-request"),
+  programRunRequest: deterministicUuid("database-scale:program-run-request"),
 };
 const athleteIds = Array.from({ length: rosterShape.athletes }, (_, index) =>
   deterministicUuid(`database-scale:athlete:${index + 1}`),
@@ -160,6 +161,24 @@ function buildProgramContent() {
 }
 
 const content = buildProgramContent();
+const completedRunWorkoutsPerAthlete = Math.max(content.workouts.length - 1, 0);
+const legacyTrainingsPerAthlete =
+  rosterShape.trainingsPerAthlete - completedRunWorkoutsPerAthlete;
+assert.ok(
+  legacyTrainingsPerAthlete >= 0,
+  "The program-run history slice exceeds the roster history scenario",
+);
+
+function dateOffset(anchor, days) {
+  const date = new Date(`${anchor}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+const programRunWorkoutDates = content.workouts.map((workout, index) => ({
+  workoutId: workout.id,
+  plannedDate: dateOffset(anchorDate, index - (content.workouts.length - 1)),
+}));
 
 async function fixtureSentinels(connection) {
   const [row] = await connection`
@@ -176,20 +195,47 @@ async function requireV1Contract(connection) {
     select
       to_regprocedure(
         'public.assign_published_program_version(uuid,uuid,uuid[],uuid)'
-      ) is not null as assignment,
+      ) is not null
+        and not has_function_privilege(
+          'authenticated',
+          'public.assign_published_program_version(uuid,uuid,uuid[],uuid)',
+          'execute'
+        ) as legacy_assignment_retired,
       to_regprocedure(
         'public.create_scheduled_occurrence(uuid,date,uuid,uuid,uuid)'
-      ) is not null as occurrence,
+      ) is not null
+        and not has_function_privilege(
+          'authenticated',
+          'public.create_scheduled_occurrence(uuid,date,uuid,uuid,uuid)',
+          'execute'
+        ) as legacy_occurrence_retired,
       to_regprocedure(
         'public.list_schedulable_workouts(integer,text,integer,integer,uuid)'
       ) is not null as schedulable,
       to_regprocedure(
         'public.get_coach_athlete_detail(uuid,integer,integer,integer)'
-      ) is not null as coach_detail
+      ) is not null as coach_detail,
+      to_regprocedure(
+        'public.create_program_runs(uuid,uuid[],jsonb,uuid,uuid)'
+      ) is not null as create_program_runs,
+      to_regprocedure(
+        'public.schedule_program_run_workouts(uuid,jsonb,uuid)'
+      ) is not null as schedule_program_run_workouts,
+      to_regprocedure(
+        'public.list_program_run_summaries(uuid,integer,timestamptz,uuid,text)'
+      ) is not null as program_run_summaries,
+      to_regprocedure(
+        'public.get_program_run_detail(uuid)'
+      ) is not null as program_run_detail,
+      to_regprocedure(
+        'public.list_authored_coach_session_summaries(uuid,integer,timestamptz,uuid)'
+      ) is not null as coach_history,
+      to_regclass('public.program_runs') is not null as program_runs,
+      to_regclass('public.program_run_workouts') is not null as program_run_workouts
   `;
   assert.ok(
     Object.values(contract).every(Boolean),
-    "Apply the V1 performance data architecture migration to local Supabase first.",
+    "Apply the V1 performance data architecture and program-runs migrations to local Supabase first.",
   );
 }
 
@@ -394,6 +440,28 @@ async function contentCounts(transaction) {
   return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, numeric(value)]));
 }
 
+async function programRunCounts(transaction) {
+  const [row] = await transaction`
+    with fixture_runs as materialized (
+      select run.id
+      from public.program_runs run
+      where run.created_by_id = ${ids.coach}::uuid
+        and run.request_key = ${ids.programRunRequest}::uuid
+    )
+    select
+      (select count(*) from fixture_runs)::bigint as runs,
+      (select count(*) from public.program_run_workouts slot
+        join fixture_runs run on run.id = slot.program_run_id)::bigint as run_workouts,
+      (select count(*) from public.scheduled_workouts occurrence
+        join fixture_runs run on run.id = occurrence.program_run_id)::bigint
+        as scheduled_workouts,
+      (select count(*) from public.program_run_schedule_requests request
+        join fixture_runs run on run.id = request.program_run_id)::bigint
+        as schedule_requests
+  `;
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, numeric(value)]));
+}
+
 function explainDocument(rows) {
   const value = rows[0]?.["QUERY PLAN"];
   const document = typeof value === "string" ? JSON.parse(value) : value;
@@ -452,6 +520,36 @@ async function benchmarkRead(
 }
 
 async function seedCompletedHistory(transaction) {
+  // Keep one future slot on each 40-workout run so the scale fixture exercises
+  // active-run summaries as well as run-linked completed history. Suppress the
+  // per-row aggregate refresh while the owner-only fixture update is in flight,
+  // then refresh every affected run once. All of this remains rollback-only.
+  await transaction`
+    select set_config('liftlog.program_run_bulk_sync', 'on', true)
+  `;
+  await transaction`
+    update public.scheduled_workouts occurrence
+    set status = 'completed'
+    from public.program_run_workouts slot
+    join public.program_runs run on run.id = slot.program_run_id
+    where occurrence.program_run_workout_id = slot.id
+      and run.created_by_id = ${ids.coach}::uuid
+      and run.request_key = ${ids.programRunRequest}::uuid
+      and slot.position < ${completedRunWorkoutsPerAthlete}
+  `;
+  await transaction`
+    select set_config('liftlog.program_run_bulk_sync', 'off', true)
+  `;
+  await transaction`
+    select private.refresh_program_run_status(run.id)
+    from public.program_runs run
+    where run.created_by_id = ${ids.coach}::uuid
+      and run.request_key = ${ids.programRunRequest}::uuid
+  `;
+
+  // The remaining history rows retain legacy-assignment lineage so the gate
+  // covers the additive migration's compatibility path without inflating the
+  // 50-athlete x 150-training scenario.
   await transaction`
     with athlete_map as (
       select athlete_id, athlete_number::integer
@@ -472,9 +570,11 @@ async function seedCompletedHistory(transaction) {
         md5(
           'liftlog-db-scale-schedule:' || athlete.athlete_number || ':' || session_number
         )::uuid as schedule_id,
-        (${anchorDate}::date - (session_number - 1))::date as completed_date
+        (${anchorDate}::date - (
+          ${completedRunWorkoutsPerAthlete} + session_number
+        ))::date as completed_date
       from athlete_map athlete
-      cross join generate_series(1, ${rosterShape.trainingsPerAthlete}) session_number
+      cross join generate_series(1, ${legacyTrainingsPerAthlete}) session_number
       join workout_map workout
         on workout.workout_number = ((session_number - 1) % ${content.workouts.length}) + 1
     )
@@ -521,9 +621,21 @@ async function seedCompletedHistory(transaction) {
       'Scale verification completed session'
     from public.scheduled_workouts scheduled
     join public.workouts workout on workout.id = scheduled.workout_id
-    where scheduled.sequence_number between 1001 and 1150
+    where scheduled.status = 'completed'
       and scheduled.program_version_id = ${ids.version}::uuid
-      and scheduled.assignment_id is not null
+      and (
+        (
+          scheduled.assignment_id is not null
+          and scheduled.sequence_number between 1001
+            and ${1000 + legacyTrainingsPerAthlete}
+        )
+        or exists (
+          select 1 from public.program_runs run
+          where run.id = scheduled.program_run_id
+            and run.created_by_id = ${ids.coach}::uuid
+            and run.request_key = ${ids.programRunRequest}::uuid
+        )
+      )
   `;
 
   // Completed results are intentionally immutable through the app-facing
@@ -561,8 +673,7 @@ async function seedCompletedHistory(transaction) {
       order by section.position, candidate.position, candidate.id
       limit 1
     ) item on true
-    where session.assignment_id is not null
-      and session.program_version_id = ${ids.version}::uuid
+    where session.program_version_id = ${ids.version}::uuid
       and session.status = 'completed'
   `;
 
@@ -580,8 +691,7 @@ async function seedCompletedHistory(transaction) {
       ''
     from public.session_item_logs log
     join public.workout_sessions session on session.id = log.workout_session_id
-    where session.assignment_id is not null
-      and session.program_version_id = ${ids.version}::uuid
+    where session.program_version_id = ${ids.version}::uuid
       and session.status = 'completed'
   `;
 
@@ -607,6 +717,9 @@ async function analyzeFixtureTables(transaction) {
     public.workout_items,
     public.prescribed_entries,
     public.program_assignments,
+    public.program_runs,
+    public.program_run_workouts,
+    public.program_run_schedule_requests,
     public.scheduled_workouts,
     public.workout_sessions,
     public.session_item_logs,
@@ -626,18 +739,38 @@ async function runVerification(transaction) {
     select count(*)::bigint as count from public.program_assignments
   `;
 
-  await setAuthenticatedUser(transaction, ids.coach);
-  const assignmentSql = `select * from public.assign_published_program_version(
-    $1::uuid, $2::uuid, $3::uuid[], $4::uuid
-  )`;
-  const assignmentPlan = await explain(transaction, assignmentSql, [
+  // Retain a representative legacy-history slice without calling any retired
+  // app RPC. This owner-only insert is test-fixture setup inside the rollback-
+  // only transaction; authenticated users have no assignment writer.
+  await setDatabaseOwner(transaction);
+  const legacyAssignmentFixtureSql = `
+    insert into public.program_assignments (
+      id, athlete_id, assigned_by_id, source_program_id, source_version_id,
+      assignment_request_key, status
+    )
+    select
+      md5('liftlog-db-scale-assignment:' || athlete_id::text)::uuid,
+      athlete_id,
+      $1::uuid,
+      $2::uuid,
+      $3::uuid,
+      $4::uuid,
+      'active'
+    from unnest($5::uuid[]) as requested(athlete_id)
+    on conflict (assigned_by_id, athlete_id, assignment_request_key)
+      where assignment_request_key is not null
+    do nothing
+    returning athlete_id, id
+  `;
+  const assignmentPlan = await explain(transaction, legacyAssignmentFixtureSql, [
+    ids.coach,
     ids.program,
     ids.version,
-    athleteIds,
     ids.assignmentRequest,
+    athleteIds,
   ]);
-  reports.plans.assignment = assignmentPlan.document;
-  reports.queries.assignment = {
+  reports.plans["legacy-history-assignment-fixture"] = assignmentPlan.document;
+  reports.queries["legacy-history-assignment-fixture"] = {
     ...assignmentPlan.metrics,
     requestedAthletes: athleteIds.length,
   };
@@ -648,7 +781,7 @@ async function runVerification(transaction) {
   equalCounts(
     contentBeforeAssignment,
     contentAfterAssignment,
-    "Shared assignment cloned program content",
+    "Legacy history fixture cloned program content",
   );
   const [assignmentCountAfter] = await transaction`
     select count(*)::bigint as count from public.program_assignments
@@ -658,20 +791,19 @@ async function runVerification(transaction) {
   assert.equal(assignmentsCreated, athleteIds.length);
   assert.ok(
     assignmentPlan.metrics.walRecords <= athleteIds.length * 100,
-    "Shared assignment WAL amplification exceeded 100 records per athlete",
+    "Legacy history fixture exceeded 100 WAL records per athlete",
   );
 
-  await setAuthenticatedUser(transaction, ids.coach);
-  const assignmentReplay = await transaction.unsafe(assignmentSql, [
+  const assignmentReplay = await transaction.unsafe(legacyAssignmentFixtureSql, [
+    ids.coach,
     ids.program,
     ids.version,
-    athleteIds,
     ids.assignmentRequest,
+    athleteIds,
   ]);
-  assert.equal(assignmentReplay.length, athleteIds.length);
-  assert.ok(assignmentReplay.every((row) => row.created === false));
+  assert.equal(assignmentReplay.length, 0);
   reports.assertions.push({
-    contract: "shared-assignment",
+    contract: "legacy-history-fixture",
     requested: athleteIds.length,
     assignmentRowsCreated: assignmentsCreated,
     contentRowsCloned: 0,
@@ -690,70 +822,276 @@ async function runVerification(transaction) {
   `;
   assert.ok(firstAssignment?.id);
   await setDatabaseOwner(transaction);
-  const [scheduleCountBefore] = await transaction`
-    select count(*)::bigint as count from public.scheduled_workouts
-  `;
-  const [sessionCountBeforeOccurrence] = await transaction`
-    select count(*)::bigint as count from public.workout_sessions
-  `;
-  const contentBeforeOccurrence = await contentCounts(transaction);
 
-  await setAuthenticatedUser(transaction, athleteIds[0]);
-  const occurrenceSql = `select public.create_scheduled_occurrence(
-    $1::uuid, $2::date, $3::uuid, $4::uuid, $5::uuid
-  ) as payload`;
-  const occurrencePlan = await explain(transaction, occurrenceSql, [
-    content.workouts[0].id,
-    anchorDate,
-    ids.occurrenceRequest,
+  const runCountsBefore = await programRunCounts(transaction);
+  const contentBeforeRuns = await contentCounts(transaction);
+  await setAuthenticatedUser(transaction, ids.coach);
+  const createRunsSql = `select * from public.create_program_runs(
+    $1::uuid, $2::uuid[], $3::jsonb, $4::uuid, $5::uuid
+  )`;
+  const createRunsPlan = await explain(transaction, createRunsSql, [
+    ids.program,
+    athleteIds,
+    [],
+    ids.programRunRequest,
     null,
-    firstAssignment.id,
   ]);
-  reports.plans.occurrence = occurrencePlan.document;
-  reports.queries.occurrence = occurrencePlan.metrics;
-  assert.equal(occurrencePlan.metrics.actualRows, 1);
+  reports.plans["program-run-create-50"] = createRunsPlan.document;
+  reports.queries["program-run-create-50"] = {
+    ...createRunsPlan.metrics,
+    requestedAthletes: athleteIds.length,
+    workoutsPerRun: content.workouts.length,
+  };
+  assert.equal(createRunsPlan.metrics.actualRows, athleteIds.length);
   assert.ok(
-    occurrencePlan.metrics.walRecords <= 200,
-    "One occurrence exceeded the 200-WAL-record amplification contract",
+    createRunsPlan.metrics.walRecords <= athleteIds.length * 1000,
+    "Program-run materialization exceeded 1,000 WAL records per athlete",
   );
-
-  const [occurrenceReplay] = await transaction.unsafe(occurrenceSql, [
-    content.workouts[0].id,
-    anchorDate,
-    ids.occurrenceRequest,
-    null,
-    firstAssignment.id,
-  ]);
-  assert.equal(occurrenceReplay.payload.created, false);
 
   await setDatabaseOwner(transaction);
-  const [scheduleCountAfter] = await transaction`
-    select count(*)::bigint as count from public.scheduled_workouts
-  `;
-  const schedulesCreated = numeric(scheduleCountAfter.count) - numeric(scheduleCountBefore.count);
-  assert.equal(schedulesCreated, 1);
-  equalCounts(
-    contentBeforeOccurrence,
-    await contentCounts(transaction),
-    "Creating one occurrence changed program content",
+  const runCountsAfterCreate = await programRunCounts(transaction);
+  assert.equal(
+    runCountsAfterCreate.runs - runCountsBefore.runs,
+    athleteIds.length,
   );
-  const [sessionCountAfterOccurrence] = await transaction`
+  assert.equal(
+    runCountsAfterCreate.run_workouts - runCountsBefore.run_workouts,
+    athleteIds.length * content.workouts.length,
+  );
+  assert.equal(runCountsAfterCreate.scheduled_workouts, runCountsBefore.scheduled_workouts);
+  assert.equal(runCountsAfterCreate.schedule_requests, runCountsBefore.schedule_requests);
+  const contentAfterRuns = await contentCounts(transaction);
+  assert.equal(
+    contentAfterRuns.programs,
+    contentBeforeRuns.programs,
+    "Program-run creation cloned the source program per athlete",
+  );
+
+  await setAuthenticatedUser(transaction, ids.coach);
+  const createRunsReplay = await transaction.unsafe(createRunsSql, [
+    ids.program,
+    athleteIds,
+    [],
+    ids.programRunRequest,
+    null,
+  ]);
+  assert.equal(createRunsReplay.length, athleteIds.length);
+  assert.ok(createRunsReplay.every((row) => row.created === false));
+  await setDatabaseOwner(transaction);
+  equalCounts(
+    runCountsAfterCreate,
+    await programRunCounts(transaction),
+    "Program-run creation replay changed the materialized run aggregate",
+  );
+  equalCounts(
+    contentAfterRuns,
+    await contentCounts(transaction),
+    "Program-run creation replay changed source content",
+  );
+
+  // Measure one normal run-workout scheduling mutation through the same
+  // security boundary used by the app. The retired raw occurrence RPC is
+  // deliberately no longer executable by authenticated users.
+  await setDatabaseOwner(transaction);
+  const [firstRunForScheduling] = await transaction`
+    select run.id
+    from public.program_runs run
+    where run.athlete_id = ${athleteIds[0]}::uuid
+      and run.created_by_id = ${ids.coach}::uuid
+      and run.request_key = ${ids.programRunRequest}::uuid
+  `;
+  assert.ok(firstRunForScheduling?.id);
+  const runCountsBeforeSingleSchedule = await programRunCounts(transaction);
+  const [sessionCountBeforeSingleSchedule] = await transaction`
     select count(*)::bigint as count from public.workout_sessions
   `;
-  const sessionsCreated =
-    numeric(sessionCountAfterOccurrence.count) - numeric(sessionCountBeforeOccurrence.count);
-  assert.equal(sessionsCreated, 0);
+  const contentBeforeSingleSchedule = await contentCounts(transaction);
+  const singleWorkoutDates = [programRunWorkoutDates[0]];
+  const singleRunScheduleSql = `select public.schedule_program_run_workouts(
+    $1::uuid, $2::jsonb, $3::uuid
+  ) as payload`;
+
+  await setAuthenticatedUser(transaction, ids.coach);
+  const singleRunSchedulePlan = await explain(transaction, singleRunScheduleSql, [
+    firstRunForScheduling.id,
+    singleWorkoutDates,
+    ids.occurrenceRequest,
+  ]);
+  reports.plans["program-run-single-workout-schedule"] = singleRunSchedulePlan.document;
+  reports.queries["program-run-single-workout-schedule"] = singleRunSchedulePlan.metrics;
+  assert.equal(singleRunSchedulePlan.metrics.actualRows, 1);
+  assert.ok(
+    singleRunSchedulePlan.metrics.walRecords <= 200,
+    "One run-workout schedule exceeded the 200-WAL-record amplification contract",
+  );
+
+  const [singleRunScheduleReplay] = await transaction.unsafe(singleRunScheduleSql, [
+    firstRunForScheduling.id,
+    singleWorkoutDates,
+    ids.occurrenceRequest,
+  ]);
+  assert.equal(singleRunScheduleReplay.payload.runId, firstRunForScheduling.id);
+
+  await setDatabaseOwner(transaction);
+  const runCountsAfterSingleSchedule = await programRunCounts(transaction);
+  assert.equal(
+    runCountsAfterSingleSchedule.scheduled_workouts -
+      runCountsBeforeSingleSchedule.scheduled_workouts,
+    1,
+  );
+  assert.equal(
+    runCountsAfterSingleSchedule.schedule_requests -
+      runCountsBeforeSingleSchedule.schedule_requests,
+    1,
+  );
+  equalCounts(
+    contentBeforeSingleSchedule,
+    await contentCounts(transaction),
+    "Scheduling one run workout changed program content",
+  );
+  const [sessionCountAfterSingleSchedule] = await transaction`
+    select count(*)::bigint as count from public.workout_sessions
+  `;
+  const sessionsCreatedBySingleSchedule =
+    numeric(sessionCountAfterSingleSchedule.count) -
+    numeric(sessionCountBeforeSingleSchedule.count);
+  assert.equal(sessionsCreatedBySingleSchedule, 0);
   reports.assertions.push({
-    contract: "single-occurrence",
+    contract: "program-run-single-workout-scheduling",
     requested: 1,
-    scheduleRowsCreated: schedulesCreated,
-    sessionRowsCreated: sessionsCreated,
+    scheduleRowsCreated: 1,
+    scheduleReceiptsCreated: 1,
+    sessionRowsCreated: sessionsCreatedBySingleSchedule,
     contentRowsCreated: 0,
-    idempotentReplayCreated: occurrenceReplay.payload.created ? 1 : 0,
+    idempotentReplayRowsCreated: 0,
     maxWalRecords: 200,
-    walRecords: occurrencePlan.metrics.walRecords,
+    walRecords: singleRunSchedulePlan.metrics.walRecords,
     passed: true,
   });
+
+  // A coach normally schedules one run per repository call. Running the exact
+  // RPC once for every fixture run in one measured SELECT lets this local gate
+  // verify the full 50-athlete x 40-workout write shape without inventing a
+  // database-only mutation path.
+  await setAuthenticatedUser(transaction, ids.coach);
+  const scheduleRunsSql = `select
+      run.id,
+      public.schedule_program_run_workouts(
+        run.id,
+        $1::jsonb,
+        md5('liftlog-db-scale-run-schedule:' || run.id::text)::uuid
+      ) as payload
+    from public.program_runs run
+    where run.created_by_id = $2::uuid
+      and run.request_key = $3::uuid
+    order by run.athlete_id`;
+  const scheduleRunsPlan = await explain(transaction, scheduleRunsSql, [
+    programRunWorkoutDates,
+    ids.coach,
+    ids.programRunRequest,
+  ]);
+  reports.plans["program-run-schedule-50x40"] = scheduleRunsPlan.document;
+  reports.queries["program-run-schedule-50x40"] = {
+    ...scheduleRunsPlan.metrics,
+    requestedAthletes: athleteIds.length,
+    workoutDatesPerRun: programRunWorkoutDates.length,
+    requestedWorkoutDates: athleteIds.length * programRunWorkoutDates.length,
+  };
+  assert.equal(scheduleRunsPlan.metrics.actualRows, athleteIds.length);
+  assert.ok(
+    scheduleRunsPlan.metrics.walRecords <=
+      athleteIds.length * content.workouts.length * 200,
+    "Program-run bulk scheduling exceeded the per-workout WAL contract",
+  );
+
+  await setDatabaseOwner(transaction);
+  const runCountsAfterSchedule = await programRunCounts(transaction);
+  assert.equal(runCountsAfterSchedule.runs, athleteIds.length);
+  assert.equal(
+    runCountsAfterSchedule.run_workouts,
+    athleteIds.length * content.workouts.length,
+  );
+  assert.equal(
+    runCountsAfterSchedule.scheduled_workouts,
+    athleteIds.length * programRunWorkoutDates.length,
+  );
+  assert.equal(runCountsAfterSchedule.schedule_requests, athleteIds.length + 1);
+  const [scheduledRunShape] = await transaction`
+    select
+      count(distinct run.athlete_id)::bigint as athletes,
+      min(workout_counts.workouts)::bigint as min_workouts,
+      max(workout_counts.workouts)::bigint as max_workouts,
+      min(workout_counts.scheduled)::bigint as min_scheduled,
+      max(workout_counts.scheduled)::bigint as max_scheduled
+    from public.program_runs run
+    join lateral (
+      select
+        count(*) as workouts,
+        count(*) filter (
+          where slot.planned_date is not null
+            and slot.scheduled_workout_id is not null
+        ) as scheduled
+      from public.program_run_workouts slot
+      where slot.program_run_id = run.id
+    ) workout_counts on true
+    where run.created_by_id = ${ids.coach}::uuid
+      and run.request_key = ${ids.programRunRequest}::uuid
+  `;
+  assert.equal(numeric(scheduledRunShape.athletes), athleteIds.length);
+  assert.equal(numeric(scheduledRunShape.min_workouts), content.workouts.length);
+  assert.equal(numeric(scheduledRunShape.max_workouts), content.workouts.length);
+  assert.equal(numeric(scheduledRunShape.min_scheduled), content.workouts.length);
+  assert.equal(numeric(scheduledRunShape.max_scheduled), content.workouts.length);
+
+  await setAuthenticatedUser(transaction, ids.coach);
+  const scheduleRunsReplay = await transaction.unsafe(scheduleRunsSql, [
+    programRunWorkoutDates,
+    ids.coach,
+    ids.programRunRequest,
+  ]);
+  assert.equal(scheduleRunsReplay.length, athleteIds.length);
+  assert.ok(
+    scheduleRunsReplay.every((row) => row.payload?.runId === row.id),
+    "Program-run schedule replay did not return its original run receipts",
+  );
+  await setDatabaseOwner(transaction);
+  equalCounts(
+    runCountsAfterSchedule,
+    await programRunCounts(transaction),
+    "Program-run schedule replay changed the materialized run aggregate",
+  );
+  equalCounts(
+    contentAfterRuns,
+    await contentCounts(transaction),
+    "Program-run scheduling changed source content",
+  );
+
+  reports.assertions.push(
+    {
+      contract: "program-run-materialization",
+      requestedAthletes: athleteIds.length,
+      runsCreated: runCountsAfterCreate.runs - runCountsBefore.runs,
+      runWorkoutRowsCreated:
+        runCountsAfterCreate.run_workouts - runCountsBefore.run_workouts,
+      workoutsPerRun: content.workouts.length,
+      sourceProgramsCloned: 0,
+      idempotentReplayCreated: 0,
+      maxWalRecordsPerAthlete: 1000,
+      walRecords: createRunsPlan.metrics.walRecords,
+      passed: true,
+    },
+    {
+      contract: "program-run-bulk-scheduling",
+      athletes: athleteIds.length,
+      workoutsPerRun: content.workouts.length,
+      scheduledWorkoutRows: runCountsAfterSchedule.scheduled_workouts,
+      scheduleReceipts: runCountsAfterSchedule.schedule_requests,
+      idempotentReplayRowsCreated: 0,
+      maxWalRecordsPerWorkout: 200,
+      walRecords: scheduleRunsPlan.metrics.walRecords,
+      passed: true,
+    },
+  );
 
   await seedCompletedHistory(transaction);
   await analyzeFixtureTables(transaction);
@@ -763,29 +1101,87 @@ async function runVerification(transaction) {
       (select count(*) from public.program_assignments
         where source_version_id = ${ids.version}::uuid and status = 'active')::bigint
         as assignments,
+      (select count(*) from public.program_runs run
+        where run.created_by_id = ${ids.coach}::uuid
+          and run.request_key = ${ids.programRunRequest}::uuid)::bigint as runs,
+      (select count(*) from public.program_run_workouts slot
+        join public.program_runs run on run.id = slot.program_run_id
+        where run.created_by_id = ${ids.coach}::uuid
+          and run.request_key = ${ids.programRunRequest}::uuid)::bigint as run_workouts,
+      (select count(*) from public.program_run_workouts slot
+        join public.program_runs run on run.id = slot.program_run_id
+        where run.created_by_id = ${ids.coach}::uuid
+          and run.request_key = ${ids.programRunRequest}::uuid
+          and slot.status = 'completed')::bigint as completed_run_workouts,
       (select count(*) from public.scheduled_workouts
-        where assignment_id is not null and program_version_id = ${ids.version}::uuid
+        where program_version_id = ${ids.version}::uuid
           and status = 'completed')::bigint as completed_occurrences,
+      (select count(*) from public.scheduled_workouts occurrence
+        join public.program_runs run on run.id = occurrence.program_run_id
+        where run.created_by_id = ${ids.coach}::uuid
+          and run.request_key = ${ids.programRunRequest}::uuid
+          and occurrence.status = 'completed')::bigint as completed_run_occurrences,
+      (select count(*) from public.scheduled_workouts
+        where assignment_id is not null
+          and program_version_id = ${ids.version}::uuid
+          and status = 'completed')::bigint as completed_legacy_occurrences,
       (select count(*) from public.workout_sessions
-        where assignment_id is not null and program_version_id = ${ids.version}::uuid
+        where program_version_id = ${ids.version}::uuid
           and status = 'completed')::bigint as completed_sessions,
+      (select count(*) from public.workout_sessions session
+        join public.program_runs run on run.id = session.program_run_id
+        where run.created_by_id = ${ids.coach}::uuid
+          and run.request_key = ${ids.programRunRequest}::uuid
+          and session.status = 'completed')::bigint as completed_run_sessions,
+      (select count(*) from public.workout_sessions
+        where assignment_id is not null
+          and program_version_id = ${ids.version}::uuid
+          and status = 'completed')::bigint as completed_legacy_sessions,
       (select count(*) from public.session_item_logs log
         join public.workout_sessions session on session.id = log.workout_session_id
-        where session.assignment_id is not null
-          and session.program_version_id = ${ids.version}::uuid)::bigint as item_logs,
+        where session.program_version_id = ${ids.version}::uuid)::bigint as item_logs,
       (select count(*) from public.session_entries entry
         join public.session_item_logs log on log.id = entry.session_item_log_id
         join public.workout_sessions session on session.id = log.workout_session_id
-        where session.assignment_id is not null
-          and session.program_version_id = ${ids.version}::uuid)::bigint as entries
+        where session.program_version_id = ${ids.version}::uuid)::bigint as entries
   `;
   const completedSessionTarget = athleteIds.length * rosterShape.trainingsPerAthlete;
+  const completedRunSessionTarget =
+    athleteIds.length * completedRunWorkoutsPerAthlete;
+  const completedLegacySessionTarget = athleteIds.length * legacyTrainingsPerAthlete;
   assert.equal(numeric(historyCounts.assignments), athleteIds.length);
+  assert.equal(numeric(historyCounts.runs), athleteIds.length);
+  assert.equal(
+    numeric(historyCounts.run_workouts),
+    athleteIds.length * content.workouts.length,
+  );
+  assert.equal(numeric(historyCounts.completed_run_workouts), completedRunSessionTarget);
   assert.equal(numeric(historyCounts.completed_occurrences), completedSessionTarget);
+  assert.equal(
+    numeric(historyCounts.completed_run_occurrences),
+    completedRunSessionTarget,
+  );
+  assert.equal(
+    numeric(historyCounts.completed_legacy_occurrences),
+    completedLegacySessionTarget,
+  );
   assert.equal(numeric(historyCounts.completed_sessions), completedSessionTarget);
+  assert.equal(numeric(historyCounts.completed_run_sessions), completedRunSessionTarget);
+  assert.equal(
+    numeric(historyCounts.completed_legacy_sessions),
+    completedLegacySessionTarget,
+  );
   assert.equal(numeric(historyCounts.item_logs), completedSessionTarget);
   assert.equal(numeric(historyCounts.entries), completedSessionTarget);
 
+  const [firstRun] = await transaction`
+    select run.id
+    from public.program_runs run
+    where run.athlete_id = ${athleteIds[0]}::uuid
+      and run.created_by_id = ${ids.coach}::uuid
+      and run.request_key = ${ids.programRunRequest}::uuid
+  `;
+  assert.ok(firstRun?.id);
   await setAuthenticatedUser(transaction, athleteIds[0]);
   const assignmentId = firstAssignment.id;
   const programRows = await benchmarkRead(
@@ -796,7 +1192,43 @@ async function runVerification(transaction) {
     [25, null, null],
     25,
   );
-  assert.equal(programRows.length, 1);
+  assert.equal(
+    programRows.length,
+    0,
+    "A legacy assignment was duplicated into the reusable program catalog",
+  );
+  const athleteRunRows = await benchmarkRead(
+    transaction,
+    reports,
+    "athlete-run-summaries",
+    "select * from public.list_program_run_summaries($1::uuid, $2::integer, $3::timestamptz, $4::uuid, $5::text)",
+    [null, 26, null, null, "coach"],
+    100,
+  );
+  assert.equal(athleteRunRows.length, 1);
+  assert.equal(athleteRunRows[0].id, firstRun.id);
+  assert.equal(numeric(athleteRunRows[0].total_workouts), content.workouts.length);
+  assert.equal(numeric(athleteRunRows[0].scheduled_workouts), content.workouts.length);
+  assert.equal(
+    numeric(athleteRunRows[0].completed_workouts),
+    completedRunWorkoutsPerAthlete,
+  );
+  assert.equal(athleteRunRows[0].status, "in_progress");
+  const runDetailRows = await benchmarkRead(
+    transaction,
+    reports,
+    "program-run-detail",
+    "select public.get_program_run_detail($1::uuid) as payload",
+    [firstRun.id],
+    1,
+  );
+  const runDetailPayload = runDetailRows[0].payload;
+  assert.equal(runDetailPayload.id, firstRun.id);
+  assert.equal(runDetailPayload.workouts.length, content.workouts.length);
+  assert.equal(
+    runDetailPayload.workouts.filter((workout) => workout.status === "completed").length,
+    completedRunWorkoutsPerAthlete,
+  );
   const detailRows = await benchmarkRead(
     transaction,
     reports,
@@ -827,13 +1259,18 @@ async function runVerification(transaction) {
     [calendarRangeStart, anchorDate, 100, null, null],
     100,
   );
-  await benchmarkRead(
+  const historyRows = await benchmarkRead(
     transaction,
     reports,
     "history",
     "select * from public.list_completed_session_summaries($1::integer, $2::timestamptz, $3::uuid)",
     [50, null, null],
     50,
+  );
+  assert.equal(historyRows.length, 50);
+  assert.equal(
+    historyRows.filter((row) => row.program_run_id === firstRun.id).length,
+    completedRunWorkoutsPerAthlete,
   );
   const exerciseRows = await benchmarkRead(
     transaction,
@@ -865,6 +1302,38 @@ async function runVerification(transaction) {
     25,
   );
   assert.equal(coachRows.length, 25);
+  assert.ok(
+    coachRows.every((row) => numeric(row.assigned_program_count) === 1),
+    "Coach roster summaries did not count each athlete's active program run",
+  );
+  const coachRunRows = await benchmarkRead(
+    transaction,
+    reports,
+    "coach-run-summaries",
+    "select * from public.list_program_run_summaries($1::uuid, $2::integer, $3::timestamptz, $4::uuid, $5::text)",
+    [athleteIds[0], 26, null, null, "coach"],
+    100,
+  );
+  assert.equal(coachRunRows.length, 1);
+  assert.equal(coachRunRows[0].id, firstRun.id);
+  assert.equal(numeric(coachRunRows[0].total_workouts), content.workouts.length);
+  assert.equal(
+    numeric(coachRunRows[0].completed_workouts),
+    completedRunWorkoutsPerAthlete,
+  );
+  const coachHistoryRows = await benchmarkRead(
+    transaction,
+    reports,
+    "coach-run-history",
+    "select * from public.list_authored_coach_session_summaries($1::uuid, $2::integer, $3::timestamptz, $4::uuid)",
+    [athleteIds[0], 25, null, null],
+    25,
+  );
+  assert.equal(coachHistoryRows.length, 25);
+  assert.ok(
+    coachHistoryRows.every((row) => row.program_run_id === firstRun.id),
+    "Coach history did not preserve program-run lineage for recent results",
+  );
   const coachDetailRows = await benchmarkRead(
     transaction,
     reports,
@@ -876,7 +1345,13 @@ async function runVerification(transaction) {
   const coachPayload = coachDetailRows[0].payload;
   assert.ok(coachPayload.programs.length <= 25);
   assert.ok(coachPayload.upcoming.length <= 6);
-  assert.ok(coachPayload.completed.length <= 6);
+  assert.equal(coachPayload.completed.length, 6);
+  assert.ok(
+    coachPayload.completed.every(
+      (session) => session.programRunId === firstRun.id,
+    ),
+    "Coach overview did not preserve program-run lineage for recent results",
+  );
 
   reports.assertions.push(
     {
@@ -887,18 +1362,41 @@ async function runVerification(transaction) {
       weeks: content.weeks.length,
       workouts: content.workouts.length,
       exercises: exerciseIds.length,
+      programRuns: numeric(historyCounts.runs),
+      programRunWorkouts: numeric(historyCounts.run_workouts),
       completedSessions: numeric(historyCounts.completed_sessions),
       completedSessionsPerAthlete: rosterShape.trainingsPerAthlete,
+      completedRunSessions: numeric(historyCounts.completed_run_sessions),
+      completedLegacySessions: numeric(historyCounts.completed_legacy_sessions),
+      passed: true,
+    },
+    {
+      contract: "program-run-history",
+      activeRuns: numeric(historyCounts.runs),
+      completedRunWorkouts: numeric(historyCounts.completed_run_workouts),
+      runLinkedSessions: numeric(historyCounts.completed_run_sessions),
+      runLinkedSessionsPerAthlete: completedRunWorkoutsPerAthlete,
+      totalSessionsPerAthlete: rosterShape.trainingsPerAthlete,
+      athleteHistoryRunRows: historyRows.filter(
+        (row) => row.program_run_id === firstRun.id,
+      ).length,
+      coachHistoryRunRows: coachHistoryRows.filter(
+        (row) => row.program_run_id === firstRun.id,
+      ).length,
       passed: true,
     },
     {
       contract: "bounded-reads",
       programList: reports.queries["program-list"].returnedRows,
+      athleteRunSummaries: reports.queries["athlete-run-summaries"].returnedRows,
+      programRunDetail: reports.queries["program-run-detail"].returnedRows,
       schedulable: reports.queries["schedulable-candidates"].returnedRows,
       calendar: reports.queries.calendar.returnedRows,
       history: reports.queries.history.returnedRows,
       exerciseSearch: reports.queries["exercise-prefix-search"].returnedRows,
       coachList: reports.queries["coach-list"].returnedRows,
+      coachRunSummaries: reports.queries["coach-run-summaries"].returnedRows,
+      coachRunHistory: reports.queries["coach-run-history"].returnedRows,
       coachProgramLimit: coachPayload.programs.length,
       coachUpcomingLimit: coachPayload.upcoming.length,
       coachCompletedLimit: coachPayload.completed.length,
@@ -923,8 +1421,15 @@ async function runVerification(transaction) {
       prescriptionCount: content.prescriptions.length,
       exerciseCount: exerciseIds.length,
       sharedAssignmentCount: numeric(historyCounts.assignments),
+      programRunCount: numeric(historyCounts.runs),
+      programRunWorkoutCount: numeric(historyCounts.run_workouts),
+      scheduledProgramRunWorkoutCount: runCountsAfterSchedule.scheduled_workouts,
+      completedProgramRunWorkoutCount: numeric(historyCounts.completed_run_workouts),
+      programRunScheduleReceiptCount: runCountsAfterSchedule.schedule_requests,
       completedSessionCount: numeric(historyCounts.completed_sessions),
       completedSessionsPerAthlete: rosterShape.trainingsPerAthlete,
+      completedProgramRunSessionCount: numeric(historyCounts.completed_run_sessions),
+      completedLegacySessionCount: numeric(historyCounts.completed_legacy_sessions),
       loggedItemCount: numeric(historyCounts.item_logs),
       loggedEntryCount: numeric(historyCounts.entries),
     },

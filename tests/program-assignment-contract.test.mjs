@@ -6,6 +6,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/202608290001_v1_performance_data_architecture.sql",
   import.meta.url,
 );
+const runMigrationUrl = new URL(
+  "../supabase/migrations/202609020003_program_runs.sql",
+  import.meta.url,
+);
 
 function sqlFunction(source, name) {
   const match = source.match(
@@ -18,9 +22,10 @@ function sqlFunction(source, name) {
   return match[0];
 }
 
-test("coach assignment stores shared immutable references and forks only for explicit customization", async () => {
-  const [migration, domain, repository] = await Promise.all([
+test("legacy shared assignments remain historical schema but all new use goes through program runs", async () => {
+  const [migration, runMigration, domain, repository] = await Promise.all([
     readFile(migrationUrl, "utf8"),
+    readFile(runMigrationUrl, "utf8"),
     readFile(new URL("../lib/domain.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/repository.ts", import.meta.url), "utf8"),
   ]);
@@ -51,28 +56,26 @@ test("coach assignment stores shared immutable references and forks only for exp
   assert.match(fork, /private\.clone_program_version_tree/);
   assert.match(fork, /customized_program_id = new_program_id/);
   assert.match(
-    migration,
-    /revoke all on function public\.assign_published_program_version[\s\S]*grant execute[\s\S]*to authenticated/i,
+    runMigration,
+    /revoke all on function public\.assign_published_program_version\(uuid, uuid, uuid\[\], uuid\)[\s\S]*from public, anon, authenticated/i,
   );
 
   assert.match(
     domain,
     /export interface ProgramAssignment[\s\S]*athleteId: string;[\s\S]*assignmentId: string;[\s\S]*programId: string;[\s\S]*created: boolean;/,
   );
-  assert.match(
+  assert.doesNotMatch(
     repository,
-    /async assignOwnProgramToAthletes\([\s\S]*rpc\("assign_program_for_use"[\s\S]*target_program_id: programId,[\s\S]*target_athlete_ids: uniqueAthleteIds,[\s\S]*target_idempotency_key: idempotencyKey/,
+    /assignOwnProgramToAthletes|rpc\("assign_program_for_use"/,
+    "the retired whole-program assignment writer must not remain callable from the app",
   );
   assert.match(
     repository,
-    /assignmentId:[\s\S]*"assignment_id"[\s\S]*programId,[\s\S]*created:/,
+    /async createProgramRuns\([\s\S]*rpc\("create_program_runs"[\s\S]*target_program_id: programId,[\s\S]*target_athlete_ids: uniqueAthleteIds,[\s\S]*target_idempotency_key: idempotencyKey/,
   );
-  assert.match(
+  assert.doesNotMatch(
     repository,
-    /async forkProgramAssignment\([\s\S]*rpc\("fork_program_assignment"[\s\S]*target_assignment_id: assignmentId,[\s\S]*target_idempotency_key: idempotencyKey/,
-  );
-  assert.match(
-    repository,
-    /async assignQuickWorkoutToAthletes\([\s\S]*rpc\("assign_quick_workout_for_use"[\s\S]*target_athlete_ids: uniqueAthleteIds,[\s\S]*target_planned_date: plannedDate,[\s\S]*target_idempotency_key: idempotencyKey/,
+    /forkProgramAssignment|assignQuickWorkoutToAthletes|rpc\("(?:fork_program_assignment|assign_quick_workout_for_use)"/,
+    "the app repository must not expose superseded assignment writers",
   );
 });

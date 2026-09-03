@@ -304,46 +304,40 @@ function isoDate(date) {
   return `${year}-${month}-${day}`;
 }
 
-function currentMonday() {
-  const date = new Date(`${asOf}T12:00:00Z`);
-  const isoDay = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() - isoDay + 1);
-  return isoDate(date);
-}
-
 function fixtureTimestamp(daysFromAsOf, hour = 12) {
   const date = new Date(`${asOf}T${String(hour).padStart(2, "0")}:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + daysFromAsOf);
   return date.toISOString();
 }
 
-async function createFixtureOccurrences(
-  client,
+async function createFixtureProgramRun(
+  authorClient,
+  athleteId,
   programId,
-  versionId,
+  draftVersionId,
   firstDateOffset,
   label,
 ) {
   const weeks = expectData(
-    await client
+    await authorClient
       .from("program_weeks")
       .select("id, week_index")
-      .eq("program_version_id", versionId)
+      .eq("program_version_id", draftVersionId)
       .order("week_index"),
-    `Load ${label} published weeks`,
+    `Load ${label} draft weeks`,
   );
   const weekIndexById = new Map(
     weeks.map((week) => [week.id, week.week_index]),
   );
   const workouts = expectData(
-    await client
+    await authorClient
       .from("workouts")
       .select("id, program_week_id, position")
       .in(
         "program_week_id",
         weeks.map((week) => week.id),
       ),
-    `Load ${label} published workouts`,
+    `Load ${label} draft workouts`,
   ).sort(
     (left, right) =>
       weekIndexById.get(left.program_week_id) -
@@ -352,22 +346,33 @@ async function createFixtureOccurrences(
       left.id.localeCompare(right.id),
   );
 
-  for (const [workoutIndex, workout] of workouts.entries()) {
+  const workoutDates = workouts.map((workout, workoutIndex) => {
+    if (firstDateOffset === null) {
+      return { workoutId: workout.id, plannedDate: null };
+    }
     const plannedDate = new Date(`${asOf}T12:00:00Z`);
     plannedDate.setUTCDate(
       plannedDate.getUTCDate() + firstDateOffset + workoutIndex * 3,
     );
-    expectData(
-      await client.rpc("create_scheduled_occurrence", {
-        target_workout_id: workout.id,
-        target_planned_date: isoDate(plannedDate),
-        target_idempotency_key: randomUUID(),
-        target_program_id: programId,
-        target_assignment_id: null,
-      }),
-      `Schedule ${label} workout ${workoutIndex + 1}`,
-    );
+    return { workoutId: workout.id, plannedDate: isoDate(plannedDate) };
+  });
+  const runs = expectData(
+    await authorClient.rpc("create_program_runs", {
+      target_program_id: programId,
+      target_athlete_ids: [athleteId],
+      target_workout_dates: workoutDates,
+      target_idempotency_key: randomUUID(),
+      target_repeated_from_run_id: null,
+    }),
+    `Create ${label} program run`,
+  );
+  if (runs.length !== 1 || runs[0].athlete_id !== athleteId) {
+    stop(`Create ${label} program run returned an unexpected athlete.`);
   }
+  return {
+    runId: runs[0].run_id,
+    versionId: runs[0].program_version_id,
+  };
 }
 
 function completedHistory(userId, entries) {
@@ -859,11 +864,11 @@ async function main() {
   const programs = new Map();
   const initialDrafts = new Map();
   for (const [athleteKey, authorKey, title] of PROGRAM_PLANS) {
-    const athleteId = identities.get(athleteKey).user.id;
+    const authorId = identities.get(authorKey).user.id;
     const authorClient = clients.get(authorKey);
     const programId = expectData(
       await authorClient.rpc("create_blank_program", {
-        target_athlete_id: athleteId,
+        target_athlete_id: authorId,
         target_title: title,
         target_planning_mode: "fixed_weeks",
       }),
@@ -884,7 +889,7 @@ async function main() {
   const sharedCoachProgramTitle = "Aerobic Support";
   const sharedCoachProgramId = expectData(
     await clients.get("raimonds-vejonis").rpc("create_blank_program", {
-      target_athlete_id: identities.get("guntis-ulmanis").user.id,
+      target_athlete_id: identities.get("raimonds-vejonis").user.id,
       target_title: sharedCoachProgramTitle,
       target_planning_mode: "fixed_weeks",
     }),
@@ -898,36 +903,8 @@ async function main() {
   programs.set(sharedCoachProgramKey, sharedCoachProgramId);
   initialDrafts.set(sharedCoachProgramKey, sharedCoachDraftId);
 
-  const effectiveOn = currentMonday();
   const publishedVersions = new Map();
-  for (const athleteKey of [
-    "janis-cakste",
-    "alberts-kviesis",
-    "guntis-ulmanis",
-    "vaira-vike-freiberga",
-    "valdis-zatlers",
-    "raimonds-vejonis",
-  ]) {
-    const authorKey = PROGRAM_PLANS.find(([key]) => key === athleteKey)[1];
-    const authorClient = clients.get(authorKey);
-    const publishedVersionId = expectData(
-      await authorClient.rpc("publish_program_version", {
-        target_version_id: initialDrafts.get(athleteKey),
-        effective_on: effectiveOn,
-      }),
-      `Publish ${athleteKey} program`,
-    );
-    publishedVersions.set(athleteKey, publishedVersionId);
-  }
-  const sharedCoachVersionId = expectData(
-    await clients.get("raimonds-vejonis").rpc("publish_program_version", {
-      target_version_id: sharedCoachDraftId,
-      effective_on: effectiveOn,
-    }),
-    `Publish ${sharedCoachProgramTitle}`,
-  );
-  publishedVersions.set(sharedCoachProgramKey, sharedCoachVersionId);
-
+  const programRuns = new Map();
   for (const [offset, athleteKey] of [
     "janis-cakste",
     "alberts-kviesis",
@@ -935,25 +912,45 @@ async function main() {
     "vaira-vike-freiberga",
     "raimonds-vejonis",
   ].entries()) {
-    const athleteClient = clients.get(athleteKey);
-    const versionId = publishedVersions.get(athleteKey);
-    await createFixtureOccurrences(
-      athleteClient,
-      programs.get(athleteKey),
-      versionId,
-      offset,
-      `${athleteKey} program`,
+    const [, authorKey, title] = PROGRAM_PLANS.find(
+      ([key]) => key === athleteKey,
     );
+    const createdRun = await createFixtureProgramRun(
+      clients.get(authorKey),
+      identities.get(athleteKey).user.id,
+      programs.get(athleteKey),
+      initialDrafts.get(athleteKey),
+      offset,
+      title,
+    );
+    publishedVersions.set(athleteKey, createdRun.versionId);
+    programRuns.set(athleteKey, createdRun.runId);
   }
 
-  const sharedAthleteClient = clients.get("guntis-ulmanis");
-  await createFixtureOccurrences(
-    sharedAthleteClient,
+  const valdisOwnRun = await createFixtureProgramRun(
+    clients.get("valdis-zatlers"),
+    identities.get("valdis-zatlers").user.id,
+    programs.get("valdis-zatlers"),
+    initialDrafts.get("valdis-zatlers"),
+    null,
+    "Coach's Own Training",
+  );
+  publishedVersions.set("valdis-zatlers", valdisOwnRun.versionId);
+  programRuns.set("valdis-zatlers", valdisOwnRun.runId);
+
+  const sharedRun = await createFixtureProgramRun(
+    clients.get("raimonds-vejonis"),
+    identities.get("guntis-ulmanis").user.id,
     sharedCoachProgramId,
-    sharedCoachVersionId,
+    sharedCoachDraftId,
     -5,
     sharedCoachProgramTitle,
   );
+  const sharedCoachVersionId = sharedRun.versionId;
+  publishedVersions.set(sharedCoachProgramKey, sharedCoachVersionId);
+  programRuns.set(sharedCoachProgramKey, sharedRun.runId);
+
+  const sharedAthleteClient = clients.get("guntis-ulmanis");
 
   for (const exercise of [
     {
@@ -1048,12 +1045,12 @@ async function main() {
     "Vaira Mobility & Conditioning",
   );
   expectData(
-    await admin
-      .from("scheduled_workouts")
-      .update({ status: "skipped" })
-      .eq("id", vairaSkippedOccurrence.id)
-      .select("id")
-      .single(),
+    await clients
+      .get("vaira-vike-freiberga")
+      .rpc("set_scheduled_workout_status", {
+        target_scheduled_workout_id: vairaSkippedOccurrence.id,
+        target_status: "skipped",
+      }),
     "Skip Vaira terminal workout",
   );
   await completeFixtureOccurrence(
@@ -1314,55 +1311,69 @@ async function main() {
       "Fixture verification failed: Valdis needs one published Own program for assignment QA.",
     );
 
-  for (const coachKey of ["valdis-zatlers", "raimonds-vejonis"]) {
-    const visible = expectData(
-      await clients
-        .get(coachKey)
-        .from("programs")
-        .select("id, created_by_id")
-        .eq("athlete_id", guntisId),
-      `Verify ${coachKey} shared access`,
+  for (const [coachKey, expectedRunId] of [
+    ["valdis-zatlers", programRuns.get("guntis-ulmanis")],
+    ["raimonds-vejonis", programRuns.get(sharedCoachProgramKey)],
+  ]) {
+    const visibleRuns = expectData(
+      await clients.get(coachKey).rpc("list_program_run_summaries", {
+        target_athlete_id: guntisId,
+      }),
+      `Verify ${coachKey} Guntis run access`,
     );
     if (
-      visible.length !== 1 ||
-      visible[0].created_by_id !== identities.get(coachKey).user.id
+      visibleRuns.length !== 1 ||
+      visibleRuns[0].id !== expectedRunId ||
+      visibleRuns[0].created_by_id !== identities.get(coachKey).user.id
     ) {
       stop(
-        `Fixture verification failed: ${coachKey} must read only their authored Guntis program.`,
+        `Fixture verification failed: ${coachKey} must read only their authored Guntis run.`,
       );
     }
   }
-  const athleteVisiblePrograms = expectData(
-    await clients
-      .get("guntis-ulmanis")
-      .from("programs")
-      .select("id")
-      .eq("athlete_id", guntisId),
-    "Verify Guntis shared program access",
+  const athleteVisibleRuns = expectData(
+    await clients.get("guntis-ulmanis").rpc("list_program_run_summaries", {
+      target_athlete_id: null,
+    }),
+    "Verify Guntis assigned runs",
   );
-  if (athleteVisiblePrograms.length !== 2) {
+  if (
+    athleteVisibleRuns.length !== 2 ||
+    !athleteVisibleRuns.some(
+      (run) => run.id === programRuns.get("guntis-ulmanis"),
+    ) ||
+    !athleteVisibleRuns.some(
+      (run) => run.id === programRuns.get(sharedCoachProgramKey),
+    )
+  ) {
     stop(
-      "Fixture verification failed: Guntis must read both coach-authored programs.",
+      "Fixture verification failed: Guntis must read both coach-authored runs.",
     );
   }
-  const guntisCoachPrograms = expectData(
+  const guntisSourcePrograms = expectData(
     await admin
       .from("programs")
-      .select("id, created_by_id, source_type")
-      .eq("athlete_id", guntisId)
-      .eq("source_type", "coach")
+      .select("id, athlete_id, created_by_id, source_type")
+      .in("id", [programs.get("guntis-ulmanis"), sharedCoachProgramId])
       .is("archived_at", null),
-    "Verify shared-athlete coach programs",
+    "Verify shared-athlete run sources",
   );
-  for (const coachKey of ["valdis-zatlers", "raimonds-vejonis"]) {
+  for (const [coachKey, sourceProgramId] of [
+    ["valdis-zatlers", programs.get("guntis-ulmanis")],
+    ["raimonds-vejonis", sharedCoachProgramId],
+  ]) {
     const coachId = identities.get(coachKey).user.id;
     if (
-      guntisCoachPrograms.filter(
-        (candidate) => candidate.created_by_id === coachId,
+      guntisSourcePrograms.filter(
+        (candidate) =>
+          candidate.id === sourceProgramId &&
+          candidate.athlete_id === coachId &&
+          candidate.created_by_id === coachId &&
+          candidate.source_type === "self",
       ).length !== 1
     ) {
       stop(
-        `Fixture verification failed: ${coachKey} must author exactly one Guntis program.`,
+        `Fixture verification failed: ${coachKey} must own the reusable source for their Guntis run.`,
       );
     }
   }
@@ -1377,7 +1388,7 @@ async function main() {
     await admin
       .from("workout_sessions")
       .select(
-        "id, program_version_id, workout_id, scheduled_workout_id, status, session_rpe",
+        "id, program_run_id, program_run_workout_id, program_version_id, workout_id, scheduled_workout_id, status, session_rpe",
       )
       .in("program_version_id", coachFixtureVersionIds)
       .eq("status", "completed"),
@@ -1387,6 +1398,8 @@ async function main() {
     linkedCoachSessions.length !== 5 ||
     linkedCoachSessions.some(
       (session) =>
+        !session.program_run_id ||
+        !session.program_run_workout_id ||
         !session.program_version_id ||
         !session.workout_id ||
         !session.scheduled_workout_id,
@@ -1416,11 +1429,17 @@ async function main() {
   const coachFixtureOccurrences = expectData(
     await admin
       .from("scheduled_workouts")
-      .select("id, planned_date, status")
+      .select(
+        "id, program_run_id, program_run_workout_id, planned_date, status",
+      )
       .in("program_version_id", coachFixtureVersionIds),
     "Verify coach-program occurrence states",
   );
   if (
+    coachFixtureOccurrences.some(
+      (occurrence) =>
+        !occurrence.program_run_id || !occurrence.program_run_workout_id,
+    ) ||
     !coachFixtureOccurrences.some(
       (occurrence) => occurrence.status === "in_progress",
     ) ||
@@ -1448,9 +1467,7 @@ async function main() {
   if (guntisConnections.length !== 2)
     stop("Fixture verification failed: Guntis cannot list both coaches.");
   const guntisCoachProfiles = expectData(
-    await clients
-      .get("guntis-ulmanis")
-      .rpc("list_connected_profile_summaries"),
+    await clients.get("guntis-ulmanis").rpc("list_connected_profile_summaries"),
     "Verify Guntis connected profile summaries",
   );
   const connectedCoachIds = new Set(
@@ -1481,16 +1498,13 @@ async function main() {
     if (visibleAthletes.length !== expectedCount)
       stop(`Fixture verification failed: ${coachKey} athlete count differs.`);
   }
-  const unrelated = expectData(
-    await clients
-      .get("janis-cakste")
-      .from("programs")
-      .select("id")
-      .eq("athlete_id", guntisId),
-    "Verify unrelated isolation",
-  );
-  if (unrelated.length !== 0)
-    stop("Fixture verification failed: unrelated athlete can read Guntis.");
+  const unrelatedRuns = await clients
+    .get("janis-cakste")
+    .rpc("list_program_run_summaries", { target_athlete_id: guntisId });
+  if (!unrelatedRuns.error)
+    stop(
+      "Fixture verification failed: unrelated athlete can read Guntis runs.",
+    );
 
   const kindMutation = await clients
     .get("janis-cakste")

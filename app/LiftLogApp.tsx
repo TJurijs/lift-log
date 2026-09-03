@@ -43,16 +43,14 @@ import {
   useMemo,
   useRef,
   useState,
-  type Dispatch,
-  type SetStateAction,
 } from "react";
 import type {
   ActiveSession,
   AthleteSummary,
+  CalendarCursor,
   CalendarWorkspaceData,
   CoachAgendaEntry,
   CoachAthleteCursor,
-  CoachAssignedProgramSummary,
   CoachConnection,
   CoachingWorkspaceData,
   CoachInviteReceipt,
@@ -73,6 +71,9 @@ import type {
   Program,
   ProgramAssignment,
   ProgramCursor,
+  ProgramRunDetail,
+  ProgramRunSummary,
+  ProgramRunWorkoutDate,
   ScheduledWorkout,
   SchedulableWorkoutCandidate,
   SchedulableWorkoutCursor,
@@ -115,7 +116,6 @@ import {
 } from "../lib/presentation";
 import {
   presentProgramProvenance,
-  presentProvenance,
 } from "../lib/provenance";
 import {
   formatWeight,
@@ -123,31 +123,23 @@ import {
   weightKgValue,
 } from "../lib/units";
 import {
-  deriveProgramRunStatus,
-  deriveProgramWorkoutProgressState,
-  deriveSingleWorkoutStatus,
-  programRunStatusLabel,
-  programWorkoutProgressLabel,
-  type ProgramRunStatus,
-  type ProgramWorkoutProgressState,
-  type SingleWorkoutStatusSummary,
-} from "../lib/program-progress";
-import {
   programWorkoutCount,
-  programWorkoutIds,
   programWorkouts,
   reorderProgramWorkoutItems,
   reorderProgramWorkoutSequence,
 } from "../lib/program-tree";
+import { nextIncompleteRunWorkoutId } from "../lib/program-progress";
 import {
   listUpcomingWorkouts,
   selectNextWorkoutFocus,
 } from "../lib/workout-focus";
 import {
+  appDetailDataFromHistory,
   appDetailFromHistory,
   leaveAppDetailHistory,
   parseAppView,
   pushAppDetailHistory,
+  type AppDetailData,
   updateAppViewUrl,
 } from "../lib/app-route";
 import {
@@ -169,10 +161,29 @@ import {
 } from "./exercise-category-icons";
 import { ExerciseVideoLink } from "./exercise-video-link";
 import { useActiveWorkoutPersistence } from "./features/active-workout/useActiveWorkoutPersistence";
+import type { CoachWorkspaceProgram } from "./features/coaching/CoachWorkspace";
+import type { ProgramRunWizardSubmission } from "./features/program-runs/ProgramRunWizard";
+import "./features/feature-styles.css";
 
 const CalendarView = lazy(() => import("./features/calendar/CalendarView"));
 const loadProgramView = () => import("./features/programs/ProgramView");
 const ProgramView = lazy(loadProgramView);
+const CoachWorkspace = lazy(() =>
+  import("./features/coaching/CoachWorkspace").then(
+    ({ CoachWorkspace: component }) => ({ default: component }),
+  ),
+);
+const ProgramRunWizard = lazy(() =>
+  import("./features/program-runs/ProgramRunWizard"),
+);
+const ProgramRunScheduleWizard = lazy(() =>
+  import("./features/program-runs/ProgramRunScheduleWizard"),
+);
+const CoachProgramRuns = lazy(() =>
+  import("./features/program-runs/SelfProgramRuns").then(
+    ({ CoachProgramRuns: component }) => ({ default: component }),
+  ),
+);
 
 const navItems: Array<{
   id: ViewName;
@@ -197,7 +208,7 @@ type ModalName =
   | "delete-content"
   | "invite"
   | "assign-program"
-  | "coach-schedule"
+  | "run-schedule"
   | "program"
   | "quick-workout"
   | "deactivate-program"
@@ -208,6 +219,12 @@ type ContentDeleteTarget =
   | { kind: "workout"; id: string; title: string }
   | { kind: "workout-item"; id: string; title: string }
   | { kind: "assignment"; id: string; title: string }
+  | {
+      kind: "program-run";
+      id: string;
+      title: string;
+      contentType?: ProgramRunSummary["contentType"];
+    }
   | { kind: "program"; program: Program };
 type SetLog = SessionSetValue;
 const emptySetLogs: SetLog[] = [];
@@ -267,7 +284,7 @@ type CompletedWorkoutViewState = {
   detail: CompletedSessionDetail | null;
   loading: boolean;
   error: string;
-  returnView: "calendar" | "coaching";
+  returnView: "calendar" | "coaching" | "program";
 };
 type DetailState =
   | {
@@ -441,6 +458,17 @@ export default function LiftLogApp({
       completedSessions: initialWorkspace.completedSessions,
     });
   const [program, setProgram] = useState<Program | null>(null);
+  const [viewingProgramRunId, setViewingProgramRunId] = useState<string | null>(
+    null,
+  );
+  const [viewingProgramRunDetail, setViewingProgramRunDetail] =
+    useState<ProgramRunDetail | null>(null);
+  const [programReturnView, setProgramReturnView] =
+    useState<ViewName>("program");
+  const programWorkoutPreviewOriginRef = useRef<{
+    schedule: ScheduledWorkout;
+    returnView: "today" | "calendar";
+  } | null>(null);
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [selectedWorkoutId, setSelectedWorkoutId] = useState("");
   const [selectedSectionId, setSelectedSectionId] = useState("");
@@ -517,6 +545,13 @@ export default function LiftLogApp({
     message: string;
   } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const completedWorkoutRequestRef = useRef(0);
+  const completedWorkoutRestoreKeyRef = useRef<string | null>(null);
+  const programHistoryRequestRef = useRef(0);
+  const programHistoryRestoreKeyRef = useRef<string | null>(null);
+  const programHistoryRestoreRef = useRef<
+    (history: Extract<AppDetailData, { kind: "program" }>) => void
+  >(() => undefined);
   const notify = useCallback((message: string) => {
     if (toastTimerRef.current !== null)
       window.clearTimeout(toastTimerRef.current);
@@ -526,6 +561,66 @@ export default function LiftLogApp({
       setToast("");
     }, 2600);
   }, []);
+  const restoreCompletedWorkoutFromHistory = useCallback(
+    (history: Extract<AppDetailData, { kind: "workout-log" }>) => {
+      const restoreKey = `${history.session.id}:${history.athleteId ?? "self"}`;
+      if (completedWorkoutRestoreKeyRef.current === restoreKey) return;
+      completedWorkoutRestoreKeyRef.current = restoreKey;
+      const requestId = completedWorkoutRequestRef.current + 1;
+      completedWorkoutRequestRef.current = requestId;
+      const pending: CompletedWorkoutViewState = {
+        session: history.session,
+        detail: repository ? null : { ...history.session, items: [] },
+        loading: Boolean(repository),
+        error: "",
+        returnView: history.returnView,
+      };
+      setDetail({ kind: "completed-workout", ...pending });
+      setActiveWorkoutVisible(false);
+      if (!repository) return;
+      void repository
+        .loadCompletedSessionDetail(history.session.id, history.athleteId)
+        .then((completedDetail) => {
+          if (
+            completedWorkoutRequestRef.current !== requestId ||
+            appDetailFromHistory() !== "workout-log"
+          ) {
+            return;
+          }
+          setDetail({
+            kind: "completed-workout",
+            session: completedDetail ?? history.session,
+            detail: completedDetail,
+            loading: false,
+            error: completedDetail
+              ? ""
+              : "These workout results are no longer available.",
+            returnView: history.returnView,
+          });
+        })
+        .catch((error: unknown) => {
+          if (
+            completedWorkoutRequestRef.current !== requestId ||
+            appDetailFromHistory() !== "workout-log"
+          ) {
+            return;
+          }
+          completedWorkoutRestoreKeyRef.current = null;
+          setDetail({
+            kind: "completed-workout",
+            session: history.session,
+            detail: null,
+            loading: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "The workout results could not be loaded.",
+            returnView: history.returnView,
+          });
+        });
+    },
+    [repository],
+  );
   useEffect(
     () => () => {
       if (toastTimerRef.current !== null)
@@ -542,21 +637,52 @@ export default function LiftLogApp({
       const nextDetail = appDetailFromHistory();
       setActiveView(nextView);
       if (!nextDetail) {
+        completedWorkoutRequestRef.current += 1;
+        completedWorkoutRestoreKeyRef.current = null;
+        programHistoryRequestRef.current += 1;
+        programHistoryRestoreKeyRef.current = null;
         setDetail(null);
         setActiveWorkoutVisible(false);
-        if (nextView === "program") setProgram(null);
+        if (nextView === "program") {
+          setProgram(null);
+          setViewingProgramRunId(null);
+          setViewingProgramRunDetail(null);
+        }
+      } else if (nextDetail === "program") {
+        completedWorkoutRequestRef.current += 1;
+        completedWorkoutRestoreKeyRef.current = null;
+        setDetail(null);
+        setActiveWorkoutVisible(false);
+        const history = appDetailDataFromHistory();
+        if (history?.kind === "program") {
+          programHistoryRestoreRef.current(history);
+        }
       } else if (nextDetail === "workout" && activeSession) {
         setActiveWorkoutVisible(true);
+      } else if (nextDetail === "workout-log") {
+        const history = appDetailDataFromHistory();
+        if (history?.kind === "workout-log") {
+          restoreCompletedWorkoutFromHistory(history);
+        } else {
+          setDetail(null);
+          setActiveWorkoutVisible(false);
+        }
       }
       scrollToAppTop();
     };
     window.addEventListener("popstate", restoreViewFromHistory);
     window.addEventListener("hashchange", restoreViewFromHistory);
+    if (
+      appDetailFromHistory() === "workout-log" ||
+      appDetailFromHistory() === "program"
+    ) {
+      restoreViewFromHistory();
+    }
     return () => {
       window.removeEventListener("popstate", restoreViewFromHistory);
       window.removeEventListener("hashchange", restoreViewFromHistory);
     };
-  }, [activeSession, activeView]);
+  }, [activeSession, activeView, restoreCompletedWorkoutFromHistory]);
   const loadWorkspaceFeature = useCallback(
     (feature: LazyWorkspaceFeature) => {
       if (!repository || loadedWorkspaceFeaturesRef.current.has(feature)) {
@@ -569,11 +695,21 @@ export default function LiftLogApp({
       setWorkspaceFeatureError(null);
       const pending = (async () => {
         if (feature === "programs") {
-          const page = await repository.listProgramSummaries({ limit: 25 });
+          const [page, programRunPage, coachProgramRunPage] = await Promise.all([
+            repository.listProgramSummaries({ limit: 25 }),
+            repository.listProgramRuns(),
+            repository.listProgramRuns(undefined, { creatorScope: "coach" }),
+          ]);
           setProgramCursor(page.nextCursor);
-          setWorkspace((previous) =>
-            mergeProgramCatalog(previous, page.items, true),
-          );
+          setWorkspace((previous) => ({
+            ...mergeProgramCatalog(previous, page.items, true),
+            programRuns: programRunPage.items,
+            programRunCursor: programRunPage.nextCursor,
+            hasMoreProgramRuns: programRunPage.hasMore,
+            coachProgramRuns: coachProgramRunPage.items,
+            coachProgramRunCursor: coachProgramRunPage.nextCursor,
+            hasMoreCoachProgramRuns: coachProgramRunPage.hasMore,
+          }));
         } else if (feature === "exercises") {
           const exerciseWorkspace = await repository.loadExerciseWorkspace();
           setWorkspace((previous) => ({ ...previous, ...exerciseWorkspace }));
@@ -614,7 +750,7 @@ export default function LiftLogApp({
     const feature =
       activeView === "coaching"
           ? "coaching"
-          : activeView === "program"
+          : activeView === "program" || activeView === "today"
             ? "programs"
             : null;
     if (feature) void loadWorkspaceFeature(feature);
@@ -669,6 +805,11 @@ export default function LiftLogApp({
   const [coachingDetailLoadingId, setCoachingDetailLoadingId] = useState<
     string | null
   >(null);
+  const [coachingHistoryLoadingId, setCoachingHistoryLoadingId] = useState<
+    string | null
+  >(null);
+  const [coachingProgramRunsLoadingId, setCoachingProgramRunsLoadingId] =
+    useState<string | null>(null);
   const [selectedAthleteId, setSelectedAthleteId] = useState<string | null>(
     initialWorkspace.coachedAthletes[0]?.id ?? null,
   );
@@ -680,11 +821,15 @@ export default function LiftLogApp({
     name: string;
   } | null>(null);
   const [assignmentSeed, setAssignmentSeed] = useState<{
+    mode: "self" | "coach";
     programId?: string;
     athleteIds?: string[];
-  }>({});
-  const [coachScheduleProgram, setCoachScheduleProgram] =
-    useState<CoachAssignedProgramSummary | null>(null);
+    repeatRun?: ProgramRunSummary;
+  }>({ mode: "coach" });
+  const [assignmentProgramOverride, setAssignmentProgramOverride] =
+    useState<Program | null>(null);
+  const [programRunScheduleTarget, setProgramRunScheduleTarget] =
+    useState<ProgramRunSummary | null>(null);
   const [respondingInvite, setRespondingInvite] = useState<{
     id: string;
     response: "accepted" | "declined";
@@ -712,6 +857,21 @@ export default function LiftLogApp({
   const [programCursor, setProgramCursor] = useState<ProgramCursor>();
   const [programsLoadingMore, setProgramsLoadingMore] = useState(false);
   const [programsLoadError, setProgramsLoadError] = useState("");
+  const [coachProgramRunsLoadingMore, setCoachProgramRunsLoadingMore] =
+    useState(false);
+  const [coachProgramRunsLoadError, setCoachProgramRunsLoadError] =
+    useState("");
+  const [upcomingCursor, setUpcomingCursor] = useState<CalendarCursor>();
+  const [upcomingLoading, setUpcomingLoading] = useState(false);
+  const [upcomingLoadError, setUpcomingLoadError] = useState("");
+  const upcomingLoadingRef = useRef(false);
+  const upcomingInitializedRef = useRef(false);
+  const upcomingCursorRef = useRef<CalendarCursor | undefined>(undefined);
+  const upcomingFailedResetRef = useRef(false);
+  const upcomingPendingResetRef = useRef(false);
+  const upcomingLoaderRef = useRef<
+    ((reset?: boolean) => Promise<void>) | undefined
+  >(undefined);
   const calendarRangeRequestRef = useRef(0);
   const lastCalendarRangeRef = useRef<{
     start: string;
@@ -719,7 +879,6 @@ export default function LiftLogApp({
   } | null>(null);
   const [calendarRangeLoading, setCalendarRangeLoading] = useState(false);
   const [calendarRangeError, setCalendarRangeError] = useState("");
-  const completedWorkoutRequestRef = useRef(0);
   const [programOwnerId, setProgramOwnerId] = useState(viewer.id);
   const [requestedProgramSource, setProgramSource] =
     useState<ProgramSourceTab>("own");
@@ -750,6 +909,206 @@ export default function LiftLogApp({
       setProgramsLoadingMore(false);
     }
   }, [programCursor, programsLoadingMore, repository]);
+
+  const loadMoreCoachAssignedRuns = useCallback(async () => {
+    const cursor = workspace.coachProgramRunCursor;
+    if (!repository || !cursor || coachProgramRunsLoadingMore) return;
+    setCoachProgramRunsLoadingMore(true);
+    setCoachProgramRunsLoadError("");
+    try {
+      const page = await repository.listProgramRuns(undefined, {
+        limit: 25,
+        cursor,
+        creatorScope: "coach",
+      });
+      setWorkspace((previous) => {
+        const runsById = new Map(
+          (previous.coachProgramRuns ?? []).map((run) => [run.id, run]),
+        );
+        for (const run of page.items) runsById.set(run.id, run);
+        return {
+          ...previous,
+          coachProgramRuns: [...runsById.values()],
+          coachProgramRunCursor: page.nextCursor,
+          hasMoreCoachProgramRuns: page.hasMore,
+        };
+      });
+    } catch (error) {
+      setCoachProgramRunsLoadError(
+        error instanceof Error
+          ? error.message
+          : "More coach-assigned training could not be loaded.",
+      );
+    } finally {
+      setCoachProgramRunsLoadingMore(false);
+    }
+  }, [
+    coachProgramRunsLoadingMore,
+    repository,
+    workspace.coachProgramRunCursor,
+  ]);
+
+  const loadUpcomingWorkouts = useCallback(
+    async (reset = false) => {
+      if (!repository) return;
+      if (upcomingLoadingRef.current) {
+        if (reset) upcomingPendingResetRef.current = true;
+        return;
+      }
+      if (
+        !reset &&
+        upcomingInitializedRef.current &&
+        !upcomingCursorRef.current
+      ) return;
+      upcomingLoadingRef.current = true;
+      setUpcomingLoading(true);
+      setUpcomingLoadError("");
+      try {
+        const page = await repository.listUpcomingScheduledWorkouts({
+          limit: 20,
+          ...(reset || !upcomingCursorRef.current
+            ? {}
+            : { cursor: upcomingCursorRef.current }),
+        });
+        const today = localDateOnly();
+        setWorkspace((previous) => {
+          const retained = reset
+            ? previous.scheduledWorkouts.filter(
+                (schedule) =>
+                  !schedule.plannedDate ||
+                  schedule.plannedDate < today ||
+                  (schedule.status !== "planned" &&
+                    schedule.status !== "in_progress" &&
+                    schedule.status !== "skipped"),
+              )
+            : previous.scheduledWorkouts;
+          const merged = new Map(
+            retained.map((schedule) => [schedule.id, schedule] as const),
+          );
+          for (const schedule of page.items) merged.set(schedule.id, schedule);
+          return { ...previous, scheduledWorkouts: [...merged.values()] };
+        });
+        upcomingCursorRef.current = page.nextCursor;
+        setUpcomingCursor(page.nextCursor);
+        upcomingInitializedRef.current = true;
+        upcomingFailedResetRef.current = false;
+      } catch (error) {
+        upcomingFailedResetRef.current = reset;
+        setUpcomingLoadError(
+          error instanceof Error
+            ? error.message
+            : "More upcoming workouts could not be loaded.",
+        );
+      } finally {
+        upcomingLoadingRef.current = false;
+        setUpcomingLoading(false);
+      }
+
+      if (upcomingPendingResetRef.current) {
+        upcomingPendingResetRef.current = false;
+        void upcomingLoaderRef.current?.(true);
+      }
+    },
+    [repository],
+  );
+  upcomingLoaderRef.current = loadUpcomingWorkouts;
+
+  useEffect(() => {
+    if (
+      repository &&
+      activeView === "today" &&
+      !upcomingInitializedRef.current
+    ) {
+      void loadUpcomingWorkouts(true);
+    }
+  }, [activeView, loadUpcomingWorkouts, repository]);
+
+  const loadProgramForRunWizard = useCallback(
+    async (targetProgram: Program) => {
+      if (
+        targetProgram.detailsLoaded !== false &&
+        programWorkouts(targetProgram).length > 0
+      ) {
+        return targetProgram;
+      }
+      if (!repository) return targetProgram;
+      return repository.loadProgramDetail(
+        targetProgram.athleteId,
+        targetProgram.id,
+        targetProgram.versionId,
+        targetProgram.assignmentId,
+      );
+    },
+    [repository],
+  );
+
+  const loadProgramRunDetail = useCallback(
+    async (runId: string): Promise<ProgramRunDetail | null> => {
+      if (repository) return repository.loadProgramRunDetail(runId);
+      const run = (workspace.programRuns ?? []).find(
+        (candidate) => candidate.id === runId,
+      );
+      const source = run
+        ? workspace.programCatalog.find(
+            (candidate) => candidate.id === run.programId,
+          )
+        : undefined;
+      if (!run || !source) return null;
+      return {
+        ...run,
+        workouts: programWorkouts(source).map((workout, position) => ({
+          id: `${run.id}:${workout.id}`,
+          runId: run.id,
+          workoutId: workout.id,
+          title: workout.title,
+          position,
+          estimatedMinutes: workout.durationMinutes,
+          status: "unscheduled" as const,
+          prescriptionOverrides: {},
+        })),
+      };
+    },
+    [repository, workspace.programCatalog, workspace.programRuns],
+  );
+
+  const refreshProgramRunSummaries = useCallback(async () => {
+    if (!repository) return;
+    const [page, coachPage] = await Promise.all([
+      repository.listProgramRuns(),
+      repository.listProgramRuns(undefined, { creatorScope: "coach" }),
+    ]);
+    setCoachProgramRunsLoadError("");
+    setWorkspace((previous) => ({
+      ...previous,
+      programRuns: page.items,
+      programRunCursor: page.nextCursor,
+      hasMoreProgramRuns: page.hasMore,
+      coachProgramRuns: coachPage.items,
+      coachProgramRunCursor: coachPage.nextCursor,
+      hasMoreCoachProgramRuns: coachPage.hasMore,
+    }));
+  }, [repository]);
+
+  const loadProgramForCurrentRunWizard = useCallback(
+    async (targetProgram: Program) => {
+      if (
+        assignmentProgramOverride &&
+        assignmentProgramOverride.id === targetProgram.id
+      ) {
+        return assignmentProgramOverride;
+      }
+      if (assignmentSeed.repeatRun && repository) {
+        return repository.loadProgramForRun(assignmentSeed.repeatRun.id);
+      }
+      return loadProgramForRunWizard(targetProgram);
+    },
+    [
+      assignmentProgramOverride,
+      assignmentSeed.repeatRun,
+      loadProgramForRunWizard,
+      repository,
+    ],
+  );
 
   useEffect(() => {
     if (!repository || activeView !== "exercises") return;
@@ -902,8 +1261,14 @@ export default function LiftLogApp({
       : (workspace.coachingAccess?.coachedAthleteCount ?? 0) > 0 ||
         (workspace.coachingAccess?.pendingInviteCount ?? 0) > 0;
   const coachMode = hasAthleteWorkspace ? requestedCoachMode : "athlete";
+  const coachProgramRuns =
+    workspace.coachProgramRuns ??
+    (workspace.programRuns ?? []).filter(
+      (run) => run.athleteId === viewer.id && run.createdById !== viewer.id,
+    );
+  const hasCoachTraining = hasCoach || coachProgramRuns.length > 0;
   const programSource =
-    requestedProgramSource === "coach" && !hasCoach
+    requestedProgramSource === "coach" && !hasCoachTraining
       ? "own"
       : requestedProgramSource;
   const programCatalog = workspace.programCatalog ?? schedulablePrograms;
@@ -933,6 +1298,14 @@ export default function LiftLogApp({
     ) ??
     workspace.coachedAthletes[0] ??
     null;
+  const viewingProgramRun =
+    viewingProgramRunDetail ??
+    (viewingProgramRunId
+      ? [
+          ...(workspace.programRuns ?? []),
+          ...(selectedAthlete?.programRuns ?? []),
+        ].find((candidate) => candidate.id === viewingProgramRunId)
+      : undefined);
   function capabilitiesForProgram(
     targetProgram: Program,
   ): TrainingContentCapabilities {
@@ -952,6 +1325,20 @@ export default function LiftLogApp({
       coachReadScope: "authored_only",
     });
   }
+  function capabilitiesForViewedProgram(
+    targetProgram: Program,
+  ): TrainingContentCapabilities {
+    const capabilities = capabilitiesForProgram(targetProgram);
+    const canCopyExactRun = Boolean(
+      viewingProgramRunId &&
+        viewingProgramRun?.id === viewingProgramRunId &&
+        (viewingProgramRun.athleteId === viewer.id ||
+          viewingProgramRun.createdById === viewer.id),
+    );
+    return canCopyExactRun && !capabilities.copyToOwn
+      ? { ...capabilities, copyToOwn: true }
+      : capabilities;
+  }
   function capabilitiesForOccurrence(
     schedule: ScheduledWorkout,
   ): OccurrenceCapabilities {
@@ -965,6 +1352,19 @@ export default function LiftLogApp({
   const assignableOwnPrograms = programCatalog.filter(
     (candidate) => capabilitiesForProgram(candidate).assign,
   );
+  const selfRunnablePrograms = programCatalog.filter(
+    (candidate) =>
+      candidate.sourceType === "self" &&
+      candidate.athleteId === viewer.id &&
+      candidate.createdById === viewer.id,
+  );
+  const runWizardPrograms = [
+    ...(assignmentProgramOverride ? [assignmentProgramOverride] : []),
+    ...(assignmentSeed.mode === "coach"
+      ? assignableOwnPrograms
+      : selfRunnablePrograms
+    ).filter((candidate) => candidate.id !== assignmentProgramOverride?.id),
+  ];
   const exerciseCategoriesById = useMemo(
     () =>
       new Map(
@@ -1035,6 +1435,55 @@ export default function LiftLogApp({
     ) ??
     program?.weeks[selectedWeek - 1] ??
     program?.weeks[0];
+  const completeRunActivity = useMemo<CoachAgendaEntry[]>(() => {
+    if (!viewingProgramRunDetail) return [];
+    const today = localDateOnly();
+    return viewingProgramRunDetail.workouts.flatMap(
+      (slot): CoachAgendaEntry[] => {
+      const common = {
+        programRunId: viewingProgramRunDetail.id,
+        programRunWorkoutId: slot.id,
+        programId: viewingProgramRunDetail.programId,
+        programVersionId: viewingProgramRunDetail.programVersionId,
+        programTitle: viewingProgramRunDetail.title,
+        workoutId: slot.workoutId,
+        workoutTitle: slot.title,
+        scheduleId: slot.scheduledWorkoutId,
+      };
+      const completedDate =
+        slot.completedForDate ?? slot.completedAt?.slice(0, 10);
+      if (slot.status === "completed" && slot.sessionId && completedDate) {
+        return [{
+          ...common,
+          id: `session:${slot.sessionId}`,
+          kind: "completed" as const,
+          status: "completed" as const,
+          date: completedDate,
+          sessionId: slot.sessionId,
+          rpe: slot.sessionRpe,
+        }];
+      }
+      if (
+        slot.plannedDate &&
+        (slot.status === "scheduled" || slot.status === "in_progress")
+      ) {
+        return [{
+          ...common,
+          id: `run-slot:${slot.id}`,
+          kind: "upcoming" as const,
+          status:
+            slot.status === "in_progress"
+              ? "in_progress" as const
+              : slot.plannedDate < today
+                ? "overdue" as const
+                : "planned" as const,
+          date: slot.plannedDate,
+        }];
+      }
+        return [];
+      },
+    );
+  }, [viewingProgramRunDetail]);
 
   const [setLogs, setSetLogs] = useState<Record<string, SetLog[]>>(() =>
     initialWorkspace.activeSession?.setLogs ??
@@ -1091,7 +1540,15 @@ export default function LiftLogApp({
 
   function selectProgram(
     nextProgram: Program,
-    preferred?: { weekIndex?: number; workoutId?: string; sectionId?: string },
+    preferred?: {
+      weekIndex?: number;
+      workoutId?: string;
+      sectionId?: string;
+      programRunId?: string;
+      programRunDetail?: ProgramRunDetail | null;
+      returnView?: ViewName;
+    },
+    options: { writeHistory?: boolean } = {},
   ) {
     const preferredWorkoutWeek = preferred?.workoutId
       ? nextProgram.weeks.find((week) =>
@@ -1119,12 +1576,140 @@ export default function LiftLogApp({
         (section) => section.id === preferred?.sectionId,
       ) ?? nextWorkout?.sections[0];
     setProgram(nextProgram);
-    pushAppDetailHistory("program", "program");
+    setViewingProgramRunId(
+      preferred?.programRunDetail?.id ?? preferred?.programRunId ?? null,
+    );
+    setViewingProgramRunDetail(preferred?.programRunDetail ?? null);
+    const returnView = preferred?.returnView ?? "program";
+    setProgramReturnView(returnView);
+    if (options.writeHistory !== false) {
+      programHistoryRequestRef.current += 1;
+      const programRunId =
+        preferred?.programRunDetail?.id ?? preferred?.programRunId;
+      const historyData: Extract<AppDetailData, { kind: "program" }> = {
+        kind: "program",
+        programId: nextProgram.id,
+        programVersionId: nextProgram.versionId,
+        athleteId: nextProgram.athleteId,
+        ...(nextProgram.assignmentId
+          ? { assignmentId: nextProgram.assignmentId }
+          : {}),
+        ...(programRunId ? { programRunId } : {}),
+        ...(nextWorkout?.id ? { workoutId: nextWorkout.id } : {}),
+        returnView,
+      };
+      programHistoryRestoreKeyRef.current = [
+        historyData.athleteId,
+        historyData.programId,
+        historyData.programVersionId,
+        historyData.assignmentId ?? "unassigned",
+        historyData.programRunId ?? "template",
+        historyData.workoutId ?? "first",
+        historyData.returnView,
+      ].join(":");
+      pushAppDetailHistory("program", "program", { data: historyData });
+    }
     setSelectedWeek(nextWeek?.index ?? 1);
     setSelectedWorkoutId(nextWorkout?.id ?? "");
     setSelectedSectionId(nextSection?.id ?? "");
     setProgramOwnerId(nextProgram.athleteId);
   }
+
+  programHistoryRestoreRef.current = (history) => {
+    const restoreKey = [
+      history.athleteId,
+      history.programId,
+      history.programVersionId,
+      history.assignmentId ?? "unassigned",
+      history.programRunId ?? "template",
+      history.workoutId ?? "first",
+      history.returnView,
+    ].join(":");
+    if (programHistoryRestoreKeyRef.current === restoreKey) return;
+    programHistoryRestoreKeyRef.current = restoreKey;
+    const requestId = programHistoryRequestRef.current + 1;
+    programHistoryRequestRef.current = requestId;
+    const applyRestoredProgram = (
+      nextProgram: Program,
+      runDetail: ProgramRunDetail | null = null,
+    ) => {
+      if (
+        programHistoryRequestRef.current !== requestId ||
+        appDetailFromHistory() !== "program"
+      ) {
+        return;
+      }
+      selectProgram(
+        nextProgram,
+        {
+          workoutId: history.workoutId,
+          programRunId: history.programRunId,
+          programRunDetail: runDetail,
+          returnView: history.returnView,
+        },
+        { writeHistory: false },
+      );
+    };
+
+    const currentProgramMatches =
+      program?.id === history.programId &&
+      program.versionId === history.programVersionId &&
+      program.athleteId === history.athleteId;
+    const currentRunDetail =
+      history.programRunId &&
+      viewingProgramRunDetail?.id === history.programRunId
+        ? viewingProgramRunDetail
+        : null;
+    if (currentProgramMatches && (!history.programRunId || currentRunDetail)) {
+      applyRestoredProgram(program, currentRunDetail);
+      return;
+    }
+
+    if (!repository) {
+      const cachedProgram = programCatalog.find(
+        (candidate) =>
+          candidate.id === history.programId &&
+          candidate.versionId === history.programVersionId &&
+          candidate.athleteId === history.athleteId,
+      );
+      if (cachedProgram) applyRestoredProgram(cachedProgram, currentRunDetail);
+      else programHistoryRestoreKeyRef.current = null;
+      return;
+    }
+
+    const programPromise = history.programRunId
+      ? repository.loadProgramForRun(history.programRunId)
+      : repository.loadProgramDetail(
+          history.athleteId,
+          history.programId,
+          history.programVersionId,
+          history.assignmentId,
+        );
+    const runPromise = history.programRunId
+      ? repository.loadProgramRunDetail(history.programRunId)
+      : Promise.resolve(null);
+    void Promise.all([programPromise, runPromise])
+      .then(([nextProgram, runDetail]) => {
+        if (!nextProgram) {
+          throw new Error("This program revision is no longer available.");
+        }
+        applyRestoredProgram(nextProgram, runDetail);
+      })
+      .catch((error: unknown) => {
+        if (
+          programHistoryRequestRef.current !== requestId ||
+          appDetailFromHistory() !== "program"
+        ) {
+          return;
+        }
+        programHistoryRestoreKeyRef.current = null;
+        notify(
+          error instanceof Error
+            ? error.message
+            : "The program could not be restored.",
+        );
+      });
+  };
 
   async function openProgram(targetProgram: Program) {
     void loadProgramView();
@@ -1161,20 +1746,35 @@ export default function LiftLogApp({
       const matchingProgram = programCatalog.find(
         (candidate) => candidate.id === schedule.programId,
       );
-      const nextProgram = repository
-          ? await repository.loadOwnScheduledProgramVersionById(
-            schedule.programId,
-            schedule.programVersionId,
-            schedule.assignmentId,
-          )
-        : matchingProgram;
+      const [nextProgram, runDetail] = repository && schedule.programRunId
+        ? await Promise.all([
+            repository.loadProgramForRun(schedule.programRunId),
+            repository.loadProgramRunDetail(schedule.programRunId),
+          ])
+        : [
+            repository
+              ? await repository.loadOwnScheduledProgramVersionById(
+                  schedule.programId,
+                  schedule.programVersionId,
+                  schedule.assignmentId,
+                )
+              : matchingProgram,
+            null,
+          ];
       if (!nextProgram) throw new Error("This plan version is no longer available.");
+      programWorkoutPreviewOriginRef.current = {
+        schedule,
+        returnView: workoutPreviewReturnView,
+      };
       const workoutWeek = nextProgram.weeks.find((week) =>
         week.workouts.some((workout) => workout.id === schedule.workoutId),
       );
       selectProgram(nextProgram, {
         weekIndex: workoutWeek?.index,
         workoutId: schedule.workoutId,
+        programRunId: schedule.programRunId,
+        programRunDetail: runDetail,
+        returnView: workoutPreviewReturnView,
       });
       setDetail(null);
       setActiveView("program");
@@ -1208,11 +1808,21 @@ export default function LiftLogApp({
   async function refreshProgramWorkspace(programId?: string) {
     if (!repository) return null;
     repository.invalidatePrograms(programId);
-    const page = await repository.listProgramSummaries({ limit: 25 });
+    const [page, programRunPage, coachProgramRunPage] = await Promise.all([
+      repository.listProgramSummaries({ limit: 25 }),
+      repository.listProgramRuns(),
+      repository.listProgramRuns(undefined, { creatorScope: "coach" }),
+    ]);
     setProgramCursor(page.nextCursor);
-    setWorkspace((previous) =>
-      mergeProgramCatalog(previous, page.items, true),
-    );
+    setWorkspace((previous) => ({
+      ...mergeProgramCatalog(previous, page.items, true),
+      programRuns: programRunPage.items,
+      programRunCursor: programRunPage.nextCursor,
+      hasMoreProgramRuns: programRunPage.hasMore,
+      coachProgramRuns: coachProgramRunPage.items,
+      coachProgramRunCursor: coachProgramRunPage.nextCursor,
+      hasMoreCoachProgramRuns: coachProgramRunPage.hasMore,
+    }));
     return page.items;
   }
 
@@ -1243,6 +1853,7 @@ export default function LiftLogApp({
       weekIndex: selectedWeek,
       workoutId: selectedWorkoutId,
       sectionId: selectedSectionId,
+      returnView: programReturnView,
     };
     if (program?.versionStatus === "draft") {
       selectProgram(
@@ -1384,6 +1995,90 @@ export default function LiftLogApp({
       setCoachingDetailLoadingId((currentId) =>
         currentId === athleteId ? null : currentId,
       );
+    }
+  }
+
+  async function loadMoreCoachHistory(athleteId: string) {
+    if (!repository || coachingHistoryLoadingId) return;
+    const athlete = workspace.coachedAthletes.find(
+      (candidate) => candidate.id === athleteId,
+    );
+    if (!athlete?.historyCursor || !athlete.hasMoreHistory) return;
+    setCoachingHistoryLoadingId(athleteId);
+    try {
+      const page = await repository.listCoachCompletedHistory(athleteId, {
+        limit: 25,
+        cursor: athlete.historyCursor,
+      });
+      setWorkspace((previous) => ({
+        ...previous,
+        coachedAthletes: previous.coachedAthletes.map((candidate) => {
+          if (candidate.id !== athleteId) return candidate;
+          const agendaById = new Map(
+            candidate.agenda.map((entry) => [entry.id, entry]),
+          );
+          for (const entry of page.items) agendaById.set(entry.id, entry);
+          const agenda = [...agendaById.values()].sort((left, right) => {
+            if (left.kind !== right.kind) return left.kind === "upcoming" ? -1 : 1;
+            return left.kind === "upcoming"
+              ? left.date.localeCompare(right.date)
+              : right.date.localeCompare(left.date);
+          });
+          return {
+            ...candidate,
+            agenda,
+            historyCursor: page.nextCursor,
+            hasMoreHistory: page.hasMore,
+          };
+        }),
+      }));
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "More workout results could not be loaded.",
+      );
+    } finally {
+      setCoachingHistoryLoadingId(null);
+    }
+  }
+
+  async function loadMoreCoachProgramRuns(athleteId: string) {
+    if (!repository || coachingProgramRunsLoadingId) return;
+    const athlete = workspace.coachedAthletes.find(
+      (candidate) => candidate.id === athleteId,
+    );
+    if (!athlete?.programRunCursor || !athlete.hasMoreProgramRuns) return;
+    setCoachingProgramRunsLoadingId(athleteId);
+    try {
+      const page = await repository.listProgramRuns(athleteId, {
+        limit: 25,
+        cursor: athlete.programRunCursor,
+      });
+      setWorkspace((previous) => ({
+        ...previous,
+        coachedAthletes: previous.coachedAthletes.map((candidate) => {
+          if (candidate.id !== athleteId) return candidate;
+          const runsById = new Map(
+            (candidate.programRuns ?? []).map((run) => [run.id, run]),
+          );
+          for (const run of page.items) runsById.set(run.id, run);
+          return {
+            ...candidate,
+            programRuns: [...runsById.values()],
+            programRunCursor: page.nextCursor,
+            hasMoreProgramRuns: page.hasMore,
+          };
+        }),
+      }));
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "More program history could not be loaded.",
+      );
+    } finally {
+      setCoachingProgramRunsLoadingId(null);
     }
   }
 
@@ -1543,6 +2238,15 @@ export default function LiftLogApp({
             : candidate,
         ),
       }));
+      setCalendarRangeData((previous) => ({
+        ...previous,
+        scheduledWorkouts: previous.scheduledWorkouts.map((candidate) =>
+          candidate.id === schedule.id
+            ? { ...candidate, status: "in_progress" }
+            : candidate,
+        ),
+      }));
+      void refreshProgramRunSummaries().catch(() => undefined);
       setDetail(null);
       notify("Workout started · changes save automatically");
     } catch (error) {
@@ -1598,6 +2302,14 @@ export default function LiftLogApp({
     setWorkspace((previous) => ({
       ...previous,
       activeSession: null,
+      scheduledWorkouts: previous.scheduledWorkouts.map((scheduled) =>
+        scheduled.id === session.scheduledWorkoutId
+          ? { ...scheduled, status: scheduleStatus }
+          : scheduled,
+      ),
+    }));
+    setCalendarRangeData((previous) => ({
+      ...previous,
       scheduledWorkouts: previous.scheduledWorkouts.map((scheduled) =>
         scheduled.id === session.scheduledWorkoutId
           ? { ...scheduled, status: scheduleStatus }
@@ -1660,6 +2372,14 @@ export default function LiftLogApp({
 
         await clearConfirmedActiveSession(activeSession, "completed");
         completionTokenRef.current = null;
+        const visibleRange = lastCalendarRangeRef.current;
+        await Promise.allSettled([
+          refreshProgramRunSummaries(),
+          loadUpcomingWorkouts(true),
+          ...(visibleRange
+            ? [loadVisibleCalendarRange(visibleRange.start, visibleRange.end)]
+            : []),
+        ]);
         notify("Session saved · next workout is ready when you are");
         return;
       }
@@ -2211,10 +2931,10 @@ export default function LiftLogApp({
       setProgramOwnerId(viewer.id);
       notify(
         program.contentType === "quick_workout"
-          ? "Workout saved. It stays editable until you schedule or assign it."
+          ? "Workout saved for future uses."
           : program.sourceType === "coach"
           ? "Coach program saved."
-          : "Program saved. It stays editable until you schedule or assign it.",
+          : "Program saved for future runs.",
       );
     } catch (error) {
       notify(
@@ -2254,15 +2974,25 @@ export default function LiftLogApp({
     }
   }
 
-  async function duplicateProgram(targetProgram: Program) {
+  async function duplicateProgram(
+    targetProgram: Program,
+    sourceRunId?: string,
+  ) {
     if (!repository || programAction) return;
     setProgramAction({ id: targetProgram.id, kind: "duplicate" });
     try {
-      requireCapability(capabilitiesForProgram(targetProgram), "copyToOwn");
-      const copyId = await repository.copyProgramToOwn(targetProgram.id);
+      requireCapability(
+        sourceRunId
+          ? capabilitiesForViewedProgram(targetProgram)
+          : capabilitiesForProgram(targetProgram),
+        "copyToOwn",
+      );
+      const copyId = sourceRunId
+        ? await repository.copyProgramRunToOwn(sourceRunId)
+        : await repository.copyProgramToOwn(targetProgram.id);
       await refreshProgramWorkspace(copyId);
       const copy = await repository.loadEditableProgram(viewer.id, copyId);
-      selectProgram(copy);
+      selectProgram(copy, { returnView: programReturnView });
       setActiveView("program");
       notify(`${targetProgram.title} duplicated. The new copy is editable.`);
     } catch (error) {
@@ -2476,104 +3206,170 @@ export default function LiftLogApp({
     }
   }
 
-  async function openAssignmentModal(seed: {
+  async function openProgramRunWizard(seed: {
+    mode: "self" | "coach";
     programId?: string;
     athleteIds?: string[];
+    repeatRun?: ProgramRunSummary;
   }) {
-    if (
-      repository &&
-      !loadedWorkspaceFeaturesRef.current.has("coaching")
-    ) {
-      await loadWorkspaceFeature("coaching");
-      if (!loadedWorkspaceFeaturesRef.current.has("coaching")) {
-        notify("Your athletes could not be loaded. Try again.");
+    if (repository) {
+      const requiredFeatures: LazyWorkspaceFeature[] = ["programs"];
+      if (seed.mode === "coach") requiredFeatures.push("coaching");
+      await Promise.all(
+        requiredFeatures.map((feature) => loadWorkspaceFeature(feature)),
+      );
+      const missingFeature = requiredFeatures.find(
+        (feature) => !loadedWorkspaceFeaturesRef.current.has(feature),
+      );
+      if (missingFeature) {
+        notify(
+          missingFeature === "coaching"
+            ? "Your athletes could not be loaded. Try again."
+            : "Your programs could not be loaded. Try again.",
+        );
         return;
       }
+    }
+    if (seed.repeatRun) {
+      try {
+        const exactProgram = repository
+          ? await repository.loadProgramForRun(seed.repeatRun.id)
+          : programCatalog.find(
+              (candidate) => candidate.id === seed.repeatRun?.programId,
+            ) ?? null;
+        if (!exactProgram) {
+          throw new Error("This completed program revision is no longer available.");
+        }
+        setAssignmentProgramOverride(exactProgram);
+      } catch (error) {
+        notify(
+          error instanceof Error
+            ? error.message
+            : "This program could not be prepared for repeating.",
+        );
+        return;
+      }
+    } else {
+      setAssignmentProgramOverride(null);
     }
     setAssignmentSeed(seed);
     setModal("assign-program");
   }
 
-  async function assignProgramToAthletes(
-    programId: string,
-    athleteIds: string[],
-  ): Promise<ProgramAssignment[]> {
-    const sourceProgram = assignableOwnPrograms.find(
-      (candidate) => candidate.id === programId,
-    );
+  async function createProgramRun(
+    submission: ProgramRunWizardSubmission,
+  ): Promise<void> {
+    const { programId, athleteIds, workoutDates, idempotencyKey } = submission;
+    const repeatRun = assignmentSeed.repeatRun;
+    const sourceProgram =
+      (assignmentProgramOverride?.id === programId
+        ? assignmentProgramOverride
+        : undefined) ??
+      assignableOwnPrograms.find((candidate) => candidate.id === programId) ??
+      programCatalog.find((candidate) => candidate.id === programId);
     if (!sourceProgram) throw new Error("Choose one of your programs.");
-    requireCapability(capabilitiesForProgram(sourceProgram), "assign");
     if (!athleteIds.length) throw new Error("Choose at least one athlete.");
-    const assignments = repository
-      ? await repository.assignOwnProgramToAthletes(
-          programId,
-          athleteIds,
-        )
-      : athleteIds.map((athleteId) => ({
-          athleteId,
-          assignmentId: `assignment-${programId}-${athleteId}`,
-          programId: `assigned-${programId}-${athleteId}`,
-          created: true,
-        }));
-    const selectedIds = new Set(athleteIds);
-    const assignedAt = new Date().toISOString();
-    const workoutCount = programWorkoutCount(sourceProgram);
-    const withOptimisticAssignment = (athlete: AthleteSummary) => {
-      if (!selectedIds.has(athlete.id)) return athlete;
-      const assignment = assignments.find(
-        (candidate) => candidate.athleteId === athlete.id,
-      );
+    const isSelfRun = athleteIds.length === 1 && athleteIds[0] === viewer.id;
+    if (repeatRun) {
       if (
-        !assignment?.created ||
-        athlete.assignedPrograms.some(
-          (candidate) =>
-            candidate.id ===
-            (assignment.assignmentId ?? assignment.programId),
-        )
-      )
-        return athlete;
-      return {
-        ...athlete,
-        assignedPrograms: [
-          {
-            id: assignment.assignmentId ?? assignment.programId,
-            programId: assignment.programId,
-            assignmentId: assignment.assignmentId,
-            versionId: sourceProgram.versionId,
-            title: sourceProgram.title,
-            assignedAt,
-            status: "awaiting_schedule" as const,
-            totalWorkouts: workoutCount,
-            scheduledWorkouts: 0,
-            scheduledPercent: 0,
-            completedWorkouts: 0,
-            completionPercent: 0,
-          },
-          ...athlete.assignedPrograms,
-        ],
-      };
-    };
-    setWorkspace((previous) => ({
-      ...previous,
-      coachedAthletes: previous.coachedAthletes.map(withOptimisticAssignment),
-    }));
-    setAssignmentSeed({});
-    setModal(null);
+        athleteIds.length !== 1 ||
+        athleteIds[0] !== repeatRun.athleteId ||
+        (repeatRun.athleteId !== viewer.id &&
+          repeatRun.createdById !== viewer.id)
+      ) {
+        throw new Error("This program run cannot be repeated for that athlete.");
+      }
+    } else {
+      if (!isSelfRun) {
+        requireCapability(capabilitiesForProgram(sourceProgram), "assign");
+      } else if (
+        sourceProgram.athleteId !== viewer.id ||
+        sourceProgram.createdById !== viewer.id ||
+        sourceProgram.sourceType !== "self"
+      ) {
+        throw new Error("Only your own reusable training can be started.");
+      }
+    }
 
+    if (!repository) {
+      const createdAt = new Date().toISOString();
+      const demoRuns = athleteIds.map((athleteId, index) => ({
+        id: `run-${Date.now()}-${index}`,
+        athleteId,
+        createdById: viewer.id,
+        programId: sourceProgram.id,
+        programVersionId: sourceProgram.versionId,
+        title: sourceProgram.title,
+        contentType: sourceProgram.contentType ?? "program",
+        status: "not_started" as const,
+        totalWorkouts: workoutDates.length,
+        scheduledWorkouts: workoutDates.filter((entry) => entry.plannedDate).length,
+        completedWorkouts: 0,
+        completionPercent: 0,
+        createdAt,
+      }));
+      setWorkspace((previous) => ({
+        ...previous,
+        programRuns: isSelfRun
+          ? [...demoRuns, ...(previous.programRuns ?? [])]
+          : previous.programRuns,
+        coachedAthletes: previous.coachedAthletes.map((athlete) => {
+          const run = demoRuns.find((candidate) => candidate.athleteId === athlete.id);
+          return run
+            ? { ...athlete, programRuns: [run, ...(athlete.programRuns ?? [])] }
+            : athlete;
+        }),
+      }));
+    } else if (repeatRun) {
+      await repository.repeatProgramRun(
+        repeatRun.id,
+        workoutDates as ProgramRunWorkoutDate[],
+        idempotencyKey,
+      );
+    } else {
+      await repository.createProgramRuns(
+        programId,
+        athleteIds,
+        workoutDates as ProgramRunWorkoutDate[],
+        idempotencyKey,
+      );
+    }
+
+    const scheduledCount = workoutDates.filter((entry) => entry.plannedDate).length;
+    setAssignmentSeed({ mode: "coach" });
+    setAssignmentProgramOverride(null);
+    setModal(null);
     let refreshFailed = false;
     if (repository) {
-      await refreshProgramWorkspace(programId);
-      refreshFailed = !(await refreshCoachWorkspace());
+      try {
+        await refreshProgramWorkspace(programId);
+        if (isSelfRun) await loadUpcomingWorkouts(true);
+        if (
+          program?.id === programId &&
+          program.athleteId === viewer.id &&
+          program.createdById === viewer.id
+        ) {
+          selectProgram(await repository.loadEditableProgram(viewer.id, programId));
+        }
+        if (!isSelfRun) {
+          const refreshed = await refreshCoachWorkspace();
+          refreshFailed = !refreshed;
+        }
+      } catch {
+        refreshFailed = true;
+      }
     }
-    const createdCount = assignments.filter(
-      (assignment) => assignment.created,
-    ).length;
+    const successMessage =
+      repeatRun
+        ? `${sourceProgram.title} added as a new run`
+        : isSelfRun
+          ? `${sourceProgram.title} started${scheduledCount ? ` · ${scheduledCount} workouts scheduled` : ""}`
+          : `${sourceProgram.title} assigned to ${athleteIds.length} ${athleteIds.length === 1 ? "athlete" : "athletes"}${scheduledCount ? " and scheduled" : ""}`;
     notify(
-      createdCount
-        ? `${sourceProgram.title} assigned to ${createdCount} ${createdCount === 1 ? "athlete" : "athletes"}${refreshFailed ? " · refresh to sync details" : ""}`
-        : `${sourceProgram.title} was already assigned to the selected athletes${refreshFailed ? " · refresh to sync details" : ""}`,
+      refreshFailed
+        ? `${successMessage} · saved successfully; refresh to update this screen`
+        : successMessage,
     );
-    return assignments;
   }
 
   async function saveProfile(
@@ -2622,6 +3418,7 @@ export default function LiftLogApp({
         if (target.id === viewer.id) await refreshProgramWorkspace(programId);
         selectProgram(
           await repository.loadEditableProgram(target.id, programId),
+          { returnView: target.id === viewer.id ? "program" : "coaching" },
         );
       } else {
         const emptyProgram: Program = {
@@ -2655,7 +3452,9 @@ export default function LiftLogApp({
             ? { ...previous, draftProgram: emptyProgram }
             : previous,
         );
-        selectProgram(emptyProgram);
+        selectProgram(emptyProgram, {
+          returnView: target.id === viewer.id ? "program" : "coaching",
+        });
       }
       setProgramTarget(null);
       setModal(null);
@@ -2798,6 +3597,17 @@ export default function LiftLogApp({
       notify(`${target.title} removed from the workout`);
       return;
     }
+    if (target.kind === "program-run") {
+      if (!repository) throw new Error("The program run could not be ended.");
+      await repository.endProgramRun(target.id);
+      await Promise.all([
+        refreshProgramWorkspace(),
+        loadUpcomingWorkouts(true),
+      ]);
+      if (coachMode === "coach") await refreshCoachWorkspace();
+      notify(`${target.title} ended · completed results remain in history`);
+      return;
+    }
     if (target.kind === "assignment") {
       if (!repository) throw new Error("The program could not be unassigned.");
       await repository.unassignProgram(target.id);
@@ -2829,12 +3639,15 @@ export default function LiftLogApp({
             : Promise.resolve(null),
         ]);
         if (frequent) setFrequentScheduleCandidates(frequent);
+        const quickWorkoutItems = page.items.filter(
+          (candidate) => candidate.isQuickWorkout,
+        );
         setScheduleCandidates((current) =>
           reset
-            ? page.items
+            ? quickWorkoutItems
             : [
                 ...current,
-                ...page.items.filter(
+                ...quickWorkoutItems.filter(
                   (item) =>
                     !current.some(
                       (existing) =>
@@ -2849,7 +3662,9 @@ export default function LiftLogApp({
         return;
       }
 
-      const demoCandidates = schedulablePrograms.flatMap((candidate) =>
+      const demoCandidates = schedulablePrograms
+        .filter((candidate) => candidate.contentType === "quick_workout")
+        .flatMap((candidate) =>
         candidate.weeks.flatMap((week) =>
           week.workouts.map((workout, position) => {
             const occurrences = workspace.scheduledWorkouts.filter(
@@ -2887,7 +3702,7 @@ export default function LiftLogApp({
             } satisfies SchedulableWorkoutCandidate;
           }),
         ),
-      );
+        );
       setScheduleCandidates(demoCandidates);
       setFrequentScheduleCandidates(
         demoCandidates
@@ -3037,6 +3852,12 @@ export default function LiftLogApp({
             : schedule,
         ),
       }));
+      if (repository) {
+        await Promise.allSettled([
+          loadUpcomingWorkouts(true),
+          refreshProgramRunSummaries(),
+        ]);
+      }
       setModal(null);
       setScheduleEditingId(null);
       notify(
@@ -3056,6 +3877,7 @@ export default function LiftLogApp({
   async function saveScheduleCandidate(
     candidate: ScheduleCandidate,
     date: string | null,
+    idempotencyKey: string,
   ) {
     if (candidate.scheduleId) {
       await saveSchedule(candidate.scheduleId, date);
@@ -3063,19 +3885,24 @@ export default function LiftLogApp({
     }
     if (!date) throw new Error("Choose a date for this workout.");
 
-    const sourceProgram = programCatalog.find(
-      (candidateProgram) => candidateProgram.id === candidate.programId,
-    );
     const demoScheduleId = `schedule-${Date.now()}`;
+    const demoRunId = `run-${Date.now()}`;
+    const demoRunWorkoutId = `${demoRunId}:${candidate.workoutId}`;
+    if (repository && candidate.assignmentId) {
+      throw new Error(
+        "This older assignment is read-only. Schedule its migrated program run instead.",
+      );
+    }
     const created = repository
-      ? await repository.createScheduledOccurrence(
+      ? await repository.createScheduledQuickWorkoutRun(
           candidate.programId,
-          candidate.assignmentId,
-          candidate.workoutId,
           date,
+          idempotencyKey,
         )
       : {
           id: demoScheduleId,
+          programRunId: demoRunId,
+          programRunWorkoutId: demoRunWorkoutId,
           programId: candidate.programId,
           programTitle: candidate.programTitle,
           programVersionId: candidate.programVersionId,
@@ -3101,6 +3928,34 @@ export default function LiftLogApp({
         };
     setWorkspace((previous) => ({
       ...previous,
+      ...(!repository && !candidate.assignmentId
+        ? {
+            programRuns: [
+              {
+                id: demoRunId,
+                athleteId: viewer.id,
+                createdById: viewer.id,
+                programId: candidate.programId,
+                programVersionId: candidate.programVersionId,
+                title: candidate.programTitle,
+                contentType: "quick_workout" as const,
+                status: "not_started" as const,
+                totalWorkouts: 1,
+                scheduledWorkouts: 1,
+                completedWorkouts: 0,
+                completionPercent: 0,
+                nextWorkout: {
+                  id: demoRunWorkoutId,
+                  title: candidate.workoutTitle,
+                  plannedDate: date,
+                  status: "scheduled" as const,
+                },
+                createdAt: new Date().toISOString(),
+              },
+              ...(previous.programRuns ?? []),
+            ],
+          }
+        : {}),
       scheduledWorkouts: [
         ...previous.scheduledWorkouts.filter(
           (schedule) => schedule.id !== created.id,
@@ -3126,8 +3981,13 @@ export default function LiftLogApp({
     setModal(null);
     setScheduleEditingId(null);
     setScheduleInitialDate(null);
-    if (repository && sourceProgram?.versionStatus === "draft") {
-      await refreshProgramWorkspace(candidate.programId);
+    if (repository && !candidate.assignmentId) {
+      try {
+        await refreshProgramWorkspace(candidate.programId);
+      } catch {
+        notify("Workout scheduled · refresh Programs to see the new editable copy");
+        return;
+      }
     }
     notify("Workout added to your calendar");
   }
@@ -3190,6 +4050,9 @@ export default function LiftLogApp({
           await clearConfirmedActiveSession(activeSession, status);
         }
       }
+      if (repository) {
+        await refreshProgramRunSummaries().catch(() => undefined);
+      }
       setDetail(null);
       notify(
         status === "planned"
@@ -3218,55 +4081,31 @@ export default function LiftLogApp({
   async function openCalendarResults(
     session: CompletedSession,
     athleteId?: string,
-    returnView: "calendar" | "coaching" = "calendar",
+    returnView: "calendar" | "coaching" | "program" = "calendar",
   ) {
-    const requestId = completedWorkoutRequestRef.current + 1;
-    completedWorkoutRequestRef.current = requestId;
-    setDetail({
-      kind: "completed-workout",
+    setActiveView("today");
+    pushAppDetailHistory("workout-log", "today", {
+      stackOnDetail: returnView === "program" || returnView === "coaching",
+      data: {
+        kind: "workout-log",
+        session,
+        ...(athleteId ? { athleteId } : {}),
+        returnView,
+      },
+    });
+    completedWorkoutRestoreKeyRef.current = null;
+    restoreCompletedWorkoutFromHistory({
+      kind: "workout-log",
       session,
-      detail: repository ? null : { ...session, items: [] },
-      loading: Boolean(repository),
-      error: "",
+      ...(athleteId ? { athleteId } : {}),
       returnView,
     });
-    setActiveView("today");
-    pushAppDetailHistory("workout-log", "today");
     scrollToAppTop();
-    if (!repository) return;
-    try {
-      const detail = await repository.loadCompletedSessionDetail(
-        session.id,
-        athleteId,
-      );
-      if (completedWorkoutRequestRef.current !== requestId) return;
-      setDetail({
-        kind: "completed-workout",
-        session: detail ?? session,
-        detail,
-        loading: false,
-        error: detail ? "" : "These workout results are no longer available.",
-        returnView,
-      });
-    } catch (error) {
-      if (completedWorkoutRequestRef.current !== requestId) return;
-      setDetail({
-        kind: "completed-workout",
-        session,
-        detail: null,
-        loading: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "The workout results could not be loaded.",
-        returnView,
-      });
-    }
   }
 
   async function openAthleteProgram(
     athlete: AthleteSummary,
-    assignedProgram: CoachAssignedProgramSummary,
+    assignedProgram: CoachWorkspaceProgram,
     workoutId?: string,
     programVersionId?: string,
   ) {
@@ -3278,27 +4117,54 @@ export default function LiftLogApp({
         navigate("program");
         return;
       }
-      const nextProgram = programVersionId
-        ? await repository.loadProgramVersionForAthleteById(
-            athlete.id,
-            assignedProgram.programId ?? assignedProgram.id,
-            programVersionId,
-            assignedProgram.assignmentId,
-          )
-        : await repository.loadProgramForAthleteById(
-            athlete.id,
-            assignedProgram.programId ?? assignedProgram.id,
-            assignedProgram.assignmentId,
-          );
+      const resolvedVersionId =
+        programVersionId ??
+        ("programVersionId" in assignedProgram
+          ? assignedProgram.programVersionId
+          : assignedProgram.versionId);
+      const assignmentId = assignedProgram.assignmentId;
+      const programRunId =
+        "programVersionId" in assignedProgram && !assignedProgram.legacy
+          ? assignedProgram.id
+          : undefined;
+      const [nextProgram, runDetail] = programRunId
+        ? await Promise.all([
+            repository.loadProgramForRun(programRunId),
+            repository.loadProgramRunDetail(programRunId),
+          ])
+        : [
+            resolvedVersionId
+              ? await repository.loadProgramVersionForAthleteById(
+                  athlete.id,
+                  assignedProgram.programId ?? assignedProgram.id,
+                  resolvedVersionId,
+                  assignmentId,
+                )
+              : await repository.loadProgramForAthleteById(
+                  athlete.id,
+                  assignedProgram.programId ?? assignedProgram.id,
+                  assignmentId,
+                ),
+            null,
+          ];
       if (nextProgram) {
-        const workoutWeek = workoutId
+        const targetWorkoutId =
+          workoutId ??
+          (runDetail
+            ? nextIncompleteRunWorkoutId(runDetail.workouts) ??
+              runDetail.workouts[0]?.workoutId
+            : undefined);
+        const workoutWeek = targetWorkoutId
           ? nextProgram.weeks.find((week) =>
-              week.workouts.some((workout) => workout.id === workoutId),
+              week.workouts.some((workout) => workout.id === targetWorkoutId),
             )
           : undefined;
         selectProgram(nextProgram, {
           weekIndex: workoutWeek?.index,
-          workoutId,
+          workoutId: targetWorkoutId,
+          programRunId,
+          programRunDetail: runDetail,
+          returnView: "coaching",
         });
       }
       else setProgram(null);
@@ -3315,6 +4181,66 @@ export default function LiftLogApp({
     }
   }
 
+  async function openOwnProgramRun(
+    run: ProgramRunSummary,
+    returnView: "today" | "program" = "today",
+  ) {
+    if (openingCoachProgramId) return;
+    setOpeningCoachProgramId(run.id);
+    try {
+      const [nextProgram, runDetail] = await Promise.all([
+        repository
+          ? repository.loadProgramForRun(run.id)
+          : Promise.resolve(
+              programCatalog.find((candidate) => candidate.id === run.programId) ??
+                null,
+            ),
+        loadProgramRunDetail(run.id),
+      ]);
+      if (!nextProgram) throw new Error("This program revision is no longer available.");
+      const workoutId =
+        (runDetail && nextIncompleteRunWorkoutId(runDetail.workouts)) ??
+        runDetail?.workouts[0]?.workoutId;
+      setProgramOwnerId(viewer.id);
+      selectProgram(nextProgram, {
+        programRunId: run.id,
+        programRunDetail: runDetail,
+        workoutId,
+        returnView,
+      });
+      setActiveView("program");
+      updateAppViewUrl("program");
+      scrollToAppTop();
+    } catch (error) {
+      notify(
+        error instanceof Error
+          ? error.message
+          : "The program run could not be opened",
+      );
+    } finally {
+      setOpeningCoachProgramId(null);
+    }
+  }
+
+  function openProgramRunActivity(entry: CoachAgendaEntry) {
+    if (entry.kind !== "completed" || !entry.sessionId) return;
+    void openCalendarResults(
+      {
+        id: entry.sessionId,
+        programRunId: entry.programRunId,
+        programRunWorkoutId: entry.programRunWorkoutId,
+        programVersionId: entry.programVersionId,
+        workoutId: entry.workoutId,
+        workoutTitle: entry.workoutTitle,
+        date: entry.date,
+        durationMinutes: 0,
+        rpe: entry.rpe ?? 0,
+      },
+      program?.athleteId !== viewer.id ? program?.athleteId : undefined,
+      "program",
+    );
+  }
+
   function openCoachAgendaEntry(
     athlete: AthleteSummary,
     entry: CoachAgendaEntry,
@@ -3323,6 +4249,8 @@ export default function LiftLogApp({
       void openCalendarResults(
         {
           id: entry.sessionId,
+          programRunId: entry.programRunId,
+          programRunWorkoutId: entry.programRunWorkoutId,
           programVersionId: entry.programVersionId,
           workoutId: entry.workoutId,
           workoutTitle: entry.workoutTitle,
@@ -3332,6 +4260,18 @@ export default function LiftLogApp({
         },
         athlete.id,
         "coaching",
+      );
+      return;
+    }
+    const run = entry.programRunId
+      ? athlete.programRuns?.find((candidate) => candidate.id === entry.programRunId)
+      : undefined;
+    if (run) {
+      void openAthleteProgram(
+        athlete,
+        run,
+        entry.workoutId,
+        entry.programVersionId,
       );
       return;
     }
@@ -3443,8 +4383,13 @@ export default function LiftLogApp({
             }
             onBack={() => {
               completedWorkoutRequestRef.current += 1;
+              completedWorkoutRestoreKeyRef.current = null;
               const returnView = completedWorkoutView.returnView;
-              leaveDetail(returnView);
+              if (returnView === "program") {
+                leaveDetail("program");
+              } else {
+                leaveDetail(returnView);
+              }
             }}
           />
         )}
@@ -3579,9 +4524,24 @@ export default function LiftLogApp({
           !workoutPreviewSchedule && (
           <NextWorkoutsView
             schedules={upcomingWorkouts}
-            hasProgram={schedulablePrograms.length > 0}
-            hasPublishedProgram={schedulablePrograms.some(
-              (candidate) => candidate.versionStatus === "published",
+            hasMore={Boolean(upcomingCursor)}
+            loading={upcomingLoading}
+            error={upcomingLoadError}
+            onLoadMore={() =>
+              void loadUpcomingWorkouts(
+                upcomingFailedResetRef.current ||
+                  !upcomingInitializedRef.current,
+              )
+            }
+            hasProgram={programCatalog.some(
+              (candidate) =>
+                candidate.sourceType === "self" &&
+                (candidate.workoutCount ?? programWorkoutCount(candidate)) > 0,
+            )}
+            hasPublishedProgram={programCatalog.some(
+              (candidate) =>
+                candidate.sourceType === "self" &&
+                (candidate.workoutCount ?? programWorkoutCount(candidate)) > 0,
             )}
             startingScheduleId={startingScheduleId}
             activeScheduleId={
@@ -3590,7 +4550,12 @@ export default function LiftLogApp({
                 : null
             }
             onNavigate={navigate}
-            onSchedule={() => openSchedule()}
+            onSchedule={() =>
+              void openProgramRunWizard({
+                mode: "self",
+                athleteIds: [viewer.id],
+              })
+            }
             onStart={(schedule) => {
               if (
                 activeSession &&
@@ -3631,14 +4596,25 @@ export default function LiftLogApp({
             <ProgramView
             key={`${program.id}:${program.versionId}`}
             program={program}
+            programRun={viewingProgramRun}
             action={
               programAction?.id === program.id ? programAction.kind : null
             }
             mutationPending={builderMutationPending}
             viewerId={viewer.id}
-            capabilities={capabilitiesForProgram(program)}
+            capabilities={capabilitiesForViewedProgram(program)}
+            backLabel={
+              programReturnView === "coaching"
+                ? "Coaching"
+                : programReturnView === "calendar"
+                  ? "Calendar"
+                  : programReturnView === "today"
+                    ? "Next"
+                    : "Programs"
+            }
             workouts={programWorkoutSequence}
             selectedWorkout={selectedWorkout}
+            runWorkouts={viewingProgramRunDetail?.workouts ?? []}
             onSearchExercises={searchBuilderExercises}
             onSelectWorkout={(id) => {
               setSelectedWorkoutId(id);
@@ -3664,35 +4640,58 @@ export default function LiftLogApp({
               void saveProgram(title, description)
             }
             onDuplicate={
-              capabilitiesForProgram(program).copyToOwn
-                ? () => void duplicateProgram(program)
+              capabilitiesForViewedProgram(program).copyToOwn
+                ? () =>
+                    void duplicateProgram(
+                      program,
+                      viewingProgramRunId ?? undefined,
+                    )
                 : undefined
             }
             onBack={() => {
+              const returnView = programReturnView;
+              const workoutPreviewOrigin = programWorkoutPreviewOriginRef.current;
+              programWorkoutPreviewOriginRef.current = null;
               setProgram(null);
+              setViewingProgramRunId(null);
+              setViewingProgramRunDetail(null);
               if (program.athleteId !== viewer.id) {
                 setCoachMode("coach");
               }
-              leaveDetail(program.athleteId !== viewer.id ? "coaching" : "program");
+              if (workoutPreviewOrigin) {
+                setActiveView("today");
+                updateAppViewUrl("today", "replace");
+                void openWorkoutPreview(
+                  workoutPreviewOrigin.schedule,
+                  workoutPreviewOrigin.returnView,
+                  false,
+                );
+                scrollToAppTop();
+              } else {
+                leaveDetail(returnView);
+              }
             }}
             onAssignProgram={
-              capabilitiesForProgram(program).assign
-                ? () => void openAssignmentModal({ programId: program.id })
+              !viewingProgramRunId && capabilitiesForProgram(program).assign
+                ? () => void openProgramRunWizard({
+                    mode: "coach",
+                    programId: program.id,
+                  })
                 : undefined
             }
             onEditWorkout={() => setModal("workout-settings")}
             onSchedule={
-              capabilitiesForProgram(program).schedule
-                ? () => void openScheduleForProgram(program)
+              !viewingProgramRunId && capabilitiesForProgram(program).schedule
+                ? () =>
+                    void (program.sourceType === "self"
+                      ? openProgramRunWizard({
+                          mode: "self",
+                          programId: program.id,
+                          athleteIds: [viewer.id],
+                        })
+                      : openScheduleForProgram(program))
                 : undefined
             }
-            renderWorkoutDetails={(workout) => (
-              <ProgramWorkoutDetails
-                workout={workout}
-                weightUnit={workspace.profile.weightUnit}
-                exerciseCategoryForItem={exerciseCategoryForItem}
-              />
-            )}
             renderWorkoutItem={(item) => (
               <WorkoutLogItem
                 item={item}
@@ -3710,18 +4709,24 @@ export default function LiftLogApp({
               />
             )}
             workoutActivity={
-              program.athleteId !== viewer.id && selectedAthlete && selectedWorkout
+              viewingProgramRunDetail
+                ? completeRunActivity
+                : program.athleteId !== viewer.id && selectedAthlete && selectedWorkout
                 ? selectedAthlete.agenda.filter(
                     (entry) =>
                       entry.workoutId === selectedWorkout.id &&
-                      (entry.assignmentId === program.assignmentId ||
-                        entry.programId === program.id ||
-                        entry.programVersionId === program.versionId),
+                      (viewingProgramRunId
+                        ? entry.programRunId === viewingProgramRunId
+                        : entry.assignmentId === program.assignmentId ||
+                          entry.programId === program.id ||
+                          entry.programVersionId === program.versionId),
                   )
                 : []
             }
             onOpenActivity={
-              program.athleteId !== viewer.id && selectedAthlete
+              viewingProgramRunDetail
+                ? openProgramRunActivity
+                : program.athleteId !== viewer.id && selectedAthlete
                 ? (entry) => openCoachAgendaEntry(selectedAthlete, entry)
                 : undefined
             }
@@ -3746,10 +4751,13 @@ export default function LiftLogApp({
           ) : (
             <ProgramsHome
               programs={programCatalog}
+              programRuns={[...(workspace.programRuns ?? []), ...coachProgramRuns]}
+              hasMoreProgramRuns={Boolean(workspace.hasMoreCoachProgramRuns)}
+              programRunsLoadingMore={coachProgramRunsLoadingMore}
+              programRunsLoadError={coachProgramRunsLoadError}
               viewerId={viewer.id}
-              schedules={workspace.scheduledWorkouts}
               source={programSource}
-              hasCoach={hasCoach}
+              hasCoach={hasCoachTraining}
               hasMore={Boolean(programCursor)}
               loadingMore={programsLoadingMore}
               loadError={programsLoadError}
@@ -3771,8 +4779,39 @@ export default function LiftLogApp({
                 setModal("program");
               }}
               onCreateWorkout={() => setModal("quick-workout")}
-              onSchedule={(targetProgram) => void openScheduleForProgram(targetProgram)}
+              onSchedule={(targetProgram) =>
+                void (targetProgram.sourceType === "self"
+                  ? openProgramRunWizard({
+                      mode: "self",
+                      programId: targetProgram.id,
+                      athleteIds: [viewer.id],
+                    })
+                  : openScheduleForProgram(targetProgram))
+              }
+              onOpenRun={(run) => void openOwnProgramRun(run, "program")}
+              onScheduleRun={(run) => {
+                setProgramRunScheduleTarget(run);
+                setModal("run-schedule");
+              }}
+              onEndRun={(run) => {
+                setContentDeleteTarget({
+                  kind: "program-run",
+                  id: run.id,
+                  title: run.title,
+                  contentType: run.contentType,
+                });
+                setModal("delete-content");
+              }}
+              onRepeatRun={(run) =>
+                void openProgramRunWizard({
+                  mode: "self",
+                  programId: run.programId,
+                  athleteIds: [viewer.id],
+                  repeatRun: run,
+                })
+              }
               onLoadMore={() => void loadMorePrograms()}
+              onLoadMoreProgramRuns={() => void loadMoreCoachAssignedRuns()}
             />
           ))}
         {activeView === "calendar" && (
@@ -3879,7 +4918,6 @@ export default function LiftLogApp({
         {activeView === "coaching" && (
           <CoachingView
             mode={coachMode}
-            viewerId={viewer.id}
             coachConnections={workspace.coachConnections}
             pendingInvites={workspace.pendingCoachInvites}
             outgoingInvites={outgoingCoachInvites}
@@ -3889,6 +4927,8 @@ export default function LiftLogApp({
             athletesLoadError={coachAthletesLoadError}
             selectedAthlete={selectedAthlete}
             loadingAthleteId={coachingDetailLoadingId}
+            loadingHistoryAthleteId={coachingHistoryLoadingId}
+            loadingProgramRunsAthleteId={coachingProgramRunsLoadingId}
             openingProgramId={openingCoachProgramId}
             onMode={changeCoachMode}
             refreshing={coachingRefreshing}
@@ -3903,22 +4943,77 @@ export default function LiftLogApp({
             onCancelInvite={(invitation) => void cancelCoachInvite(invitation)}
             onSelectAthlete={selectCoachedAthlete}
             onLoadMoreAthletes={() => void loadMoreCoachAthletes()}
+            onLoadMoreHistory={(athlete) =>
+              void loadMoreCoachHistory(athlete.id)
+            }
+            onLoadMoreProgramRuns={(athlete) =>
+              void loadMoreCoachProgramRuns(athlete.id)
+            }
             onOpenAssignedProgram={(athlete, assignedProgram, workoutId) =>
               void openAthleteProgram(athlete, assignedProgram, workoutId)
             }
-            onAssignAthlete={(athlete) =>
-              void openAssignmentModal({ athleteIds: [athlete.id] })
+            onOpenAgendaEntry={(athlete, entry) =>
+              void openCoachAgendaEntry(athlete, entry)
             }
-            onScheduleAthlete={(_athlete, assignedProgram) => {
-              setCoachScheduleProgram(assignedProgram ?? null);
-              setModal("coach-schedule");
+            onAssignAthlete={(athlete) =>
+              void openProgramRunWizard({
+                mode: "coach",
+                athleteIds: [athlete.id],
+              })
+            }
+            onScheduleAthlete={(athlete, assignedProgram) => {
+              if (
+                assignedProgram &&
+                "programVersionId" in assignedProgram &&
+                !assignedProgram.legacy
+              ) {
+                setProgramRunScheduleTarget(assignedProgram);
+                setModal("run-schedule");
+                return;
+              }
+              if (!assignedProgram) {
+                void openProgramRunWizard({
+                  mode: "coach",
+                  athleteIds: [athlete.id],
+                });
+                return;
+              }
+              notify(
+                "This older assignment is read-only. Use its migrated program run instead.",
+              );
             }}
-            onUnassignAthlete={(_athlete, assignedProgram) =>
+            onUnassignAthlete={(_athlete, assignedProgram) => {
+              if (
+                "programVersionId" in assignedProgram &&
+                !assignedProgram.legacy
+              ) {
+                setContentDeleteTarget({
+                  kind: "program-run",
+                  id: assignedProgram.id,
+                  title: assignedProgram.title,
+                  contentType: assignedProgram.contentType,
+                });
+                setModal("delete-content");
+                return;
+              }
               unassignProgram(
                 assignedProgram.assignmentId,
                 assignedProgram.title,
-              )
-            }
+              );
+            }}
+            onRepeatAthlete={(athlete, assignedProgram) => {
+              if (
+                "programVersionId" in assignedProgram &&
+                !assignedProgram.legacy
+              ) {
+                void openProgramRunWizard({
+                  mode: "coach",
+                  programId: assignedProgram.programId,
+                  athleteIds: [athlete.id],
+                  repeatRun: assignedProgram,
+                });
+              }
+            }}
           />
         )}
       </section>
@@ -4026,57 +5121,104 @@ export default function LiftLogApp({
         />
       )}
       {modal === "assign-program" && (
-        <AssignProgramModal
-          programs={assignableOwnPrograms}
-          athletes={workspace.coachedAthletes}
-          hasMoreAthletes={Boolean(coachAthleteCursor)}
-          loadingMoreAthletes={coachAthletesLoadingMore}
-          athletesLoadError={coachAthletesLoadError}
-          initialProgramId={assignmentSeed.programId}
-          initialAthleteIds={assignmentSeed.athleteIds}
-          onClose={() => {
-            setAssignmentSeed({});
-            setModal(null);
-          }}
-          onAssign={assignProgramToAthletes}
-          onLoadMoreAthletes={() => void loadMoreCoachAthletes()}
-        />
-      )}
-      {modal === "coach-schedule" && selectedAthlete && (
-        <CoachScheduleModal
-          athlete={selectedAthlete}
-          initialProgram={coachScheduleProgram}
-          onClose={() => {
-            setCoachScheduleProgram(null);
-            setModal(null);
-          }}
-          onLoadProgram={(assignedProgram) => {
-            if (!repository)
-              return Promise.resolve(
-                program?.id === assignedProgram.programId ? program : null,
-              );
-            return repository.loadProgramForAthleteById(
-              selectedAthlete.id,
-              assignedProgram.programId,
-              assignedProgram.assignmentId,
-            );
-          }}
-          onSchedule={async (assignedProgram, workoutId, plannedDate) => {
-            if (!assignedProgram.assignmentId)
-              throw new Error("This assignment cannot be scheduled.");
-            if (repository) {
-              await repository.createCoachScheduledOccurrence(
-                assignedProgram.assignmentId,
-                workoutId,
-                plannedDate,
-              );
-              await refreshCoachWorkspace();
+        <Suspense
+          fallback={
+            <div className="feature-load-status" role="status">
+              <LoaderCircle size={16} className="spin" />
+              Opening training setup…
+            </div>
+          }
+        >
+          <ProgramRunWizard
+            mode={assignmentSeed.mode}
+            viewerId={viewer.id}
+            viewerName={workspace.profile.displayName}
+            programs={runWizardPrograms}
+            athletes={workspace.coachedAthletes}
+            hasMorePrograms={Boolean(programCursor)}
+            loadingMorePrograms={programsLoadingMore}
+            onLoadMorePrograms={() => void loadMorePrograms()}
+            hasMoreAthletes={Boolean(coachAthleteCursor)}
+            loadingMoreAthletes={coachAthletesLoadingMore}
+            onLoadMoreAthletes={() => void loadMoreCoachAthletes()}
+            initialProgramId={
+              assignmentSeed.repeatRun?.programId ?? assignmentSeed.programId
             }
-            setCoachScheduleProgram(null);
-            setModal(null);
-            notify(`Workout added to ${selectedAthlete.name}'s calendar`);
-          }}
-        />
+            initialAthleteIds={assignmentSeed.athleteIds}
+            onLoadProgram={loadProgramForCurrentRunWizard}
+            onClose={() => {
+              setAssignmentSeed({ mode: "coach" });
+              setAssignmentProgramOverride(null);
+              setModal(null);
+            }}
+            onCreate={createProgramRun}
+          />
+        </Suspense>
+      )}
+      {modal === "run-schedule" && programRunScheduleTarget && (
+        <Suspense
+          fallback={
+            <div className="feature-load-status" role="status">
+              <LoaderCircle size={16} className="spin" />
+              Opening schedule…
+            </div>
+          }
+        >
+          <ProgramRunScheduleWizard
+            run={programRunScheduleTarget}
+            athleteName={
+              programRunScheduleTarget.athleteId === viewer.id
+                ? undefined
+                : workspace.coachedAthletes.find(
+                    (athlete) => athlete.id === programRunScheduleTarget.athleteId,
+                  )?.name
+            }
+            onLoad={loadProgramRunDetail}
+            onClose={() => {
+              setProgramRunScheduleTarget(null);
+              setModal(null);
+            }}
+            onSave={async (workoutDates, idempotencyKey) => {
+              let refreshFailed = false;
+              if (repository) {
+                await repository.scheduleProgramRunWorkouts(
+                  programRunScheduleTarget.id,
+                  workoutDates,
+                  idempotencyKey,
+                );
+              }
+              const dated = workoutDates.filter((entry) => entry.plannedDate).length;
+              const targetAthleteId = programRunScheduleTarget.athleteId;
+              setProgramRunScheduleTarget(null);
+              setModal(null);
+              if (repository) {
+                try {
+                  await Promise.all([
+                    refreshProgramWorkspace(),
+                    targetAthleteId === viewer.id
+                      ? loadUpcomingWorkouts(true)
+                      : Promise.resolve(),
+                  ]);
+                  if (targetAthleteId !== viewer.id) {
+                    const refreshed = await refreshCoachWorkspace();
+                    refreshFailed = !refreshed;
+                  }
+                } catch {
+                  refreshFailed = true;
+                }
+              }
+              const successMessage =
+                dated
+                  ? `${dated} ${dated === 1 ? "workout" : "workouts"} added to the calendar`
+                  : "Program dates updated";
+              notify(
+                refreshFailed
+                  ? `${successMessage} · saved successfully; refresh to update this screen`
+                  : successMessage,
+              );
+            }}
+          />
+        </Suspense>
       )}
       {modal === "program" && (
         <ProgramModal
@@ -4272,6 +5414,10 @@ function NextWorkoutsView({
   onOpen,
   onSetStatus,
   statusAction,
+  hasMore = false,
+  loading = false,
+  error = null,
+  onLoadMore,
 }: {
   schedules: ScheduledWorkout[];
   hasProgram: boolean;
@@ -4284,15 +5430,32 @@ function NextWorkoutsView({
   onOpen: (schedule: ScheduledWorkout) => void;
   onSetStatus: (scheduleId: string, status: "planned" | "skipped") => void;
   statusAction: { id: string; status: "planned" | "skipped" } | null;
+  hasMore?: boolean;
+  loading?: boolean;
+  error?: string | null;
+  onLoadMore?: () => void;
 }) {
-  const [page, setPage] = useState(0);
-  const pageSize = 20;
-  const pageCount = Math.max(1, Math.ceil(schedules.length / pageSize));
-  const currentPage = Math.min(page, pageCount - 1);
-  const visibleSchedules = schedules.slice(
-    currentPage * pageSize,
-    currentPage * pageSize + pageSize,
-  );
+  const loadMoreControl = error ? (
+    <div className="feature-load-status error" role="alert">
+      <span>{error}</span>
+      {onLoadMore && (
+        <button className="text-button" onClick={onLoadMore}>
+          Try again
+        </button>
+      )}
+    </div>
+  ) : hasMore || loading ? (
+    <AsyncButton
+      className="button secondary library-load-more"
+      loading={loading}
+      loadingLabel="Loading workouts…"
+      disabled={!onLoadMore}
+      onClick={onLoadMore}
+    >
+      Load more workouts
+    </AsyncButton>
+  ) : null;
+
   if (schedules.length) {
     return (
       <>
@@ -4300,17 +5463,9 @@ function NextWorkoutsView({
           eyebrow="Your schedule"
           title="Next workouts"
           description="Every workout scheduled from today onward. Start any one whenever you are ready."
-        >
-          <button
-            className="button secondary"
-            onClick={() => onNavigate("calendar")}
-          >
-            <CalendarDays size={15} />
-            Open calendar
-          </button>
-        </PageHeader>
+        />
         <section className="next-workouts-list" aria-label="Scheduled workouts">
-          {visibleSchedules.map((schedule) => {
+          {schedules.map((schedule) => {
             const date = new Date(`${schedule.plannedDate}T12:00:00`);
             const dateLabel = date.toLocaleDateString("en", {
               weekday: "long",
@@ -4334,7 +5489,10 @@ function NextWorkoutsView({
                   <p>{schedule.programTitle}</p>
                   <h2>{schedule.workoutTitle}</h2>
                   <small>
-                    {schedule.workout.dayLabel} · {formatDuration(schedule.workout.durationMinutes)}
+                    {schedule.workout.dayLabel}
+                    {schedule.workout.durationMinutes > 0
+                      ? ` · ${formatDuration(schedule.workout.durationMinutes)}`
+                      : ""}
                   </small>
                 </button>
                 {schedule.status === "skipped" ? (
@@ -4363,27 +5521,20 @@ function NextWorkoutsView({
             );
           })}
         </section>
-        {pageCount > 1 && (
-          <nav className="library-pagination" aria-label="Upcoming workout pages">
-            <button
-              className="button secondary small"
-              disabled={currentPage === 0}
-              onClick={() => setPage((current) => Math.max(0, current - 1))}
-            >
-              <ArrowLeft size={14} /> Previous
-            </button>
-            <span>Page {currentPage + 1} of {pageCount}</span>
-            <button
-              className="button secondary small"
-              disabled={currentPage >= pageCount - 1}
-              onClick={() =>
-                setPage((current) => Math.min(pageCount - 1, current + 1))
-              }
-            >
-              Next <ArrowRight size={14} />
-            </button>
-          </nav>
-        )}
+        {loadMoreControl}
+      </>
+    );
+  }
+
+  if (loading || error || hasMore) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="Your schedule"
+          title="Next workouts"
+          description="Scheduled workouts will appear here as they load."
+        />
+        {loadMoreControl}
       </>
     );
   }
@@ -4395,7 +5546,7 @@ function NextWorkoutsView({
         title="No future workouts scheduled"
         description={
           hasProgram
-            ? "Your program and calendar are separate—you decide when each workout happens."
+            ? "Start a program to schedule the full workout sequence, or keep its dates flexible."
             : "Start only when you choose a program or create one of your own."
         }
       />
@@ -4403,21 +5554,21 @@ function NextWorkoutsView({
         <CalendarDays size={28} />
         <h3>
           {hasProgram
-            ? "Choose a training date"
+            ? "Choose a training plan"
             : "No training has been added"}
         </h3>
         <p>
           {hasProgram
             ? hasPublishedProgram
-              ? "Schedule workouts for any date. Your upcoming calendar sessions will appear here."
-              : "Open your editable program to schedule its first workout."
+              ? "You can set every workout date in one step and adjust them later."
+              : "Open an editable program and add at least one workout."
             : "Browse the collapsed program library or build a plan from scratch."}
         </p>
         <div className="empty-actions">
           {hasPublishedProgram && (
             <button className="button primary" onClick={onSchedule}>
-              <CalendarPlus size={15} />
-              Schedule a workout
+              <Activity size={15} />
+              Start training
             </button>
           )}
           <button
@@ -4591,16 +5742,24 @@ function TodayView({
             <CalendarPlus size={15} />
           </button>
         )}
+        {viewMode && onViewProgram && (
+          <button
+            className="icon-button"
+            onClick={onViewProgram}
+            aria-label="View program"
+            title="View program"
+          >
+            <BookOpen size={15} />
+          </button>
+        )}
         {viewMode && onRemoveFromCalendar && (
           <button
-            className="button secondary"
+            className="icon-button"
             onClick={onRemoveFromCalendar}
             aria-label="Remove workout from calendar"
             title="Remove from calendar"
           >
             <CalendarMinus size={15} />
-            <span className="workout-action-full">Remove from calendar</span>
-            <span className="workout-action-compact">Unschedule</span>
           </button>
         )}
         {workoutStarted && onSetPlanned && onSkip && (
@@ -4635,10 +5794,7 @@ function TodayView({
                   Skipping…
                 </>
               ) : (
-                <>
-                  <span className="workout-action-full">Skip workout</span>
-                  <span className="workout-action-compact">Skip</span>
-                </>
+                "Skip"
               )}
             </button>
           </>
@@ -4655,17 +5811,8 @@ function TodayView({
                 Skipping…
               </>
             ) : (
-              <>
-                <span className="workout-action-full">Skip workout</span>
-                <span className="workout-action-compact">Skip</span>
-              </>
+              "Skip"
             )}
-          </button>
-        )}
-        {viewMode && onViewProgram && (
-          <button className="button secondary" onClick={onViewProgram}>
-            <BookOpen size={15} />
-            View program
           </button>
         )}
         </div>
@@ -5391,40 +6538,6 @@ function ResultInput({
   );
 }
 
-function ProgramWorkoutDetails({
-  workout,
-  weightUnit,
-  exerciseCategoryForItem,
-}: {
-  workout: PlannedWorkout;
-  weightUnit: OwnProfile["weightUnit"];
-  exerciseCategoryForItem: (item: WorkoutItem) => string;
-}) {
-  return (
-    <div className="program-workout-details">
-      <section className="workout-section workout-exercise-sequence">
-        {workout.sections.flatMap((section) => section.items).map((item) => (
-          <div className="workout-sequence-item" key={item.id}>
-            <WorkoutLogItem
-              item={item}
-              category={exerciseCategoryForItem(item)}
-              active={false}
-              weightUnit={weightUnit}
-              showSetControls={false}
-              setLogs={programPreviewSetLogs(item)}
-              resultLog={programPreviewResultLog(item)}
-              onUpdateSet={() => undefined}
-              onAddSet={() => undefined}
-              onRemoveSet={() => undefined}
-              onUpdateResult={() => undefined}
-            />
-          </div>
-        ))}
-      </section>
-    </div>
-  );
-}
-
 function programPreviewSetLogs(item: WorkoutItem): SetLog[] {
   if (item.mode !== "sets") return [];
   const entries = item.prescription.entries?.length
@@ -5450,12 +6563,11 @@ function programPreviewResultLog(item: WorkoutItem): Record<string, string> {
 
 function ProgramRow({
   program,
+  activeRun,
   viewerId,
   canEdit,
   canDuplicate,
   canDelete,
-  workoutStates,
-  workoutStatus,
   action,
   onOpen,
   onEdit,
@@ -5463,14 +6575,14 @@ function ProgramRow({
   onDelete,
   deleteLabel = "Delete",
   onSchedule,
+  onOpenActiveRun,
 }: {
   program: Program;
+  activeRun?: ProgramRunSummary;
   viewerId: string;
   canEdit: boolean;
   canDuplicate: boolean;
   canDelete: boolean;
-  workoutStates?: ProgramWorkoutProgressState[];
-  workoutStatus?: SingleWorkoutStatusSummary;
   action: Exclude<ProgramAction, null>["kind"] | null;
   onOpen: () => void;
   onEdit: () => void;
@@ -5478,54 +6590,12 @@ function ProgramRow({
   onDelete?: () => void;
   deleteLabel?: "Delete" | "Unassign";
   onSchedule?: () => void;
+  onOpenActiveRun?: () => void;
 }) {
   const isQuickWorkout = program.contentType === "quick_workout";
   const objectLabel = isQuickWorkout ? "Workout" : "Program";
   const workoutCount = programWorkoutCount(program);
-  const runStatus = deriveProgramRunStatus(
-    program.versionStatus === "draft",
-    workoutStates ?? [],
-  );
-  const completedWorkoutCount =
-    workoutStates?.filter((state) => state === "completed").length ?? 0;
-  const singleWorkoutStatus =
-    workoutStatus?.status ??
-    (program.versionStatus === "draft" ? "editable" : "locked");
-  const showProgress =
-    !isQuickWorkout &&
-    program.versionStatus === "published";
-  const runStatusTone = (status: ProgramRunStatus) => {
-    if (status === "scheduled") return "planned" as const;
-    if (status === "needs_attention") return "pending" as const;
-    return status;
-  };
-  const cardDateLabel = (value?: string) =>
-    value
-      ? new Date(`${value}T12:00:00`).toLocaleDateString("en", {
-          month: "short",
-          day: "numeric",
-        })
-      : "Date unavailable";
-  const singleWorkoutDetail = (() => {
-    if (!workoutStatus) return "";
-    if (workoutStatus.status === "scheduled") {
-      return workoutStatus.upcomingCount > 1
-        ? `${workoutStatus.upcomingCount} upcoming · Next ${cardDateLabel(workoutStatus.nextDate)}`
-        : `Next ${cardDateLabel(workoutStatus.nextDate)}`;
-    }
-    if (workoutStatus.status === "in_progress") {
-      return workoutStatus.nextDate
-        ? `Started ${cardDateLabel(workoutStatus.nextDate)}`
-        : "Workout started";
-    }
-    if (workoutStatus.status === "needs_attention") {
-      return `Overdue ${cardDateLabel(workoutStatus.overdueDate)}`;
-    }
-    if (workoutStatus.status === "locked" && workoutStatus.lastCompletedDate) {
-      return `Last completed ${cardDateLabel(workoutStatus.lastCompletedDate)}`;
-    }
-    return "";
-  })();
+  const estimatedMinutes = program.weeks[0]?.workouts[0]?.durationMinutes;
   return (
     <article className="program-catalog-card panel">
       <button
@@ -5557,45 +6627,32 @@ function ProgramRow({
         )}
         <span className="program-card-meta">
           {isQuickWorkout ? (
-            <>
-              <span>~{program.weeks[0]?.workouts[0]?.durationMinutes ?? 45} min</span>
-              {singleWorkoutDetail && <span>{singleWorkoutDetail}</span>}
-            </>
+            estimatedMinutes ? <span>~{estimatedMinutes} min</span> : null
           ) : (
             <span>{formatWorkoutCount(workoutCount)}</span>
           )}
         </span>
-        {showProgress && workoutStates && (
-          <span
-            className="program-card-workout-progress"
-            aria-label={`${program.title} workout scheduling progress`}
-          >
-            <small>
-              <strong>{completedWorkoutCount} of {workoutStates.length}</strong> completed
-            </small>
-            <span>
-              {workoutStates.map((state, index) => (
-                <i
-                  className={state}
-                  key={`${index}-${state}`}
-                  title={`Workout ${index + 1}: ${programWorkoutProgressLabel(state)}`}
-                />
-              ))}
-            </span>
-          </span>
-        )}
       </button>
       <div className="program-card-footer">
-        {isQuickWorkout ? (
-          <StatusBadge
-            status={runStatusTone(singleWorkoutStatus)}
-            label={programRunStatusLabel(singleWorkoutStatus)}
-          />
+        {activeRun ? (
+          <button
+            type="button"
+            className="program-card-active-run"
+            onClick={onOpenActiveRun}
+            aria-label={`Open active ${program.title} training`}
+          >
+            <Activity size={13} />
+            {isQuickWorkout
+              ? "In use"
+              : `In use · ${activeRun.completedWorkouts}/${activeRun.totalWorkouts} completed`}
+            <ChevronRight size={13} />
+          </button>
+        ) : program.versionStatus === "draft" ? (
+          <StatusBadge status="editable" label="Editable template" />
+        ) : program.sourceType === "coach" ? (
+          <StatusBadge status="planned" label="Assigned to you" />
         ) : (
-          <StatusBadge
-            status={runStatusTone(runStatus)}
-            label={programRunStatusLabel(runStatus)}
-          />
+          <span className="program-card-ready">Ready to use</span>
         )}
         <div className="program-card-actions">
           {canEdit && (
@@ -5633,10 +6690,10 @@ function ProgramRow({
               className="icon-button"
               disabled={Boolean(action)}
               onClick={onSchedule}
-              aria-label={`Schedule ${program.title}`}
-              title={`Schedule ${objectLabel.toLowerCase()}`}
+              aria-label={`${program.sourceType === "coach" ? "Schedule" : "Start"} ${program.title}`}
+              title={program.sourceType === "coach" ? "Schedule workout" : `Start ${objectLabel.toLowerCase()}`}
             >
-              <CalendarPlus size={15} />
+              {program.sourceType === "coach" ? <CalendarPlus size={15} /> : <Activity size={15} />}
             </button>
           )}
           {canDelete && onDelete && (
@@ -5662,8 +6719,11 @@ function ProgramRow({
 
 function ProgramsHome({
   programs,
+  programRuns,
+  hasMoreProgramRuns,
+  programRunsLoadingMore,
+  programRunsLoadError,
   viewerId,
-  schedules,
   source,
   hasCoach,
   hasMore,
@@ -5680,11 +6740,19 @@ function ProgramsHome({
   onCreate,
   onCreateWorkout,
   onSchedule,
+  onOpenRun,
+  onScheduleRun,
+  onEndRun,
+  onRepeatRun,
   onLoadMore,
+  onLoadMoreProgramRuns,
 }: {
   programs: Program[];
+  programRuns: ProgramRunSummary[];
+  hasMoreProgramRuns: boolean;
+  programRunsLoadingMore: boolean;
+  programRunsLoadError: string;
   viewerId: string;
-  schedules: ScheduledWorkout[];
   source: ProgramSourceTab;
   hasCoach: boolean;
   hasMore: boolean;
@@ -5701,101 +6769,58 @@ function ProgramsHome({
   onCreate: () => void;
   onCreateWorkout: () => void;
   onSchedule: (program: Program) => void;
+  onOpenRun: (run: ProgramRunSummary) => void;
+  onScheduleRun: (run: ProgramRunSummary) => void;
+  onEndRun: (run: ProgramRunSummary) => void;
+  onRepeatRun: (run: ProgramRunSummary) => void;
   onLoadMore: () => void;
+  onLoadMoreProgramRuns: () => void;
 }) {
   const [contentQuery, setContentQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedTypes, setSelectedTypes] = useState<
     Array<"program" | "quick_workout">
   >([]);
-  const [selectedStatuses, setSelectedStatuses] = useState<ProgramRunStatus[]>([]);
   const [page, setPage] = useState(0);
   const pageSize = 20;
   const own = programs.filter((program) => program.sourceType === "self");
-  const coach = programs.filter((program) => program.sourceType === "coach");
-  const progressByProgramId = useMemo(() => {
-    const today = localDateOnly();
-    const schedulesByVersion = new Map<string, ScheduledWorkout[]>();
-    for (const schedule of schedules) {
-      const group = schedulesByVersion.get(schedule.programVersionId) ?? [];
-      group.push(schedule);
-      schedulesByVersion.set(schedule.programVersionId, group);
+  const content = source === "own" ? own : [];
+  const normalizedQuery = contentQuery.trim().toLowerCase();
+  const coachRuns = programRuns.filter(
+    (run) => run.athleteId === viewerId && run.createdById !== viewerId,
+  );
+  const activeSelfRuns = programRuns.filter(
+    (run) =>
+      run.athleteId === viewerId &&
+      run.createdById === viewerId &&
+      (run.status === "not_started" || run.status === "in_progress"),
+  );
+  const activeRunByProgramId = new Map<string, ProgramRunSummary>();
+  for (const run of activeSelfRuns) {
+    if (!activeRunByProgramId.has(run.programId)) {
+      activeRunByProgramId.set(run.programId, run);
     }
-    const result = new Map<
-      string,
-      {
-        workoutStates: ProgramWorkoutProgressState[];
-        workoutStatus: SingleWorkoutStatusSummary;
-      }
-    >();
-    for (const program of programs) {
-      const programSchedules = schedulesByVersion.get(program.versionId) ?? [];
-      const latestScheduleByWorkout = new Map<string, ScheduledWorkout>();
-      for (const schedule of programSchedules) {
-        const current = latestScheduleByWorkout.get(schedule.workoutId);
-        if (!current || schedule.sequenceNumber > current.sequenceNumber)
-          latestScheduleByWorkout.set(schedule.workoutId, schedule);
-      }
-      result.set(program.id, {
-        workoutStates: programWorkoutIds(program).map((workoutId) =>
-          deriveProgramWorkoutProgressState(
-            latestScheduleByWorkout.get(workoutId),
-            today,
-          ),
-        ),
-        workoutStatus: deriveSingleWorkoutStatus(
-          program.versionStatus === "draft",
-          programSchedules,
-          today,
-        ),
-      });
-    }
-    return result;
-  }, [programs, schedules]);
-  const scheduleProgress = (program: Program) =>
-    progressByProgramId.get(program.id) ?? {
-      workoutStates: [],
-      workoutStatus: deriveSingleWorkoutStatus(
-        program.versionStatus === "draft",
-        [],
-        localDateOnly(),
-      ),
-    };
-  const content = source === "own" ? own : coach;
-  const statusOptions: ProgramRunStatus[] = [
-    "editable",
-    "locked",
-    "scheduled",
-    "in_progress",
-    "needs_attention",
-    "completed",
-  ];
-  const statusForItem = (item: Program): ProgramRunStatus => {
-    const progress = scheduleProgress(item);
-    return item.contentType === "quick_workout"
-      ? progress.workoutStatus.status
-      : deriveProgramRunStatus(
-          item.versionStatus === "draft",
-          progress.workoutStates,
-        );
-  };
+  }
+  const filteredCoachRuns = coachRuns.filter((run) => {
+    const contentType = run.contentType ?? "program";
+    return (
+      run.title.toLowerCase().includes(normalizedQuery) &&
+      (!selectedTypes.length || selectedTypes.includes(contentType))
+    );
+  });
   const filteredContent = content.filter((item) => {
     const contentType = item.contentType ?? "program";
     return (
       `${item.title} ${item.description}`
         .toLowerCase()
-        .includes(contentQuery.trim().toLowerCase()) &&
-      (!selectedTypes.length || selectedTypes.includes(contentType)) &&
-      (!selectedStatuses.length || selectedStatuses.includes(statusForItem(item)))
+        .includes(normalizedQuery) &&
+      (!selectedTypes.length || selectedTypes.includes(contentType))
     );
   });
-  const activeFilterCount = selectedTypes.length + selectedStatuses.length;
-  function toggleProgramFilter<T extends string>(
-    value: T,
-    setValues: Dispatch<SetStateAction<T[]>>,
-  ) {
+  const activeFilterCount = selectedTypes.length;
+  function toggleProgramType(value: "program" | "quick_workout") {
     setPage(0);
-    setValues((current) =>
+    setSelectedTypes((current) =>
       current.includes(value)
         ? current.filter((candidate) => candidate !== value)
         : [...current, value],
@@ -5804,7 +6829,6 @@ function ProgramsHome({
   function resetProgramFilters() {
     setPage(0);
     setSelectedTypes([]);
-    setSelectedStatuses([]);
     setContentQuery("");
   }
   const sortDraftsFirst = (items: Program[]) =>
@@ -5829,12 +6853,14 @@ function ProgramsHome({
   );
   const visibleProgramItems = programItems.filter((item) => visibleIds.has(item.id));
   const visibleWorkoutItems = workoutItems.filter((item) => visibleIds.has(item.id));
-  const renderRow = (item: Program) => (
-    <ProgramRow
+  const renderRow = (item: Program) => {
+    const activeRun = activeRunByProgramId.get(item.id);
+    return (
+      <ProgramRow
       key={item.id}
       program={item}
+      activeRun={activeRun}
       viewerId={viewerId}
-      {...scheduleProgress(item)}
       canEdit={capabilitiesForProgram(item).edit}
       canDuplicate={capabilitiesForProgram(item).copyToOwn}
       canDelete={
@@ -5854,23 +6880,24 @@ function ProgramsHome({
       }
       deleteLabel={item.sourceType === "coach" ? "Unassign" : "Delete"}
       onSchedule={capabilitiesForProgram(item).schedule ? () => onSchedule(item) : undefined}
+      onOpenActiveRun={activeRun ? () => onOpenRun(activeRun) : undefined}
     />
-  );
+    );
+  };
   return (
     <>
       <PageHeader
         eyebrow="Your training"
         title="Programs"
-        description="Edit freely until first scheduled or assigned. Used content stays locked; duplicate it to make changes."
+        description="Build reusable training. Changes are saved for future uses without altering active or completed plans."
       >
-        <button className="button primary small" onClick={onCreateWorkout}>
-          <Activity size={15} />
-          Create workout
-        </button>
-        <button className="button primary small" onClick={onCreate}>
-          <Layers3 size={15} />
-          Create program
-        </button>
+        <details className="program-create-menu">
+          <summary className="button primary small"><Plus size={15} />New</summary>
+          <div>
+            <button type="button" onClick={onCreate}><Layers3 size={15} /><span><strong>Program</strong><small>Multiple ordered workouts</small></span></button>
+            <button type="button" onClick={onCreateWorkout}><Activity size={15} /><span><strong>Workout</strong><small>One reusable session</small></span></button>
+          </div>
+        </details>
       </PageHeader>
       <section className="program-source-browser panel">
         <SegmentedTabs
@@ -5884,7 +6911,7 @@ function ProgramsHome({
           }}
           tabs={[
             { value: "own", label: "Mine", icon: CircleUserRound },
-            ...(hasCoach ? [{ value: "coach" as const, label: "Coach", icon: Users }] : []),
+            ...(hasCoach ? [{ value: "coach" as const, label: "From coach", icon: Users }] : []),
           ]}
         />
         <div className="library-toolbar program-filter-toolbar">
@@ -5920,18 +6947,9 @@ function ProgramsHome({
                 <button
                   className="program-filter-type"
                   key={type}
-                  onClick={() => toggleProgramFilter(type, setSelectedTypes)}
+                  onClick={() => toggleProgramType(type)}
                 >
                   {type === "program" ? "Programs" : "Single workouts"} <X size={12} />
-                </button>
-              ))}
-              {selectedStatuses.map((status) => (
-                <button
-                  className="program-filter-status"
-                  key={status}
-                  onClick={() => toggleProgramFilter(status, setSelectedStatuses)}
-                >
-                  {programRunStatusLabel(status)} <X size={12} />
                 </button>
               ))}
               <button className="clear" onClick={resetProgramFilters}>Clear</button>
@@ -5952,26 +6970,9 @@ function ProgramsHome({
                         selectedTypes.includes(type) && "active",
                       )}
                       key={type}
-                      onClick={() => toggleProgramFilter(type, setSelectedTypes)}
+                      onClick={() => toggleProgramType(type)}
                     >
                       {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <span>Status</span>
-                <div className="library-filter-chip-row">
-                  {statusOptions.map((status) => (
-                    <button
-                      className={cn(
-                        "program-filter-status",
-                        selectedStatuses.includes(status) && "active",
-                      )}
-                      key={status}
-                      onClick={() => toggleProgramFilter(status, setSelectedStatuses)}
-                    >
-                      {programRunStatusLabel(status)}
                     </button>
                   ))}
                 </div>
@@ -5980,7 +6981,52 @@ function ProgramsHome({
           )}
         </div>
         <div className="program-compact-list" id="program-source-panel" role="tabpanel">
-          {filteredContent.length ? (
+          {source === "coach" ? (
+            coachRuns.length > 0 && !filteredCoachRuns.length ? (
+              <div className="empty-state compact">
+                <Search size={24} />
+                <h3>No matching training</h3>
+                <p>Adjust the search or filters to see assigned programs and workouts.</p>
+                <button className="button secondary small" onClick={resetProgramFilters}>
+                  Clear filters
+                </button>
+                {programRunsLoadError ? (
+                  <div className="feature-load-status error" role="alert">
+                    <span>{programRunsLoadError}</span>
+                    <button className="text-button" onClick={onLoadMoreProgramRuns}>
+                      Try again
+                    </button>
+                  </div>
+                ) : hasMoreProgramRuns ? (
+                  <button
+                    className="button secondary small library-load-more"
+                    disabled={programRunsLoadingMore}
+                    onClick={onLoadMoreProgramRuns}
+                  >
+                    {programRunsLoadingMore && (
+                      <LoaderCircle className="button-spinner" size={14} />
+                    )}
+                    {programRunsLoadingMore ? "Loading…" : "Search older training"}
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <Suspense fallback={null}>
+                <CoachProgramRuns
+                  viewerId={viewerId}
+                  runs={filteredCoachRuns}
+                  hasMore={hasMoreProgramRuns}
+                  loadingMore={programRunsLoadingMore}
+                  loadError={programRunsLoadError}
+                  onLoadMore={onLoadMoreProgramRuns}
+                  onOpen={onOpenRun}
+                  onSchedule={onScheduleRun}
+                  onEnd={onEndRun}
+                  onRepeat={onRepeatRun}
+                />
+              </Suspense>
+            )
+          ) : filteredContent.length ? (
             <>
               {visibleProgramItems.length > 0 && (
                 <section className="program-content-section" aria-labelledby="program-list-heading">
@@ -6047,8 +7093,8 @@ function ProgramsHome({
           ) : (
             <div className="empty-state compact">
               <Dumbbell size={24} />
-              <h3>{source === "own" ? "No training content yet" : "No coach content"}</h3>
-              <p>{source === "own" ? "Create a program or a one-off workout when you are ready to plan training." : "Programs created for you by connected coaches will appear here."}</p>
+              <h3>No training content yet</h3>
+              <p>Create a program or a one-off workout when you are ready to plan training.</p>
             </div>
           )}
         </div>
@@ -6153,10 +7199,16 @@ function CompletedWorkoutView({
     "en",
     { weekday: "long", month: "long", day: "numeric" },
   );
+  const returnLabel =
+    state.returnView === "calendar"
+      ? "Calendar"
+      : state.returnView === "program"
+        ? "Program"
+        : "Coaching";
   return (
     <>
       <DetailNavigation
-        backLabel={state.returnView === "calendar" ? "Calendar" : "Coaching"}
+        backLabel={returnLabel}
         title="Workout log"
         onBack={onBack}
       />
@@ -6173,7 +7225,7 @@ function CompletedWorkoutView({
         <StatusBadge status="completed" />
         <button className="button secondary desktop-detail-action" onClick={onBack}>
           <ArrowLeft size={15} />
-          {state.returnView === "calendar" ? "Calendar" : "Coaching"}
+          {returnLabel}
         </button>
       </PageHeader>
       <div className="today-layout">
@@ -6883,36 +7935,8 @@ export function ExercisesView({
   );
 }
 
-function coachDateLabel(value: string, includeYear = false) {
-  const date = new Date(value.includes("T") ? value : `${value}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return "Date unavailable";
-  return date.toLocaleDateString("en", {
-    month: "short",
-    day: "numeric",
-    ...(includeYear ? { year: "numeric" } : {}),
-  });
-}
-
-function coachProgramStatusLabel(
-  status: CoachAssignedProgramSummary["status"],
-) {
-  if (status === "awaiting_schedule") return "Awaiting scheduling";
-  if (status === "in_progress") return "In progress";
-  if (status === "completed") return "Completed";
-  return "Scheduled";
-}
-
-function coachProgramDisplayStatus(
-  status: CoachAssignedProgramSummary["status"],
-) {
-  if (status === "awaiting_schedule") return "locked" as const;
-  if (status === "scheduled") return "in_schedule" as const;
-  return status;
-}
-
 function CoachingView({
   mode,
-  viewerId,
   coachConnections,
   pendingInvites,
   outgoingInvites,
@@ -6922,6 +7946,8 @@ function CoachingView({
   athletesLoadError,
   selectedAthlete,
   loadingAthleteId,
+  loadingHistoryAthleteId,
+  loadingProgramRunsAthleteId,
   openingProgramId,
   onMode,
   refreshing,
@@ -6934,13 +7960,16 @@ function CoachingView({
   onCancelInvite,
   onSelectAthlete,
   onLoadMoreAthletes,
+  onLoadMoreHistory,
+  onLoadMoreProgramRuns,
   onOpenAssignedProgram,
+  onOpenAgendaEntry,
   onAssignAthlete,
   onScheduleAthlete,
   onUnassignAthlete,
+  onRepeatAthlete,
 }: {
   mode: "athlete" | "coach";
-  viewerId: string;
   coachConnections: CoachConnection[];
   pendingInvites: PendingCoachInvite[];
   outgoingInvites: OutgoingCoachInvite[];
@@ -6950,6 +7979,8 @@ function CoachingView({
   athletesLoadError: string;
   selectedAthlete: AthleteSummary | null;
   loadingAthleteId: string | null;
+  loadingHistoryAthleteId: string | null;
+  loadingProgramRunsAthleteId: string | null;
   openingProgramId: string | null;
   onMode: (mode: "athlete" | "coach") => void;
   refreshing: boolean;
@@ -6968,22 +7999,98 @@ function CoachingView({
   onCancelInvite: (invitation: OutgoingCoachInvite) => void;
   onSelectAthlete: (athlete: AthleteSummary) => void;
   onLoadMoreAthletes: () => void;
+  onLoadMoreHistory: (athlete: AthleteSummary) => void;
+  onLoadMoreProgramRuns: (athlete: AthleteSummary) => void;
   onOpenAssignedProgram: (
     athlete: AthleteSummary,
-    program: CoachAssignedProgramSummary,
+    program: CoachWorkspaceProgram,
     workoutId?: string,
+  ) => void;
+  onOpenAgendaEntry: (
+    athlete: AthleteSummary,
+    entry: CoachAgendaEntry,
   ) => void;
   onAssignAthlete: (athlete: AthleteSummary) => void;
   onScheduleAthlete: (
     athlete: AthleteSummary,
-    program?: CoachAssignedProgramSummary,
+    program?: CoachWorkspaceProgram,
   ) => void;
   onUnassignAthlete: (
     athlete: AthleteSummary,
-    program: CoachAssignedProgramSummary,
+    program: CoachWorkspaceProgram,
+  ) => void;
+  onRepeatAthlete: (
+    athlete: AthleteSummary,
+    program: CoachWorkspaceProgram,
   ) => void;
 }) {
   const hasAthleteWorkspace = athletes.length > 0 || pendingInvites.length > 0;
+  if (mode === "coach") {
+    return (
+      <div className="coach-mode-view">
+        <PageHeader
+          eyebrow="Shared progress"
+          title="Coaching"
+          description="Assign training, review progress, and see the results of the athletes you coach."
+        >
+          <SegmentedTabs
+            compact
+            label="Coaching workspace"
+            panelId="coaching-workspace-panel"
+            value={mode}
+            onChange={onMode}
+            tabs={[
+              { value: "athlete", label: "My coaches" },
+              {
+                value: "coach",
+                label: refreshing ? (
+                  <><LoaderCircle className="button-spinner" size={14} /> Refreshing…</>
+                ) : (
+                  "My athletes"
+                ),
+                badge: pendingInvites.length,
+              },
+            ]}
+          />
+        </PageHeader>
+        <Suspense
+          fallback={
+            <div className="feature-load-status" role="status">
+              <LoaderCircle size={16} className="spin" />
+              Opening athlete workspace…
+            </div>
+          }
+        >
+          <CoachWorkspace
+            athletes={athletes}
+            pendingInvites={pendingInvites}
+            selectedAthlete={selectedAthlete}
+            loadingAthleteId={loadingAthleteId}
+            loadingHistoryAthleteId={loadingHistoryAthleteId}
+            loadingProgramRunsAthleteId={loadingProgramRunsAthleteId}
+            openingProgramId={openingProgramId}
+            refreshing={refreshing}
+            hasMoreAthletes={hasMoreAthletes}
+            loadingMoreAthletes={loadingMoreAthletes}
+            athletesLoadError={athletesLoadError}
+            respondingInvite={respondingInvite}
+            onRefresh={onRefresh}
+            onRespondInvite={onRespondInvite}
+            onSelectAthlete={onSelectAthlete}
+            onLoadMoreAthletes={onLoadMoreAthletes}
+            onLoadMoreHistory={onLoadMoreHistory}
+            onLoadMoreProgramRuns={onLoadMoreProgramRuns}
+            onOpenAssignedProgram={onOpenAssignedProgram}
+            onOpenAgendaEntry={onOpenAgendaEntry}
+            onAssignAthlete={onAssignAthlete}
+            onScheduleAthlete={onScheduleAthlete}
+            onUnassignAthlete={onUnassignAthlete}
+            onRepeatAthlete={onRepeatAthlete}
+          />
+        </Suspense>
+      </div>
+    );
+  }
   return (
     <>
       <PageHeader
@@ -7140,378 +8247,8 @@ function CoachingView({
             )}
           </section>
         </div>
-      ) : (
-        <div
-          className="coach-dashboard"
-          id="coaching-workspace-panel"
-          role="tabpanel"
-          aria-labelledby="coaching-workspace-panel-coach-tab"
-        >
-          <section className="panel athlete-list">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Your athletes</p>
-                <h3>{athletes.length} active</h3>
-              </div>
-              <div className="coach-workspace-heading-actions">
-                {pendingInvites.length ? (
-                  <span className="pending-count">
-                    {pendingInvites.length} pending
-                  </span>
-                ) : (
-                  <Users size={17} />
-                )}
-                <button
-                  className="button secondary small"
-                  disabled={refreshing}
-                  onClick={onRefresh}
-                  aria-label="Refresh coaching requests"
-                >
-                  {refreshing ? (
-                    <LoaderCircle className="button-spinner" size={14} />
-                  ) : (
-                    <RefreshCw size={14} />
-                  )}
-                  {refreshing ? "Refreshing…" : "Refresh"}
-                </button>
-              </div>
-            </div>
-            {pendingInvites.length > 0 && (
-              <div className="pending-coach-requests">
-                <p className="eyebrow">Coaching requests</p>
-                {pendingInvites.map((invitation) => {
-                  const responding = respondingInvite?.id === invitation.id;
-                  const declining =
-                    responding && respondingInvite.response === "declined";
-                  const accepting =
-                    responding && respondingInvite.response === "accepted";
-                  return (
-                    <article key={invitation.id}>
-                      <PersonAvatar initials={invitation.athleteInitials} name={invitation.athleteName} />
-                      <div>
-                        <strong>{invitation.athleteName}</strong>
-                        <small>Invited you to coach them</small>
-                      </div>
-                      <div className="pending-request-actions">
-                        <button
-                          className="button secondary small"
-                          disabled={Boolean(respondingInvite)}
-                          onClick={() =>
-                            onRespondInvite(invitation, "declined")
-                          }
-                        >
-                          {declining ? (
-                            <>
-                              <LoaderCircle
-                                className="button-spinner"
-                                size={14}
-                              />
-                              Declining…
-                            </>
-                          ) : (
-                            "Decline"
-                          )}
-                        </button>
-                        <button
-                          className="button primary small"
-                          disabled={Boolean(respondingInvite)}
-                          onClick={() =>
-                            onRespondInvite(invitation, "accepted")
-                          }
-                        >
-                          {accepting ? (
-                            <>
-                              <LoaderCircle
-                                className="button-spinner"
-                                size={14}
-                              />
-                              Accepting…
-                            </>
-                          ) : (
-                            <>
-                              <Check size={14} />
-                              Accept
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-            {pendingInvites.length > 0 && athletes.length > 0 && (
-              <p className="athlete-list-label">Active athletes</p>
-            )}
-            {athletes.length ? (
-              <>
-                {athletes.map((athlete) => (
-                  <button
-                    key={athlete.id}
-                    className={selectedAthlete?.id === athlete.id ? "active" : ""}
-                    onClick={() => onSelectAthlete(athlete)}
-                  >
-                    <PersonAvatar initials={athlete.initials} name={athlete.name} />
-                    <div>
-                      <strong>{athlete.name}</strong>
-                    </div>
-                    <ChevronRight size={16} />
-                  </button>
-                ))}
-                {athletesLoadError && (
-                  <InlineError>{athletesLoadError}</InlineError>
-                )}
-                {hasMoreAthletes && (
-                  <button
-                    className="button secondary small library-load-more"
-                    disabled={loadingMoreAthletes}
-                    onClick={onLoadMoreAthletes}
-                  >
-                    {loadingMoreAthletes && (
-                      <LoaderCircle className="button-spinner" size={14} />
-                    )}
-                    {loadingMoreAthletes ? "Loading…" : "Load more athletes"}
-                  </button>
-                )}
-              </>
-            ) : (
-              <div className="empty-state">
-                <Users size={24} />
-                <h3>No athletes yet</h3>
-                <p>
-                  Athletes appear here after you accept their coaching request.
-                </p>
-              </div>
-            )}
-          </section>
-          {selectedAthlete?.detailsLoaded === false ? (
-            <section className="panel empty-state" aria-live="polite">
-              {loadingAthleteId === selectedAthlete.id ? (
-                <>
-                  <LoaderCircle className="button-spinner" size={28} />
-                  <h3>Loading athlete overview…</h3>
-                  <p>Fetching your program progress and recent agenda.</p>
-                </>
-              ) : (
-                <>
-                  <Users size={28} />
-                  <h3>Athlete overview unavailable</h3>
-                  <p>Try this bounded read again.</p>
-                  <button
-                    className="button secondary"
-                    onClick={() => onSelectAthlete(selectedAthlete)}
-                  >
-                    Retry
-                  </button>
-                </>
-              )}
-            </section>
-          ) : selectedAthlete ? (
-            <CoachAthleteOverview
-              athlete={selectedAthlete}
-              viewerId={viewerId}
-              openingProgramId={openingProgramId}
-              onAssign={() => onAssignAthlete(selectedAthlete)}
-              onSchedule={(assignedProgram) =>
-                onScheduleAthlete(selectedAthlete, assignedProgram)
-              }
-              onUnassign={(assignedProgram) =>
-                onUnassignAthlete(selectedAthlete, assignedProgram)
-              }
-              onOpenProgram={(assignedProgram, workoutId) =>
-                onOpenAssignedProgram(
-                  selectedAthlete,
-                  assignedProgram,
-                  workoutId,
-                )
-              }
-            />
-          ) : (
-            <section className="panel empty-state">
-              <Users size={28} />
-              <h3>Select an athlete</h3>
-              <p>Choose an athlete to view their latest training summary.</p>
-            </section>
-          )}
-        </div>
-      )}
+      ) : null}
     </>
-  );
-}
-
-function CoachAthleteOverview({
-  athlete,
-  viewerId,
-  openingProgramId,
-  onAssign,
-  onSchedule,
-  onUnassign,
-  onOpenProgram,
-}: {
-  athlete: AthleteSummary;
-  viewerId: string;
-  openingProgramId: string | null;
-  onAssign: () => void;
-  onSchedule: (program?: CoachAssignedProgramSummary) => void;
-  onUnassign: (program: CoachAssignedProgramSummary) => void;
-  onOpenProgram: (
-    program: CoachAssignedProgramSummary,
-    workoutId?: string,
-  ) => void;
-}) {
-  return (
-    <section className="athlete-overview">
-      <div className="panel athlete-hero">
-        <div className="athlete-name">
-          <PersonAvatar initials={athlete.initials} name={athlete.name} size="large" />
-          <div>
-            <p className="eyebrow">Athlete overview</p>
-            <h2>{athlete.name}</h2>
-            <p>Programs and sessions you coach</p>
-          </div>
-        </div>
-        <div className="athlete-hero-actions">
-          <button
-            className="button secondary"
-            disabled={!athlete.assignedPrograms.length}
-            onClick={() => onSchedule()}
-          >
-            <CalendarPlus size={15} />
-            Schedule workout
-          </button>
-          <button className="button primary" onClick={onAssign}>
-            <Dumbbell size={15} />
-            Assign program
-          </button>
-        </div>
-      </div>
-
-      <section className="panel coach-programs-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Your programs</p>
-            <h3>
-              {athlete.assignedPrograms.length} assigned{" "}
-              {athlete.assignedPrograms.length === 1 ? "program" : "programs"}
-            </h3>
-          </div>
-        </div>
-        {athlete.assignedPrograms.length ? (
-          <div className="coach-assigned-programs">
-            {athlete.assignedPrograms.map((assignedProgram) => (
-              <article
-                className="program-catalog-card coach-assigned-program panel"
-                key={assignedProgram.id}
-              >
-                <button
-                  className="program-card-main"
-                  disabled={Boolean(openingProgramId)}
-                  onClick={() => onOpenProgram(assignedProgram)}
-                  aria-busy={openingProgramId === assignedProgram.id}
-                  aria-label={
-                    openingProgramId === assignedProgram.id
-                      ? "Opening " + assignedProgram.title
-                      : `Open ${assignedProgram.title}, ${coachProgramStatusLabel(assignedProgram.status)}, ${assignedProgram.completedWorkouts} of ${assignedProgram.totalWorkouts} workouts completed`
-                  }
-                >
-                  <span className="program-card-heading">
-                    <span className="program-icon">
-                      {openingProgramId === assignedProgram.id ? (
-                        <LoaderCircle className="button-spinner" size={16} />
-                      ) : (
-                        <Dumbbell size={18} />
-                      )}
-                    </span>
-                    <span>
-                      <strong>{assignedProgram.title}</strong>
-                      <SourceTag
-                        presentation={presentProvenance({
-                          origin: "coach",
-                          viewerId,
-                          athleteOwnerId: athlete.id,
-                          athleteOwnerName: athlete.name,
-                          authorId: viewerId,
-                        })}
-                        compact
-                      />
-                    </span>
-                  </span>
-                  <span
-                    className="program-card-workout-progress"
-                    aria-label={`${assignedProgram.title}: ${assignedProgram.completedWorkouts} of ${assignedProgram.totalWorkouts} workouts completed${assignedProgram.nextWorkout ? `; next workout ${assignedProgram.nextWorkout.title}` : "; no workout currently scheduled"}`}
-                  >
-                    <small>
-                      <strong>{assignedProgram.completionPercent}% complete</strong>
-                      {` · ${assignedProgram.completedWorkouts} of ${assignedProgram.totalWorkouts}`}
-                    </small>
-                    <small>
-                      {assignedProgram.nextWorkout
-                        ? `Next: ${assignedProgram.nextWorkout.title}`
-                        : "No workout currently scheduled"}
-                    </small>
-                  </span>
-                  <span className="program-card-meta">
-                    <span>
-                      {assignedProgram.totalWorkouts} {assignedProgram.totalWorkouts === 1 ? "workout" : "workouts"}
-                    </span>
-                    <span>Assigned {coachDateLabel(assignedProgram.assignedAt, true)}</span>
-                  </span>
-                </button>
-                <div className="program-card-footer">
-                  <StatusBadge
-                    status={coachProgramDisplayStatus(assignedProgram.status)}
-                    label={coachProgramStatusLabel(assignedProgram.status)}
-                  />
-                  <div className="program-card-actions">
-                    <button
-                      className="icon-button"
-                      onClick={() => onSchedule(assignedProgram)}
-                      aria-label={`Schedule a workout from ${assignedProgram.title}`}
-                      title="Schedule workout"
-                    >
-                      <CalendarPlus size={15} />
-                    </button>
-                    <button
-                      className="icon-button danger"
-                      onClick={() => onUnassign(assignedProgram)}
-                      aria-label={`Unassign ${assignedProgram.title}`}
-                      title="Unassign program"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                    <button
-                      className="icon-button"
-                      disabled={Boolean(openingProgramId)}
-                      onClick={() => onOpenProgram(assignedProgram)}
-                      aria-label={`Open ${assignedProgram.title}`}
-                      title="Open assignment"
-                    >
-                      {openingProgramId === assignedProgram.id ? (
-                        <LoaderCircle className="button-spinner" size={15} />
-                      ) : (
-                        <ChevronRight size={15} />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <div className="coach-program-empty">
-            <Dumbbell size={20} />
-            <div>
-              <strong>No programs assigned by you</strong>
-              <p>
-                Assign one of your finished programs to start planning with
-                this athlete.
-              </p>
-            </div>
-          </div>
-        )}
-      </section>
-
-    </section>
   );
 }
 
@@ -7975,6 +8712,15 @@ function DeleteContentModal({
         label: "Unassign program",
       };
     }
+    if (target.kind === "program-run") {
+      const quickWorkout = target.contentType === "quick_workout";
+      return {
+        title: `End ${target.title}?`,
+        description:
+          `Future ${quickWorkout ? "calendar entries" : "workouts"} will leave the calendar. Completed results stay in History, and this ${quickWorkout ? "workout" : "program"} can be repeated later.`,
+        label: quickWorkout ? "End workout" : "End program",
+      };
+    }
     if (target.kind === "workout-item") {
       return {
         title: `Remove ${target.title}?`,
@@ -7985,7 +8731,7 @@ function DeleteContentModal({
     const quickWorkout = target.program.contentType === "quick_workout";
     return {
       title: `Delete ${target.program.title}?`,
-      description: `It will disappear from Mine, and its unstarted calendar ${quickWorkout ? "occurrences" : "workouts"} will be removed. Completed training history will stay.`,
+      description: `The reusable ${quickWorkout ? "workout" : "program"} will disappear from Mine. Training plans already created from it—including calendar dates and completed results—will stay unchanged.`,
       label: quickWorkout ? "Delete workout" : "Delete program",
     };
   })();
@@ -8031,7 +8777,11 @@ function DeleteContentModal({
           {deleting ? (
             <>
               <LoaderCircle className="button-spinner" size={15} />
-              {target.kind === "assignment" ? "Unassigning…" : "Deleting…"}
+              {target.kind === "assignment"
+                ? "Unassigning…"
+                : target.kind === "program-run"
+                  ? "Ending…"
+                  : "Deleting…"}
             </>
           ) : (
             <>
@@ -8895,121 +9645,8 @@ function InviteModal({
   );
 }
 
-function CoachScheduleModal({
-  athlete,
-  initialProgram,
-  onClose,
-  onLoadProgram,
-  onSchedule,
-}: {
-  athlete: AthleteSummary;
-  initialProgram: CoachAssignedProgramSummary | null;
-  onClose: () => void;
-  onLoadProgram: (program: CoachAssignedProgramSummary) => Promise<Program | null>;
-  onSchedule: (
-    program: CoachAssignedProgramSummary,
-    workoutId: string,
-    plannedDate: string,
-  ) => Promise<void>;
-}) {
-  const [programId, setProgramId] = useState(
-    initialProgram?.id ?? athlete.assignedPrograms[0]?.id ?? "",
-  );
-  const [loadedProgram, setLoadedProgram] = useState<Program | null>(null);
-  const [workoutId, setWorkoutId] = useState("");
-  const [plannedDate, setPlannedDate] = useState(() => localDateOnly(new Date()));
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const selectedProgram = athlete.assignedPrograms.find(
-    (candidate) => candidate.id === programId,
-  );
-  const workouts = loadedProgram
-    ? loadedProgram.weeks.flatMap((week) => week.workouts)
-    : [];
-
-  useEffect(() => {
-    if (!selectedProgram) return;
-    let active = true;
-    void onLoadProgram(selectedProgram)
-      .then((next) => {
-        if (!active) return;
-        setLoadedProgram(next);
-        setWorkoutId(next?.weeks.flatMap((week) => week.workouts)[0]?.id ?? "");
-      })
-      .catch((loadError: unknown) => {
-        if (active)
-          setError(loadError instanceof Error ? loadError.message : "The program could not be loaded.");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [onLoadProgram, selectedProgram]);
-
-  async function save() {
-    if (!selectedProgram || !workoutId || !plannedDate || saving) return;
-    setSaving(true);
-    setError("");
-    try {
-      await onSchedule(selectedProgram, workoutId, plannedDate);
-    } catch (scheduleError) {
-      setError(scheduleError instanceof Error ? scheduleError.message : "The workout could not be scheduled.");
-      setSaving(false);
-    }
-  }
-
-  return (
-    <ModalShell
-      title={`Schedule for ${athlete.name}`}
-      description="Choose an assigned program, workout and date—the same way you schedule your own training."
-      onClose={onClose}
-      dismissible={!saving}
-    >
-      <div className="form-grid">
-        <label className="form-field full">
-          <span>Program or workout</span>
-          <select value={programId} disabled={saving} onChange={(event) => {
-            setProgramId(event.target.value);
-            setLoading(true);
-            setError("");
-            setLoadedProgram(null);
-            setWorkoutId("");
-          }}>
-            {athlete.assignedPrograms.map((candidate) => (
-              <option value={candidate.id} key={candidate.id}>{candidate.title}</option>
-            ))}
-          </select>
-        </label>
-        <label className="form-field full">
-          <span>Workout</span>
-          <select value={workoutId} disabled={loading || saving} onChange={(event) => setWorkoutId(event.target.value)}>
-            {loading && <option value="">Loading workouts…</option>}
-            {!loading && !workouts.length && <option value="">No workouts available</option>}
-            {workouts.map((workout) => (
-              <option value={workout.id} key={workout.id}>{workout.title}</option>
-            ))}
-          </select>
-        </label>
-        <label className="form-field full">
-          <span>Date</span>
-          <input type="date" value={plannedDate} disabled={saving} onChange={(event) => setPlannedDate(event.target.value)} />
-        </label>
-      </div>
-      {error && <InlineError>{error}</InlineError>}
-      <div className="modal-actions">
-        <button className="button secondary" disabled={saving} onClick={onClose}>Cancel</button>
-        <button className="button primary" disabled={!workoutId || !plannedDate || loading || saving} onClick={save}>
-          {saving ? <><LoaderCircle className="button-spinner" size={15} />Scheduling…</> : <><CalendarPlus size={15} />Add to calendar</>}
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
-
-function AssignProgramModal({
+/** @deprecated ProgramRunWizard is the live assignment flow. */
+export function AssignProgramModal({
   programs,
   athletes,
   hasMoreAthletes,
@@ -9312,7 +9949,7 @@ function ProgramModal({
       description={
         kind === "workout"
           ? "Create one session, then schedule it for yourself or assign it to athletes."
-          : "Add workouts in training order. Athletes schedule each session on the dates that suit them."
+          : "Add workouts in training order. Choose dates when you start or assign the program."
       }
       onClose={onClose}
     >
@@ -9372,7 +10009,11 @@ function ScheduleModal({
   onLoadMore: () => void;
   onRetry: () => void;
   onClose: () => void;
-  onSave: (candidate: ScheduleCandidate, date: string | null) => Promise<void>;
+  onSave: (
+    candidate: ScheduleCandidate,
+    date: string | null,
+    idempotencyKey: string,
+  ) => Promise<void>;
 }) {
   const availableCandidates = useMemo<ScheduleCandidate[]>(() => {
     if (editingId) {
@@ -9461,6 +10102,7 @@ function ScheduleModal({
   );
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const idempotencyRef = useRef({ fingerprint: "", key: "" });
   const [savingAction, setSavingAction] = useState<
     "add" | "reschedule" | "unschedule" | null
   >(null);
@@ -9539,8 +10181,12 @@ function ScheduleModal({
     setSaving(true);
     setSavingAction(nextAction);
     setError("");
+    const fingerprint = `${selected.id}:${nextDate ?? ""}:${nextAction}`;
+    if (idempotencyRef.current.fingerprint !== fingerprint) {
+      idempotencyRef.current = { fingerprint, key: crypto.randomUUID() };
+    }
     try {
-      await onSave(selected, nextDate);
+      await onSave(selected, nextDate, idempotencyRef.current.key);
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -9707,8 +10353,8 @@ function ScheduleModal({
           <CalendarDays size={26} />
           <h3>No workouts available to schedule</h3>
           <p>
-            Save a workout or program first. Workouts already on your calendar
-            remain available from Calendar.
+            Create a reusable workout first. Start full programs from Programs;
+            workouts already on your calendar remain available here.
           </p>
           <button className="button secondary" onClick={onClose}>
             Close

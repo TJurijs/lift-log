@@ -4,7 +4,7 @@ import test from "node:test";
 
 const seedUrl = new URL("../scripts/seed-test-population.mjs", import.meta.url);
 
-test("coach workspace fixtures use real program occurrences and representative RPE", async () => {
+test("coach workspace fixtures use real program runs and representative RPE", async () => {
   const seed = await readFile(seedUrl, "utf8");
 
   assert.match(
@@ -13,13 +13,18 @@ test("coach workspace fixtures use real program occurrences and representative R
   );
   assert.match(
     seed,
-    /sharedCoachProgramKey = "guntis-ulmanis:raimonds-vejonis"[\s\S]*target_athlete_id: identities\.get\("guntis-ulmanis"\)\.user\.id[\s\S]*clients\.get\("raimonds-vejonis"\)/,
-    "the shared athlete needs one independently authored program per coach",
+    /sharedCoachProgramKey = "guntis-ulmanis:raimonds-vejonis"[\s\S]*const sharedRun = await createFixtureProgramRun\([\s\S]*clients\.get\("raimonds-vejonis"\),[\s\S]*identities\.get\("guntis-ulmanis"\)\.user\.id/,
+    "the shared athlete needs one independently authored run per coach",
   );
   assert.match(
     seed,
-    /visible\.length !== 1[\s\S]*visible\[0\]\.created_by_id !== identities\.get\(coachKey\)\.user\.id[\s\S]*athleteVisiblePrograms\.length !== 2/,
-    "each coach sees only their authored program while the athlete sees both",
+    /visibleRuns\.length !== 1[\s\S]*visibleRuns\[0\]\.created_by_id !== identities\.get\(coachKey\)\.user\.id[\s\S]*athleteVisibleRuns\.length !== 2/,
+    "each coach sees only their authored run while the athlete sees both",
+  );
+  assert.match(
+    seed,
+    /candidate\.athlete_id === coachId[\s\S]*candidate\.created_by_id === coachId[\s\S]*candidate\.source_type === "self"/,
+    "coach assignments must come from coach-owned reusable sources",
   );
   assert.match(
     seed,
@@ -43,10 +48,13 @@ test("coach workspace fixtures use real program occurrences and representative R
     /sharedCoachVersionId,[\s\S]*\n\s*2,[\s\S]*\n\s*null,/,
     "a completed linked session must exercise the missing-RPE state",
   );
-  assert.match(seed, /update\(\{ status: "skipped" \}\)/);
   assert.match(
     seed,
-    /linkedCoachSessions[\s\S]*program_version_id[\s\S]*workout_id[\s\S]*scheduled_workout_id/,
+    /rpc\("set_scheduled_workout_status"[\s\S]*target_status: "skipped"/,
+  );
+  assert.match(
+    seed,
+    /linkedCoachSessions[\s\S]*program_run_id[\s\S]*program_run_workout_id[\s\S]*program_version_id[\s\S]*workout_id[\s\S]*scheduled_workout_id/,
   );
   assert.match(
     seed,
@@ -55,5 +63,10 @@ test("coach workspace fixtures use real program occurrences and representative R
   assert.match(
     seed,
     /occurrence\.status === "in_progress"[\s\S]*occurrence\.status === "skipped"[\s\S]*occurrence\.planned_date < asOf/,
+  );
+  assert.match(
+    seed,
+    /unrelatedRuns[\s\S]*rpc\("list_program_run_summaries"[\s\S]*if \(!unrelatedRuns\.error\)/,
+    "an unrelated athlete must be denied access to the shared athlete's runs",
   );
 });

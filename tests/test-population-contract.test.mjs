@@ -23,6 +23,10 @@ const extensibilityMigrationUrl = new URL(
 );
 const appEntryUrl = new URL("../app/AppEntry.tsx", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
+const testPersonaStylesUrl = new URL(
+  "../app/test-persona-switcher.css",
+  import.meta.url,
+);
 const environmentValidatorUrl = new URL(
   "../scripts/validate-build-env.mjs",
   import.meta.url,
@@ -325,12 +329,17 @@ test("fixture reset remains namespace-scoped, cross-account guarded, and service
   );
   assert.match(
     seedScript,
-    /"vaira-vike-freiberga",\s*"valdis-zatlers",\s*"raimonds-vejonis",[\s\S]*Verify Valdis assignment source/,
-    "the active coach fixture must have a published Own program for assignment QA",
+    /const valdisOwnRun = await createFixtureProgramRun\([\s\S]*publishedVersions\.set\("valdis-zatlers", valdisOwnRun\.versionId\)[\s\S]*Verify Valdis assignment source/,
+    "the active coach fixture must snapshot an Own program for assignment QA",
   );
-  assert.match(seedScript, /create_scheduled_occurrence/);
+  assert.match(seedScript, /create_program_runs/);
+  assert.match(seedScript, /list_program_run_summaries/);
+  assert.doesNotMatch(seedScript, /rpc\("create_scheduled_occurrence"/);
   assert.match(seedScript, /start_scheduled_workout/);
-  assert.doesNotMatch(seedScript, /set_program_availability|prepare_program_schedule/);
+  assert.doesNotMatch(
+    seedScript,
+    /set_program_availability|prepare_program_schedule/,
+  );
   assert.match(seedScript, /target_scheduled_workout_id/);
   assert.match(seedScript, /persona\.liftlogId/);
   assert.doesNotMatch(seedScript, /ensure_starter_program/);
@@ -371,12 +380,14 @@ test("test-population has an explicit loopback-only local runner", async () => {
 });
 
 test("test-persona UI is strictly gated in hosted and loopback modes and remains usable on mobile", async () => {
-  const [entry, styles, validator, viteConfig] = await Promise.all([
-    readFile(appEntryUrl, "utf8"),
-    readFile(stylesUrl, "utf8"),
-    readFile(environmentValidatorUrl, "utf8"),
-    readFile(viteConfigUrl, "utf8"),
-  ]);
+  const [entry, styles, testPersonaStyles, validator, viteConfig] =
+    await Promise.all([
+      readFile(appEntryUrl, "utf8"),
+      readFile(stylesUrl, "utf8"),
+      readFile(testPersonaStylesUrl, "utf8"),
+      readFile(environmentValidatorUrl, "utf8"),
+      readFile(viteConfigUrl, "utf8"),
+    ]);
 
   assert.match(entry, /mode === "nonprod"/);
   assert.match(entry, /mode === "localdev"/);
@@ -397,14 +408,14 @@ test("test-persona UI is strictly gated in hosted and loopback modes and remains
   assert.match(viteConfig, /mode === "nonprod" \|\| mode === "localdev"/);
   assert.match(
     styles,
-    /@media \(max-width: 900px\)[\s\S]*\.test-persona-open\s*\{\s*display:\s*none;\s*\}/,
+    /@media \(max-width: 900px\)[\s\S]*\.brand,[\s\S]*\.profile-menu\s*\{\s*display:\s*none;\s*\}/,
   );
   assert.match(
-    styles,
+    testPersonaStyles,
     /@media \(max-width: 700px\)[\s\S]*\.test-switcher-dialog \.test-persona-grid\s*\{\s*grid-template-columns:\s*1fr;\s*\}/,
   );
   assert.match(
-    styles,
+    testPersonaStyles,
     /\.test-switcher-dialog \{[^}]*max-height: calc\(100dvh - 44px\)/,
   );
 });

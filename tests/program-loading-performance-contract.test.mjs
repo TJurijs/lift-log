@@ -104,6 +104,8 @@ test("opening a selected program fetches, caches, and lazy-loads one immutable t
   );
   assert.match(app, /async function openProgram[\s\S]*void loadProgramView\(\)/);
   assert.doesNotMatch(app, /@dnd-kit/);
-  assert.match(programView, /@dnd-kit\/core/);
-  assert.match(programView, /@dnd-kit\/sortable/);
+  assert.doesNotMatch(programView, /@dnd-kit/);
+  assert.match(programView, /function moveItemIds/);
+  assert.match(programView, /aria-label={`Move \$\{label\} up`}/);
+  assert.match(programView, /aria-label={`Move \$\{label\} down`}/);
 });

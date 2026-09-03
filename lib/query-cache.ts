@@ -19,6 +19,11 @@ interface QueryCacheEntry<Value> {
   weight: number;
 }
 
+interface PendingQuery<Value> {
+  promise: Promise<Value>;
+  valid: boolean;
+}
+
 const utf8Encoder = new TextEncoder();
 
 function serializedValueWeight(value: unknown) {
@@ -41,7 +46,7 @@ function serializedValueWeight(value: unknown) {
  */
 export class BoundedQueryCache {
   private readonly values = new Map<string, QueryCacheEntry<unknown>>();
-  private readonly pending = new Map<string, Promise<unknown>>();
+  private readonly pending = new Map<string, PendingQuery<unknown>>();
   private readonly maximumWeight: number;
   private readonly measureWeight: (value: unknown, key: string) => number;
   private currentWeight = 0;
@@ -92,14 +97,30 @@ export class BoundedQueryCache {
       this.removeValue(key);
     }
 
-    const existing = this.pending.get(key) as Promise<Value> | undefined;
-    if (existing) return existing;
+    const existing = this.pending.get(key) as PendingQuery<Value> | undefined;
+    if (existing) return existing.promise;
 
-    const pending = load();
-    this.pending.set(key, pending as Promise<unknown>);
+    const pending: PendingQuery<Value> = { promise: load(), valid: true };
+    this.pending.set(key, pending as PendingQuery<unknown>);
     try {
-      const value = await pending;
-      if (options.shouldCache?.(value) !== false) {
+      let value: Value;
+      try {
+        value = await pending.promise;
+      } catch (error) {
+        if (!pending.valid || this.pending.get(key) !== pending) {
+          return this.getOrLoad(key, load, options);
+        }
+        throw error;
+      }
+      // Invalidation means the response is stale for both the cache and every
+      // caller awaiting it. Re-enter through getOrLoad so callers join a newer
+      // in-flight refresh (when one exists) or transparently start one.
+      if (!pending.valid || this.pending.get(key) !== pending) {
+        return this.getOrLoad(key, load, options);
+      }
+      if (
+        options.shouldCache?.(value) !== false
+      ) {
         const ttlMs = options.ttlMs ?? this.defaultTtlMs;
         this.storeValue(key, value, ttlMs);
       }
@@ -125,22 +146,28 @@ export class BoundedQueryCache {
     options: QueryCacheOptions<Value> = {},
   ) {
     if (options.shouldCache?.(value) === false) return;
+    this.invalidatePending(key);
     const ttlMs = options.ttlMs ?? this.defaultTtlMs;
     this.storeValue(key, value, ttlMs);
   }
 
   delete(key: string) {
     this.removeValue(key);
+    this.invalidatePending(key);
   }
 
   invalidate(prefix: string) {
     for (const key of this.values.keys()) {
       if (key.startsWith(prefix)) this.removeValue(key);
     }
+    for (const key of this.pending.keys()) {
+      if (key.startsWith(prefix)) this.invalidatePending(key);
+    }
   }
 
   clear() {
     this.values.clear();
+    for (const pending of this.pending.values()) pending.valid = false;
     this.pending.clear();
     this.currentWeight = 0;
   }
@@ -181,5 +208,12 @@ export class BoundedQueryCache {
     if (!cached) return;
     this.values.delete(key);
     this.currentWeight = Math.max(0, this.currentWeight - cached.weight);
+  }
+
+  private invalidatePending(key: string) {
+    const pending = this.pending.get(key);
+    if (!pending) return;
+    pending.valid = false;
+    this.pending.delete(key);
   }
 }

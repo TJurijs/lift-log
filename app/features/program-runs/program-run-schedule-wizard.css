@@ -1,0 +1,220 @@
+.program-run-schedule-wizard {
+  width: min(780px, 100%);
+  height: min(760px, calc(100dvh - 48px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.program-run-schedule-wizard > .program-run-generator,
+.program-run-schedule-wizard > .program-run-date-list,
+.program-run-schedule-wizard > .inline-error,
+.program-run-schedule-wizard > .program-run-schedule-loading {
+  min-height: 0;
+}
+
+.program-run-generator {
+  flex: 0 0 auto;
+  margin-bottom: 14px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: grid;
+  gap: 11px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.program-run-generator-heading,
+.program-run-date-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.program-run-generator-heading > span {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: rgba(197, 243, 107, 0.075);
+}
+
+.program-run-generator-heading > div,
+.program-run-date-heading > div {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 3px;
+}
+
+.program-run-generator-heading strong,
+.program-run-date-heading strong {
+  font-size: 12px;
+}
+
+.program-run-generator-heading small,
+.program-run-date-heading small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.program-run-generator-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.program-run-date-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-right: 2px;
+  display: grid;
+  gap: 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.program-run-date-heading {
+  padding: 3px 1px 5px;
+}
+
+.program-run-date-heading > span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 8px;
+}
+
+.program-run-date-list article {
+  min-height: 58px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 132px;
+  gap: 9px;
+  align-items: center;
+  background: var(--panel-soft);
+}
+
+.program-run-date-list article > span {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.program-run-date-list article > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.program-run-date-list article strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.program-run-date-list article small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.program-run-date-list input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.program-run-schedule-loading {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 9px;
+  color: var(--muted);
+}
+
+.program-run-schedule-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.program-run-schedule-error .inline-error {
+  flex: 1;
+}
+
+.program-run-schedule-actions {
+  padding-top: 13px;
+  display: grid;
+  grid-template-columns: minmax(105px, auto) minmax(0, 1fr);
+  gap: 8px;
+  background: #11191e;
+}
+
+@media (max-width: 700px) {
+  .modal-backdrop:has(.program-run-schedule-wizard) {
+    padding: 0;
+    place-items: stretch;
+  }
+
+  .program-run-schedule-wizard {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    padding: max(18px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom));
+    border: 0;
+    border-radius: 0;
+  }
+
+  .program-run-generator {
+    flex: 0 0 auto;
+  }
+
+  .program-run-date-list {
+    flex: 1 1 auto;
+  }
+
+  .program-run-date-list article {
+    grid-template-columns: 28px minmax(0, 1fr) 122px;
+  }
+
+  .program-run-schedule-actions {
+    position: sticky;
+    z-index: 3;
+    bottom: calc(-1 * max(12px, env(safe-area-inset-bottom)));
+    margin: 0 -16px;
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -12px 25px rgba(3, 6, 8, 0.32);
+  }
+}
+
+@media (max-width: 430px) {
+  .program-run-generator-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .program-run-date-list article {
+    grid-template-columns: 26px minmax(0, 1fr) 112px;
+    gap: 7px;
+  }
+}

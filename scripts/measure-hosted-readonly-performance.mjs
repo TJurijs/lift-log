@@ -16,6 +16,8 @@ const READ_ONLY_RPC_NAMES = new Set([
   "get_authored_coach_athlete_detail",
   "get_own_profile",
   "get_own_session_notes",
+  "get_program_run_detail",
+  "get_program_run_program_detail",
   "get_program_version_detail",
   "get_scheduled_workout_detail",
   "get_workspace_bootstrap",
@@ -26,10 +28,13 @@ const READ_ONLY_RPC_NAMES = new Set([
   "list_coach_athletes",
   "list_completed_session_summaries",
   "list_connected_profile_summaries",
+  "list_frequent_schedulable_workouts",
   "list_outgoing_coach_invites",
   "list_pending_coach_invites",
+  "list_program_run_summaries",
   "list_program_summaries",
   "list_schedulable_workouts",
+  "list_upcoming_scheduled_workouts",
   "search_exercises",
 ]);
 
@@ -492,10 +497,10 @@ function navigationButton(page, label) {
 
 async function navigate(page, label) {
   for (const backName of [
-    /^All programs$/u,
-    /^Next workouts$/u,
-    /^Calendar$/u,
-    /^Coaching$/u,
+    /^(?:All programs|Back to Programs)$/u,
+    /^(?:Next workouts|Back to Next(?: workouts)?)$/u,
+    /^(?:Calendar|Back to Calendar)$/u,
+    /^(?:Coaching|Back to Coaching)$/u,
   ]) {
     const back = appContent(page)
       .getByRole("button", { name: backName })
@@ -513,7 +518,9 @@ function appContent(page) {
 }
 
 async function openProgramCatalog(page) {
-  const back = appContent(page).getByRole("button", { name: /^All programs$/u });
+  const back = appContent(page).getByRole("button", {
+    name: /^(?:All programs|Back to Programs)$/u,
+  });
   if (await back.isVisible()) await back.click();
   await navigate(page, "Programs");
   await appContent(page).locator(".program-compact-list").waitFor({
@@ -532,20 +539,14 @@ function firstProgramDetailTrigger(page) {
 async function openNextWorkoutsList(page) {
   await navigate(page, "Next workouts");
   const back = appContent(page).getByRole("button", {
-    name: /^Next workouts$/u,
+    name: /^(?:Next workouts|Back to Next(?: workouts)?)$/u,
   });
   if (await back.isVisible()) await back.click();
-  await firstScheduledWorkoutDetailTrigger(page).waitFor({ state: "visible" });
+  await firstProgramRunDetailTrigger(page).waitFor({ state: "visible" });
 }
 
-function firstScheduledWorkoutDetailTrigger(page) {
-  return appContent(page)
-    .locator(".next-workout-card")
-    .filter({
-      has: page.getByRole("button", { name: /^Start workout$/u }),
-    })
-    .first()
-    .locator(".next-workout-summary");
+function firstProgramRunDetailTrigger(page) {
+  return appContent(page).getByRole("button", { name: /^View plan$/u }).first();
 }
 
 async function startResponsivenessProbe(page) {
@@ -649,8 +650,12 @@ async function signInPersona({
       page
         .getByRole("button", { name: new RegExp(personaName, "iu") })
         .click(),
-    ready: () =>
-      waitForNavigationSelection(page, "Next workouts"),
+    // A seeded persona may resume straight into an active workout, in which
+    // case the app shell is ready even though the Next navigation item is not
+    // the current page until the user leaves that detail.
+    ready: () => navigationButton(page, "Next workouts").waitFor({
+      state: "visible",
+    }),
     page,
     tracker,
     cdpSession,
@@ -804,7 +809,9 @@ function janisTargets(page) {
       action: () => firstProgramDetailTrigger(page).click(),
       ready: () =>
         appContent(page)
-          .getByRole("button", { name: /^All programs$/u })
+          .getByRole("button", {
+            name: /^(?:All programs|Back to Programs)$/u,
+          })
           .waitFor({ state: "visible" }),
     },
     {
@@ -830,14 +837,16 @@ function raimondsTargets(page) {
 
   return [
     {
-      id: "scheduled-workout-detail",
-      label: "Scheduled workout detail",
+      id: "program-run-detail",
+      label: "Active program detail",
       kind: "detail",
       setup: () => openNextWorkoutsList(page),
-      action: () => firstScheduledWorkoutDetailTrigger(page).click(),
+      action: () => firstProgramRunDetailTrigger(page).click(),
       ready: () =>
         appContent(page)
-          .getByRole("button", { name: /^Next workouts$/u })
+          .getByRole("button", {
+            name: /^(?:Next workouts|Back to Next(?: workouts)?)$/u,
+          })
           .waitFor({ state: "visible" }),
     },
     {
@@ -865,9 +874,9 @@ function raimondsTargets(page) {
       ready: async () => {
         await waitForNavigationSelection(page, "Coaching");
         await waitForSelected(myAthletes);
-        await appContent(page)
-          .getByText("Athlete overview", { exact: true })
-          .waitFor({ state: "visible" });
+        await appContent(page).locator(".coach-athlete-workspace").waitFor({
+          state: "visible",
+        });
       },
     },
   ];

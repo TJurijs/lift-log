@@ -6,8 +6,16 @@ const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
 const primitivesUrl = new URL("../app/ui-primitives.tsx", import.meta.url);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
-const lifecycleMigrationUrl = new URL(
-  "../supabase/migrations/202609020001_simple_content_lock_lifecycle.sql",
+const coachWorkspaceUrl = new URL(
+  "../app/features/coaching/CoachWorkspace.tsx",
+  import.meta.url,
+);
+const wizardUrl = new URL(
+  "../app/features/program-runs/ProgramRunWizard.tsx",
+  import.meta.url,
+);
+const runMigrationUrl = new URL(
+  "../supabase/migrations/202609020003_program_runs.sql",
   import.meta.url,
 );
 
@@ -21,20 +29,12 @@ function sourceBetween(source, start, end) {
 }
 
 test("coach requests are confirmed in-app without invitation links", async () => {
-  const [app, primitives] = await Promise.all([
+  const [app, coachWorkspace, primitives] = await Promise.all([
     readFile(appUrl, "utf8"),
+    readFile(coachWorkspaceUrl, "utf8"),
     readFile(primitivesUrl, "utf8"),
   ]);
-  const inviteModal = sourceBetween(
-    app,
-    "function InviteModal",
-    "function AssignProgramModal",
-  );
-  const coachingView = sourceBetween(
-    app,
-    "function CoachingView",
-    "function CoachAthleteOverview",
-  );
+  const inviteModal = sourceBetween(app, "function InviteModal", "function ProgramModal");
 
   assert.match(inviteModal, /Promise<CoachInviteReceipt>/);
   assert.match(inviteModal, /Request sent to \{receipt\.targetName\}/);
@@ -50,24 +50,10 @@ test("coach requests are confirmed in-app without invitation links", async () =>
     "invite navigation must remain locked while a lookup or request is in flight",
   );
 
-  assert.match(coachingView, /pendingInvites\.map\(\(invitation\)/);
-  assert.match(coachingView, /Coaching requests/);
-  assert.match(
-    coachingView,
-    /onClick=\{onRefresh\}[\s\S]*Refresh coaching requests[\s\S]*Refreshing…/,
-    "a coach already on the workspace must be able to refresh incoming requests",
-  );
-  assert.equal(
-    coachingView.match(/onClick=\{onInvite\}/g)?.length,
-    1,
-    "My coaches must expose exactly one invite entry point",
-  );
-  assert.doesNotMatch(coachingView, /invite-card|In-app request/);
-  assert.match(
-    coachingView,
-    /Pending requests[\s\S]*outgoingInvites\.map\(\(invitation\)[\s\S]*onCancelInvite\(invitation\)[\s\S]*Cancelling…/,
-    "outgoing pending requests must be visible and cancellable with progress",
-  );
+  assert.match(coachWorkspace, /pendingInvites\.map\(\(invitation\)/);
+  assert.match(coachWorkspace, /onRespondInvite\(invitation, "declined"\)/);
+  assert.match(coachWorkspace, /onRespondInvite\(invitation, "accepted"\)/);
+  assert.match(coachWorkspace, /aria-label=\{refreshing \? "Refreshing athletes" : "Refresh athletes"\}/);
   assert.match(
     app,
     /coachingRequestCount=\{workspace\.pendingCoachInvites\.length\}[\s\S]*coachingRequestCount > 0/,
@@ -79,11 +65,6 @@ test("coach requests are confirmed in-app without invitation links", async () =>
     "sent requests must not create navigation badges",
   );
   assert.match(
-    coachingView,
-    /"My athletes"[\s\S]*badge: pendingInvites\.length/,
-    "incoming requests should also badge My athletes",
-  );
-  assert.match(
     primitives,
     /tab\.badge !== undefined && tab\.badge > 0[\s\S]*request-count-badge/,
     "the shared tab primitive must render a pending-request badge",
@@ -93,19 +74,9 @@ test("coach requests are confirmed in-app without invitation links", async () =>
     /await repository\.respondToCoachInvite[\s\S]*setWorkspace[\s\S]*refreshFailed = !\(await refreshCoachWorkspace\(\)\)/,
     "an accepted database mutation must remain successful when the follow-up refresh fails",
   );
-  assert.match(
-    coachingView,
-    /respondingInvite\.response === "declined"[\s\S]*Declining…/,
-    "declining a request must show action-specific progress",
-  );
-  assert.match(
-    coachingView,
-    /respondingInvite\.response === "accepted"[\s\S]*Accepting…/,
-    "accepting a request must show action-specific progress",
-  );
 });
 
-test("coach-only workspace tabs stay hidden until they have relevant coaching data", async () => {
+test("coach-only workspaces stay hidden until relevant coaching data exists", async () => {
   const app = await readFile(appUrl, "utf8");
   const programsHome = sourceBetween(
     app,
@@ -115,155 +86,95 @@ test("coach-only workspace tabs stay hidden until they have relevant coaching da
   const coachingView = sourceBetween(
     app,
     "function CoachingView",
-    "function CoachAthleteOverview",
+    "function ExerciseModal",
   );
 
   assert.match(
     coachingView,
     /const hasAthleteWorkspace\s*=\s*athletes\.length > 0 \|\| pendingInvites\.length > 0/,
-    "My athletes must require an active athlete or a pending coaching request",
   );
-  assert.match(
-    coachingView,
-    /hasAthleteWorkspace[\s\S]*"My athletes"/,
-    "the My athletes workspace tab must be hidden otherwise",
-  );
+  assert.match(coachingView, /hasAthleteWorkspace[\s\S]*"My athletes"/);
+  assert.match(coachingView, /<CoachWorkspace/);
   assert.match(
     app,
     /\{ id: "coaching", label: "Coaching", shortLabel: "Coaching", icon: Users \}/,
   );
-  assert.match(
-    app,
-    /\{navItems\.map\(\(item\) => \{/,
-    "the Coaching navigation destination must remain visible to everyone",
-  );
+  assert.match(app, /\{navItems\.map\(\(item\) => \{/);
   assert.match(
     programsHome,
-    /\.\.\.\(hasCoach \? \[\{ value: "coach" as const, label: "Coach", icon: Users \}\] : \[\]\)/,
-    "the Coach program source must be hidden without an active coach",
-  );
-  assert.match(
-    programsHome,
-    /const content = source === "own" \? own : coach/,
-    "the selected source must resolve to one source collection",
+    /\.\.\.\(hasCoach \? \[\{ value: "coach" as const, label: "From coach", icon: Users \}\] : \[\]\)/,
+    "the coach-training source must be hidden when there is neither an active coach nor retained coach training",
   );
   assert.doesNotMatch(app, /Open any workout/);
 });
 
-test("Own programs lock and can be assigned from either coaching entry point", async () => {
-  const app = await readFile(appUrl, "utf8");
-  const appShell = sourceBetween(
-    app,
-    "export default function LiftLogApp",
-    "function Sidebar",
-  );
-  const assignmentModal = sourceBetween(
-    app,
-    "function AssignProgramModal",
-    "function ProgramModal",
-  );
-
-  assert.match(
-    appShell,
-    /onAssignAthlete=\{\(athlete\)[\s\S]{0,120}openAssignmentModal\(\{ athleteIds: \[athlete\.id\] \}\)/,
-    "the selected athlete must open assignment with that athlete preselected",
-  );
-  assert.match(
-    appShell,
-    /capabilitiesForProgram\(program\)\.assign[\s\S]{0,160}openAssignmentModal\(\{ programId: program\.id \}\)/,
-    "an opened Own program must expose assignment for coached athletes",
-  );
-  assert.match(
-    appShell,
-    /<AssignProgramModal[\s\S]*onAssign=\{assignProgramToAthletes\}/,
-  );
-
-  assert.match(
-    assignmentModal,
-    /athletes\.map\(\(athlete\)[\s\S]*type="checkbox"[\s\S]*toggleAthlete\(athlete\.id\)/,
-    "program-first assignment must support selecting multiple coached athletes",
-  );
-  assert.match(assignmentModal, /dismissible=\{!saving\}/);
-  assert.match(
-    assignmentModal,
-    /className="assignment-progress"[\s\S]*Assigning training to/,
-  );
-  assert.doesNotMatch(assignmentModal, /independent program|copies/);
-  assert.match(
-    appShell,
-    /repository\.assignOwnProgramToAthletes\([\s\S]*programId,[\s\S]*athleteIds/,
-    "assignment must send the selected program through the atomic assignment gateway",
-  );
-  assert.match(
-    assignmentModal,
-    /LoaderCircle[\s\S]*Assigning…/,
-    "the assignment action must visibly show that work is in progress",
-  );
-  assert.doesNotMatch(assignmentModal, /Schedule date|Assign & schedule/);
-  assert.match(app, /function CoachScheduleModal/);
-  assert.match(app, /createCoachScheduledOccurrence/);
-});
-
-test("coaching requests and assignment controls collapse for mobile", async () => {
-  const styles = await readFile(stylesUrl, "utf8");
-  const mobile = sourceBetween(
-    styles,
-    "@media (max-width: 520px)",
-    "@media (prefers-reduced-motion: reduce)",
-  );
-
-  assert.match(
-    mobile,
-    /\.pending-coach-requests article\s*\{[^}]*grid-template-columns:\s*44px minmax\(0, 1fr\)/,
-  );
-  assert.match(
-    mobile,
-    /\.outgoing-coach-requests article\s*\{[^}]*grid-template-columns:\s*44px minmax\(0, 1fr\)/,
-  );
-  assert.match(
-    styles,
-    /@media \(max-width: 900px\)[\s\S]*\.nav-item em\s*\{[^}]*display:\s*grid/,
-    "the coaching request badge must remain visible in mobile navigation",
-  );
-  assert.match(
-    mobile,
-    /\.pending-coach-requests strong,[\s\S]*\.assignment-step-heading strong\s*\{[^}]*font-size:\s*13px/,
-  );
-  assert.match(
-    mobile,
-    /\.pending-coach-requests small,[\s\S]*\.assignment-step-heading small\s*\{[^}]*font-size:\s*11px/,
-  );
-  assert.match(
-    mobile,
-    /\.pending-request-actions\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*1fr 1fr/,
-  );
-  assert.match(
-    mobile,
-    /\.athlete-hero-actions\s*\{[^}]*width:\s*100%[^}]*display:\s*grid/,
-  );
-  assert.match(
-    mobile,
-    /\.assignment-grid\s*\{[^}]*grid-template-columns:\s*1fr/,
-  );
-  assert.match(
-    mobile,
-    /\.assignment-actions \.button\.primary\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/,
-  );
-});
-
-test("athlete and assigning coach can unassign while completed history is preserved", async () => {
-  const [app, repository, migration] = await Promise.all([
+test("self and coach entry points use the same program-run wizard", async () => {
+  const [app, wizard] = await Promise.all([
     readFile(appUrl, "utf8"),
-    readFile(repositoryUrl, "utf8"),
-    readFile(lifecycleMigrationUrl, "utf8"),
+    readFile(wizardUrl, "utf8"),
   ]);
-  assert.match(app, /item\.sourceType === "coach"[\s\S]*onUnassign\(item\)/);
-  assert.match(app, /aria-label=\{`Unassign \$\{assignedProgram\.title\}`\}/);
-  assert.match(app, /kind: "assignment"[\s\S]*Unassign program/);
-  assert.match(repository, /async unassignProgram[\s\S]*rpc\("unassign_program_assignment"/);
-  assert.match(migration, /candidate\.athlete_id = current_user_id[\s\S]*candidate\.assigned_by_id = current_user_id/);
-  assert.match(migration, /session\.status = 'in_progress'/);
-  assert.match(migration, /delete from public\.scheduled_workouts[\s\S]*status in \('planned', 'skipped'\)/);
-  assert.match(migration, /set status = 'archived'/);
-  assert.doesNotMatch(migration, /delete from public\.workout_sessions/);
+  const appShell = sourceBetween(app, "export default function LiftLogApp", "function Sidebar");
+
+  assert.match(appShell, /<ProgramRunWizard/);
+  assert.match(appShell, /mode=\{(?:assignment|runWizard)Seed\.mode\}/);
+  assert.match(appShell, /repository\.createProgramRuns\(/);
+  assert.match(wizard, /mode: "self" \| "coach"/);
+  assert.match(
+    wizard,
+    /visibleAthletes\.map\(\(athlete\)[\s\S]*toggleAthlete\(athlete\.id\)/,
+    "program-first coaching must support assigning one run to multiple athletes",
+  );
+  assert.match(wizard, /Assign and schedule/);
+  assert.match(wizard, /Set full schedule later/);
+  assert.match(wizard, /dismissible=\{!saving\}/);
+  assert.doesNotMatch(
+    appShell,
+    /<AssignProgramModal\b/,
+    "self and coach entry points must not render the legacy assignment flow",
+  );
+  assert.match(
+    appShell,
+    /modal === "run-schedule"[\s\S]*scheduleProgramRunWorkouts/,
+    "flexible run dates must be schedulable through the run gateway",
+  );
+  assert.doesNotMatch(wizard, /Scheduling is a separate step\./);
+});
+
+test("coach master/detail navigation does not stack on mobile", async () => {
+  const [styles, coachWorkspace] = await Promise.all([
+    readFile(stylesUrl, "utf8"),
+    readFile(coachWorkspaceUrl, "utf8"),
+  ]);
+
+  assert.match(coachWorkspace, /className="coach-mobile-back"/);
+  assert.match(coachWorkspace, /value: "plan"[\s\S]*label: "Plan"/);
+  assert.match(coachWorkspace, /value: "history"[\s\S]*label: "History"/);
+  assert.match(
+    styles,
+    /@media \(max-width: 700px\)[\s\S]*\.coach-athlete-detail\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-directory\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-detail\s*\{[^}]*display:\s*block/,
+  );
+});
+
+test("ending a run preserves history and both participant roles can do it", async () => {
+  const [app, coachWorkspace, repository, migration] = await Promise.all([
+    readFile(appUrl, "utf8"),
+    readFile(coachWorkspaceUrl, "utf8"),
+    readFile(repositoryUrl, "utf8"),
+    readFile(runMigrationUrl, "utf8"),
+  ]);
+  const endRun = migration.match(
+    /create or replace function public\.end_program_run[\s\S]*?\n\$\$;/i,
+  )?.[0] ?? "";
+
+  assert.match(coachWorkspace, /End \{isQuickWorkout \? "workout" : "program"\}/);
+  assert.match(coachWorkspace, /if \(onOpenAgendaEntry\) onOpenAgendaEntry\(entry\)/);
+  assert.doesNotMatch(coachWorkspace, /disabled=\{!program/);
+  assert.match(app, /repository\.endProgramRun\(/);
+  assert.match(repository, /async endProgramRun[\s\S]*rpc\("end_program_run"/);
+  assert.match(
+    endRun,
+    /run\.athlete_id = current_user_id[\s\S]*run\.created_by_id = current_user_id/,
+  );
+  assert.match(endRun, /status in \('unscheduled', 'scheduled'\)/);
+  assert.doesNotMatch(endRun, /delete from public\.(workout_sessions|session_item_logs)/);
 });

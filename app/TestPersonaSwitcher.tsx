@@ -1,6 +1,7 @@
 import { ChevronDown, FlaskConical, X } from "lucide-react";
 import { useState } from "react";
 import personas from "virtual:liftlog-test-personas";
+import "./test-persona-switcher.css";
 import { InlineError } from "./ui-primitives";
 
 export interface TestPersonaChoice {

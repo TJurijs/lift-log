@@ -32,17 +32,15 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   assert.match(app, /Workout preview/);
   assert.match(app, /Next workouts/);
   assert.match(app, /Set back to planned/);
-  assert.match(app, /Skip workout/);
+  assert.match(app, /statusAction === "skipped"[\s\S]*"Skip"/);
   assert.match(
     app,
     /onRemoveFromCalendar=\{[\s\S]*?workoutPreviewSchedule[\s\S]*?saveSchedule\(scheduleId, null\)/,
     "an unstarted workout can be removed from the calendar from its preview",
   );
-  assert.match(app, /className="workout-action-full">Remove from calendar</);
+  assert.match(app, /className="icon-button"[\s\S]*aria-label="Remove workout from calendar"/);
   assert.match(app, /className=\{`workout-preview-actions\$\{workoutStarted/);
   assert.match(app, /className="workout-action-compact">Workouts</);
-  assert.match(app, /className="workout-action-compact">Unschedule</);
-  assert.match(app, /className="workout-action-compact">Skip</);
   assert.match(app, /const isQuickWorkout = program\?\.contentType === "quick_workout"/);
   assert.match(app, /isQuickWorkout\s*\?\s*undefined/);
   assert.match(app, /!isQuickWorkout && \([\s\S]*?Session \$\{workoutIndex \+ 1\} of/);
@@ -61,7 +59,21 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   assert.match(app, /loadOwnScheduledProgramVersionById/);
   assert.match(app, /previewProgram\?\.contentType !== "quick_workout"/);
   assert.match(app, /viewMode && onViewProgram/);
-  assert.match(app, /View program/);
+  assert.match(app, /className="icon-button"[\s\S]*aria-label="View program"/);
+  assert.match(
+    app,
+    /aria-label="View program"[\s\S]*aria-label="Remove workout from calendar"[\s\S]*statusAction === "skipped"/,
+    "preview actions should be ordered as program, unschedule, then skip",
+  );
+  assert.match(
+    app,
+    /programWorkoutPreviewOriginRef\.current = \{[\s\S]*schedule,[\s\S]*returnView: workoutPreviewReturnView/,
+  );
+  assert.match(
+    app,
+    /const workoutPreviewOrigin = programWorkoutPreviewOriginRef\.current[\s\S]*openWorkoutPreview\([\s\S]*workoutPreviewOrigin\.schedule,[\s\S]*workoutPreviewOrigin\.returnView,[\s\S]*false/,
+    "program Back should restore the workout preview that opened it",
+  );
   assert.doesNotMatch(app, />\s*Edit plan\s*</);
   assert.match(app, /Every workout scheduled from today onward/);
 });
@@ -76,6 +88,48 @@ test("mobile workout cards reserve stable action space", async () => {
   assert.match(styles, /\.next-workout-card\s*\{[^}]*grid-template-areas:[^}]*"date action"[^}]*"summary action"/s);
   assert.match(styles, /\.next-workout-card > \.button\s*\{[^}]*width: 132px[^}]*white-space: nowrap/s);
   assert.match(styles, /\.workout-preview-actions\.started\s*\{[^}]*grid-template-columns:/s);
+});
+
+test("Next workouts renders server-loaded pages without hiding items in local pagination", async () => {
+  const app = await readFile(appUrl, "utf8");
+  const component = app.slice(
+    app.indexOf("function NextWorkoutsView"),
+    app.indexOf("function TodayView"),
+  );
+
+  assert.match(component, /hasMore = false/);
+  assert.match(component, /loading = false/);
+  assert.match(component, /error = null/);
+  assert.match(component, /hasMore\?: boolean/);
+  assert.match(component, /loading\?: boolean/);
+  assert.match(component, /error\?: string \| null/);
+  assert.match(component, /onLoadMore\?: \(\) => void/);
+  assert.match(component, /schedules\.map\(\(schedule\) =>/);
+  assert.doesNotMatch(component, /schedules\.slice\(/);
+  assert.doesNotMatch(component, /currentPage|pageCount|Upcoming workout pages/);
+  assert.match(component, /role="alert"[\s\S]*?Try again/);
+  assert.match(
+    component,
+    /<AsyncButton[\s\S]*?loading=\{loading\}[\s\S]*?loadingLabel="Loading workouts…"[\s\S]*?>\s*Load more workouts/,
+  );
+  assert.match(component, /if \(loading \|\| error \|\| hasMore\)/);
+});
+
+test("Next paging preserves reset retries and queues mutation refreshes", async () => {
+  const app = await readFile(appUrl, "utf8");
+  const loader = app.slice(
+    app.indexOf("const loadUpcomingWorkouts = useCallback"),
+    app.indexOf("const loadProgramForRunWizard"),
+  );
+
+  assert.match(loader, /upcomingLoadingRef\.current[\s\S]*if \(reset\) upcomingPendingResetRef\.current = true/);
+  assert.match(loader, /upcomingCursorRef\.current = page\.nextCursor/);
+  assert.match(loader, /upcomingFailedResetRef\.current = reset/);
+  assert.match(loader, /upcomingPendingResetRef\.current[\s\S]*upcomingLoaderRef\.current\?\.\(true\)/);
+  assert.match(
+    app,
+    /loadUpcomingWorkouts\([\s\S]*upcomingFailedResetRef\.current \|\|[\s\S]*!upcomingInitializedRef\.current/,
+  );
 });
 
 test("new scheduling uses a bounded server page and offers only eligible workouts", async () => {

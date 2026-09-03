@@ -7,6 +7,13 @@ const programViewPath = new URL(
   "../app/features/programs/ProgramView.tsx",
   import.meta.url,
 );
+const repositoryPath = new URL("../lib/repository.ts", import.meta.url);
+const progressPath = new URL("../lib/program-progress.ts", import.meta.url);
+const runMigrationPath = new URL(
+  "../supabase/migrations/202609020003_program_runs.sql",
+  import.meta.url,
+);
+
 async function readAppSource() {
   const [app, programView] = await Promise.all([
     readFile(appPath, "utf8"),
@@ -14,130 +21,88 @@ async function readAppSource() {
   ]);
   return `${app}\n${programView}`;
 }
-const primitivesPath = new URL("../app/ui-primitives.tsx", import.meta.url);
-const progressPath = new URL("../lib/program-progress.ts", import.meta.url);
-const migrationPath = new URL(
-  "../supabase/migrations/202608290001_v1_performance_data_architecture.sql",
-  import.meta.url,
-);
 
-test("finalized Own and assigned programs schedule one selected occurrence", async () => {
-  const [app, migration, primitives, progress, repository] = await Promise.all([
-    readAppSource(),
-    readFile(migrationPath, "utf8"),
-    readFile(primitivesPath, "utf8"),
-    readFile(progressPath, "utf8"),
-    readFile(new URL("../lib/repository.ts", import.meta.url), "utf8"),
+function sourceBetween(source, start, end) {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+  assert.notEqual(startIndex, -1, `expected source marker: ${start}`);
+  assert.notEqual(endIndex, -1, `expected source marker: ${end}`);
+  return source.slice(startIndex, endIndex);
+}
+
+test("one run owns every ordered workout and dates remain optional", async () => {
+  const [migration, repository] = await Promise.all([
+    readFile(runMigrationPath, "utf8"),
+    readFile(repositoryPath, "utf8"),
   ]);
+  const createRun = migration.match(
+    /create or replace function public\.create_program_runs[\s\S]*?\n\$\$;/i,
+  )?.[0] ?? "";
+  const scheduleRun = migration.match(
+    /create or replace function public\.schedule_program_run_workouts[\s\S]*?\n\$\$;/i,
+  )?.[0] ?? "";
 
-  assert.match(
-    migration,
-    /create or replace function public\.create_scheduled_occurrence[\s\S]*target_workout_id uuid[\s\S]*target_idempotency_key uuid/,
-    "the mutation must identify exactly one workout and be safe to retry",
-  );
-  assert.match(
-    migration.match(
-      /create or replace function public\.create_scheduled_occurrence[\s\S]*?\$\$;/i,
-    )?.[0] ?? "",
-    /insert into public\.scheduled_workouts/,
-  );
-  assert.equal(
-    (
-      migration.match(
-        /create or replace function public\.create_scheduled_occurrence[\s\S]*?\$\$;/i,
-      )?.[0] ?? ""
-    ).match(/insert into public\.scheduled_workouts/g)?.length,
-    1,
-  );
-  assert.match(
-    migration,
-    /drop function if exists public\.prepare_program_schedule\(uuid\);/i,
-    "the obsolete program-wide schedule prepopulation API must be removed",
-  );
-  assert.match(
-    migration,
-    /drop function if exists public\.set_program_availability\(uuid, boolean\);/i,
-    "the obsolete availability toggle must be removed with schedule prepopulation",
-  );
-  assert.match(repository, /async listSchedulableWorkouts/);
-  assert.match(repository, /rpc\("list_schedulable_workouts"/);
+  assert.match(createRun, /target_athlete_ids uuid\[\]/);
+  assert.match(createRun, /target_workout_dates jsonb/);
+  assert.match(createRun, /target_idempotency_key uuid/);
+  assert.match(createRun, /private\.materialize_program_run/);
+  assert.match(scheduleRun, /status in \('unscheduled', 'scheduled'\)/);
+  assert.match(scheduleRun, /requested\.planned_date is not null/);
   assert.match(
     repository,
-    /async createScheduledOccurrence[\s\S]*rpc\("create_scheduled_occurrence_for_use"[\s\S]*target_idempotency_key: idempotencyKey/,
+    /async createProgramRuns[\s\S]*rpc\("create_program_runs"/,
   );
-  assert.doesNotMatch(repository, /prepareProgramSchedule/);
-  assert.doesNotMatch(app, /availabilityAction|onAvailability|In schedule/);
   assert.match(
-    progress,
-    /schedule\.status === "completed"[\s\S]*schedule\.status === "skipped"[\s\S]*plannedDate < today[\s\S]*"overdue"/,
-    "completion, skipping, and overdue dates must remain distinct workout states",
-  );
-  assert.match(primitives, /editable: "Editable"[\s\S]*locked: "Locked"[\s\S]*completed: "Completed"/);
-  assert.match(
-    app,
-    /No workouts available to schedule[\s\S]*Save a workout or program first/,
-    "the empty scheduler must explain the saved-content rule",
+    repository,
+    /async scheduleProgramRunWorkouts[\s\S]*rpc\("schedule_program_run_workouts"/,
   );
 });
 
-test("program assignment is hidden without active coachees", async () => {
-  const app = await readAppSource();
-  assert.match(
-    app,
-    /onAssignProgram=\{[\s\S]*capabilitiesForProgram\(program\)\.assign/,
-  );
-});
+test("starting a program freezes only its assigned revision", async () => {
+  const [app, migration] = await Promise.all([
+    readAppSource(),
+    readFile(runMigrationPath, "utf8"),
+  ]);
+  const snapshot = migration.match(
+    /create or replace function private\.snapshot_program_for_run[\s\S]*?\n\$\$;/i,
+  )?.[0] ?? "";
+  const canEdit = migration.match(
+    /create or replace function public\.can_edit_program[\s\S]*?\n\$\$;/i,
+  )?.[0] ?? "";
 
-test("saving stays editable and first use locks content", async () => {
-  const app = await readAppSource();
-  assert.doesNotMatch(app, /onRemoveAvailable/);
-  assert.match(
-    app,
-    /Program saved\. It stays editable until you schedule or assign it\./,
-    "saving must not lock unused content",
-  );
+  assert.match(snapshot, /publish_program_version\(draft_version_id/);
+  assert.match(snapshot, /insert into public\.program_versions[\s\S]*'draft'/);
+  assert.match(snapshot, /clone_program_version_tree/);
+  assert.doesNotMatch(canEdit, /locked_at/);
+  assert.match(app, /saved for future (?:runs|uses)/i);
   assert.match(
     app,
     /<Save size=\{15\} \/>[\s\S]*?Save program/,
-    "the editor must use consistent save language",
+    "the editor must continue to use consistent save language",
   );
-  assert.match(
-    app,
-    /onSchedule=\{capabilitiesForProgram\(item\)\.schedule \? \(\) => onSchedule\(item\) : undefined\}/,
-    "schedulable Own and Coach rows must expose one Schedule action",
-  );
-  assert.doesNotMatch(
-    app,
-    /title=\{copyToOwn \? "Copy to Own" : "Copy"\}/,
-    "program copy controls must not survive the template-free model",
-  );
-  assert.match(
-    app,
-    /capabilitiesForProgram\(program\)\.schedule[\s\S]*?openScheduleForProgram\(program\)/,
-    "a program can be scheduled directly from its detail",
-  );
-  assert.doesNotMatch(app, /This is the stable version used by scheduled workouts\./);
   assert.match(
     app,
     /\{editable && pickerOpen && \([\s\S]*?<ModalShell[\s\S]*?className="exercise-picker-modal"/,
-    "the Exercise Library picker must open only for an editable workout",
+    "the Exercise Library picker must open only for an editable working revision",
   );
-  assert.doesNotMatch(app, /className="exercise-picker desktop-exercise-picker panel"/);
 });
 
-test("available programs visualize every workout's scheduling state", async () => {
-  const [app, styles, progress] = await Promise.all([
-    readFile(appPath, "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
-    readFile(progressPath, "utf8"),
-  ]);
+test("the reusable Programs library identifies an active use without replacing the template", async () => {
+  const app = await readFile(appPath, "utf8");
+  const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
 
-  assert.match(progress, /"editable"[\s\S]*"locked"[\s\S]*"scheduled"[\s\S]*"in_progress"[\s\S]*"needs_attention"[\s\S]*"completed"/);
-  assert.match(progress, /workoutStates\.includes\("overdue"\)[\s\S]*"needs_attention"/);
-  assert.match(app, /className="program-card-workout-progress"/);
-  assert.match(styles, /\.program-card-workout-progress i\.due/);
-  assert.match(styles, /\.program-card-workout-progress i\.overdue/);
-  assert.match(styles, /\.program-card-workout-progress i\.scheduled/);
-  assert.match(styles, /\.program-card-workout-progress i\.completed/);
-  assert.match(styles, /\.program-card-workout-progress i\.skipped/);
+  assert.doesNotMatch(programRow, /deriveProgramRunStatus|program-card-workout-progress/);
+  assert.match(programRow, /activeRun/);
+  assert.match(programRow, /In use/);
+  assert.match(programRow, /program\.title/);
+  assert.match(programRow, /formatWorkoutCount\(workoutCount\)/);
+});
+
+test("calendar and workout detail still distinguish due, overdue, skipped and completed", async () => {
+  const progress = await readFile(progressPath, "utf8");
+
+  assert.match(
+    progress,
+    /schedule\.status === "completed"[\s\S]*schedule\.status === "skipped"[\s\S]*plannedDate < today[\s\S]*"overdue"/,
+  );
 });

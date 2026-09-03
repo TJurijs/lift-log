@@ -33,7 +33,7 @@ test("program creation presents an ordered workout sequence instead of a week pl
   );
   assert.match(
     programModal,
-    /Add workouts in training order\. Athletes schedule each session on the dates that suit them\./,
+    /Add workouts in training order\. Choose dates when you start or assign the program\./,
   );
   assert.doesNotMatch(programModal, /Week 1|week as many times|Duplicate week/);
 });
@@ -48,8 +48,10 @@ test("the program editor exposes one workout sequence with explicit reorder mode
   assert.match(programView, /\{reorderingWorkouts \? "Done" : "Reorder"\}/);
   assert.match(
     programView,
-    /onReorderWorkouts\(arrayMove\(ids, from, to\)\)/,
+    /function moveWorkout[\s\S]*moveItemIds\(workouts, index, offset\)[\s\S]*onReorderWorkouts\(ids\)/,
   );
+  assert.match(programView, /aria-label={`Move \$\{label\} up`}/);
+  assert.match(programView, /aria-label={`Move \$\{label\} down`}/);
   assert.doesNotMatch(
     programView,
     /currentWeek|selectedWeek|onSelectWeek|onAddBlankWeek|onCopyWeek|onDeleteWeek/,

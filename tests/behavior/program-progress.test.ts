@@ -4,12 +4,30 @@ import {
   deriveProgramRunStatus,
   deriveProgramWorkoutProgressState,
   deriveSingleWorkoutStatus,
+  nextIncompleteRunWorkoutId,
+  programRunLifecycleLabel,
   programRunStatusLabel,
   type ProgramRunStatus,
   type ProgramWorkoutProgressState,
 } from "../../lib/program-progress";
 
 describe("program progress", () => {
+  it("opens the first incomplete workout by run position", () => {
+    const base = {
+      runId: "run-1",
+      title: "Workout",
+      estimatedMinutes: 45,
+      prescriptionOverrides: {},
+    };
+    expect(
+      nextIncompleteRunWorkoutId([
+        { ...base, id: "slot-3", workoutId: "workout-3", position: 2, status: "scheduled" },
+        { ...base, id: "slot-1", workoutId: "workout-1", position: 0, status: "completed" },
+        { ...base, id: "slot-2", workoutId: "workout-2", position: 1, status: "unscheduled" },
+      ]),
+    ).toBe("workout-2");
+  });
+
   it.each([
     [undefined, "unscheduled"],
     [{ status: "planned", plannedDate: undefined }, "unscheduled"],
@@ -59,6 +77,30 @@ describe("program progress", () => {
       "Needs attention",
       "Completed",
     ]);
+  });
+
+  it("does not describe a terminal run with skipped workouts as completed", () => {
+    expect(
+      programRunLifecycleLabel({
+        status: "completed",
+        totalWorkouts: 3,
+        completedWorkouts: 2,
+      }),
+    ).toBe("Closed");
+    expect(
+      programRunLifecycleLabel({
+        status: "completed",
+        totalWorkouts: 3,
+        completedWorkouts: 3,
+      }),
+    ).toBe("Completed");
+    expect(
+      programRunLifecycleLabel({
+        status: "ended",
+        totalWorkouts: 3,
+        completedWorkouts: 1,
+      }),
+    ).toBe("Ended");
   });
 
   it("prioritizes active, overdue, and upcoming single-workout occurrences", () => {

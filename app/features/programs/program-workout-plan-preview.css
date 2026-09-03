@@ -1,0 +1,249 @@
+.program-workout-plan-preview {
+  min-width: 0;
+}
+
+.program-plan-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.program-plan-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.program-plan-exercise {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.program-plan-heading {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+}
+
+.program-plan-heading > .exercise-category-icon {
+  position: relative;
+  margin-top: 1px;
+}
+
+.program-plan-title-block {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.program-plan-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.program-plan-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.program-plan-title .exercise-video-link {
+  width: 26px;
+  height: 26px;
+  margin: -5px 0;
+}
+
+.program-plan-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 7px;
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.program-plan-rpe {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid var(--line-light);
+  border-radius: var(--radius-pill);
+  color: var(--text-soft);
+  background: var(--panel-soft);
+  white-space: nowrap;
+  font-size: 9px;
+}
+
+.program-plan-rpe.low {
+  border-color: rgba(115, 184, 255, 0.28);
+  color: var(--blue);
+  background: rgba(115, 184, 255, 0.07);
+}
+
+.program-plan-rpe.balanced {
+  border-color: rgba(197, 243, 107, 0.25);
+  color: var(--accent);
+  background: rgba(197, 243, 107, 0.06);
+}
+
+.program-plan-rpe.high {
+  border-color: rgba(242, 169, 107, 0.3);
+  color: var(--orange);
+  background: rgba(242, 169, 107, 0.07);
+}
+
+.program-plan-note {
+  margin: 8px 0 0 29px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.program-plan-table-wrap {
+  min-width: 0;
+  margin: 10px 0 0 29px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.program-plan-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  color: var(--text-soft);
+  text-align: center;
+  font-size: 10px;
+}
+
+.program-plan-table th,
+.program-plan-table td {
+  height: 31px;
+  padding: 4px 5px;
+  border-top: 1px solid rgba(46, 61, 69, 0.58);
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+.program-plan-table thead th {
+  height: 27px;
+  border-top: 0;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.018);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 8px;
+}
+
+.program-plan-table tbody th {
+  width: 42px;
+  color: var(--muted);
+}
+
+.program-plan-table .program-plan-rpe {
+  justify-content: center;
+}
+
+.program-plan-empty {
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed var(--line-light);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+}
+
+@media (max-width: 420px) {
+  .program-plan-exercise {
+    padding: 11px 10px;
+  }
+
+  .program-plan-note,
+  .program-plan-table-wrap {
+    margin-left: 27px;
+  }
+
+  .program-plan-table th,
+  .program-plan-table td {
+    padding-inline: 3px;
+  }
+
+  .program-plan-interval-table,
+  .program-plan-interval-table tbody {
+    display: block;
+  }
+
+  .program-plan-interval-table thead {
+    display: none;
+  }
+
+  .program-plan-interval-table tr {
+    padding: 7px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    border-top: 1px solid rgba(46, 61, 69, 0.58);
+  }
+
+  .program-plan-interval-table tr:first-child {
+    border-top: 0;
+  }
+
+  .program-plan-interval-table tbody th {
+    width: auto;
+    height: auto;
+    padding: 0 2px 2px;
+    border: 0;
+    grid-column: 1 / -1;
+    color: var(--text-soft);
+    text-align: left;
+    font-weight: 750;
+  }
+
+  .program-plan-interval-table tbody th::before {
+    content: "Round ";
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  .program-plan-interval-table td {
+    min-width: 0;
+    height: auto;
+    padding: 6px;
+    border: 0;
+    border-radius: 6px;
+    display: grid;
+    gap: 2px;
+    justify-items: start;
+    background: rgba(255, 255, 255, 0.018);
+    text-align: left;
+  }
+
+  .program-plan-interval-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 7px;
+  }
+}

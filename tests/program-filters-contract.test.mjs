@@ -16,21 +16,19 @@ async function readAppSource() {
 }
 const stylesPath = new URL("../app/globals.css", import.meta.url);
 
-test("Programs mirror the compact searchable tag-filter pattern", async () => {
+test("Programs expose reusable-content filters without run-status filtering", async () => {
   const [app, styles] = await Promise.all([
     readAppSource(),
     readFile(stylesPath, "utf8"),
   ]);
 
   assert.match(app, /aria-label="Search programs and workouts"/);
-  assert.match(app, /selectedTypes[\s\S]*selectedStatuses/);
+  assert.match(app, /selectedTypes/);
   assert.match(app, /Type[\s\S]*Programs[\s\S]*Single workouts/);
-  assert.match(app, /Status[\s\S]*statusOptions\.map/);
-  assert.match(app, /programRunStatusLabel\(status\)/);
+  assert.doesNotMatch(app, /selectedStatuses|statusOptions\.map|programRunStatusLabel\(status\)/);
   assert.match(app, /No matching training content/);
   assert.match(styles, /\.program-filter-panel\s*\{[^}]*grid-template-columns: repeat\(2/);
   assert.match(styles, /\.program-filter-type[\s\S]*color: var\(--accent\)/);
-  assert.match(styles, /\.program-filter-status[\s\S]*color: var\(--orange\)/);
   assert.match(styles, /\.program-card-meta > span\s*\{[^}]*height: 24px[^}]*font-size: 7\.5px/);
   assert.match(styles, /\.program-card-footer > \.status-badge\s*\{[^}]*height: 24px[^}]*font-size: 7\.5px/);
 });
@@ -63,7 +61,7 @@ test("mobile program editing reserves aligned controls and one exercise list", a
   assert.match(app, /setReorderingExercises/);
   assert.match(app, /className="text-button workout-reorder-toggle"/);
   assert.match(app, /className="button secondary full"[\s\S]*Add exercise/);
-  assert.match(app, /dragEnabled && "drag-enabled"/);
+  assert.match(app, /reorderEnabled && "drag-enabled"/);
   assert.doesNotMatch(app, /className="section-actions"/);
   assert.doesNotMatch(app, /className="section-action"/);
   assert.match(styles, /\.builder-exercise-preview \.builder-exercise-title-row\s*\{[^}]*padding-right: 96px[^}]*flex-wrap: nowrap/s);

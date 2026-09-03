@@ -65,7 +65,10 @@ test("performance harness uses semantic selected state and supports isolated loc
   assert.match(source, /hosted-dev.*local/su);
   for (const rpcName of [
     "get_workspace_bootstrap",
+    "get_program_run_detail",
+    "get_program_run_program_detail",
     "list_program_summaries",
+    "list_program_run_summaries",
     "get_program_version_detail",
     "get_scheduled_workout_detail",
     "list_calendar_occurrences",
@@ -81,7 +84,7 @@ test("performance harness uses semantic selected state and supports isolated loc
   }
   for (const targetId of [
     "program-detail",
-    "scheduled-workout-detail",
+    "program-run-detail",
     "coach-athlete-detail",
   ]) {
     assert.match(

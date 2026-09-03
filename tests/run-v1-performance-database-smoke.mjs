@@ -37,8 +37,7 @@ const ids = Object.fromEntries(
     "section",
     "item",
     "prescription",
-    "assignmentKey",
-    "scheduleKey",
+    "runKey",
   ].map((key) => [key, randomUUID()]),
 );
 const today = new Date().toISOString().slice(0, 10);
@@ -48,16 +47,16 @@ try {
   const [contract] = await db`
     select
       to_regprocedure(
-        'public.assign_published_program_version(uuid,uuid,uuid[],uuid)'
-      )::text as assign_rpc,
+        'public.create_program_runs(uuid,uuid[],jsonb,uuid,uuid)'
+      )::text as create_runs_rpc,
       to_regprocedure(
-        'public.create_scheduled_occurrence(uuid,date,uuid,uuid,uuid)'
-      )::text as schedule_rpc,
+        'public.schedule_program_run_workouts(uuid,jsonb,uuid)'
+      )::text as schedule_run_rpc,
       to_regprocedure('public.start_scheduled_workout(uuid)')::text as start_rpc,
       to_regprocedure('public.prepare_program_schedule(uuid)')::text as obsolete_prepare
   `;
-  assert.ok(contract.assign_rpc, "apply the V1 performance migration first");
-  assert.ok(contract.schedule_rpc);
+  assert.ok(contract.create_runs_rpc, "apply the program-runs migration first");
+  assert.ok(contract.schedule_run_rpc);
   assert.ok(contract.start_rpc);
   assert.equal(contract.obsolete_prepare, null);
 
@@ -159,66 +158,65 @@ try {
   await db.unsafe("set local role authenticated");
   await db`select set_config('request.jwt.claim.sub', ${ids.coach}, true)`;
 
-  const firstAssignment = await db`
+  const firstRuns = await db`
     select *
-    from public.assign_published_program_version(
+    from public.create_program_runs(
       ${ids.program}::uuid,
-      ${ids.version}::uuid,
       array[${ids.athlete}::uuid],
-      ${ids.assignmentKey}::uuid
+      jsonb_build_array(jsonb_build_object(
+        'workoutId', ${ids.workout}::uuid,
+        'plannedDate', ${today}::date
+      )),
+      ${ids.runKey}::uuid
     )
   `;
-  const retriedAssignment = await db`
+  const retriedRuns = await db`
     select *
-    from public.assign_published_program_version(
+    from public.create_program_runs(
       ${ids.program}::uuid,
-      ${ids.version}::uuid,
       array[${ids.athlete}::uuid],
-      ${ids.assignmentKey}::uuid
+      jsonb_build_array(jsonb_build_object(
+        'workoutId', ${ids.workout}::uuid,
+        'plannedDate', ${today}::date
+      )),
+      ${ids.runKey}::uuid
     )
   `;
-  assert.equal(firstAssignment.length, 1);
-  assert.equal(firstAssignment[0].created, true);
-  assert.equal(retriedAssignment[0].created, false);
-  assert.equal(retriedAssignment[0].assignment_id, firstAssignment[0].assignment_id);
-  const assignmentId = firstAssignment[0].assignment_id;
+  assert.equal(firstRuns.length, 1);
+  assert.equal(firstRuns[0].created, true);
+  assert.equal(firstRuns[0].program_version_id, ids.version);
+  assert.equal(retriedRuns[0].created, false);
+  assert.equal(retriedRuns[0].run_id, firstRuns[0].run_id);
+  const runId = firstRuns[0].run_id;
 
   await db`select set_config('request.jwt.claim.sub', ${ids.athlete}, true)`;
   const candidates = await db`select * from public.list_schedulable_workouts()`;
-  assert.equal(candidates.length, 1);
-  assert.equal(candidates[0].assignment_id, assignmentId);
-  assert.equal(candidates[0].workout_id, ids.workout);
+  assert.equal(candidates.length, 0);
 
-  const [firstSchedule] = await db`
-    select public.create_scheduled_occurrence(
-      ${ids.workout}::uuid,
-      ${today}::date,
-      ${ids.scheduleKey}::uuid,
-      null,
-      ${assignmentId}::uuid
-    ) as payload
+  const [scheduledRunWorkout] = await db`
+    select id, assignment_id, program_run_id, program_run_workout_id,
+      workout_id, planned_date, status
+    from public.scheduled_workouts
+    where program_run_id = ${runId}::uuid
   `;
-  const [retriedSchedule] = await db`
-    select public.create_scheduled_occurrence(
-      ${ids.workout}::uuid,
-      ${today}::date,
-      ${ids.scheduleKey}::uuid,
-      null,
-      ${assignmentId}::uuid
-    ) as payload
-  `;
-  assert.equal(firstSchedule.payload.created, true);
-  assert.equal(retriedSchedule.payload.created, false);
-  assert.equal(retriedSchedule.payload.id, firstSchedule.payload.id);
+  assert.ok(scheduledRunWorkout);
+  assert.equal(scheduledRunWorkout.assignment_id, null);
+  assert.equal(scheduledRunWorkout.program_run_id, runId);
+  assert.ok(scheduledRunWorkout.program_run_workout_id);
+  assert.equal(scheduledRunWorkout.workout_id, ids.workout);
+  assert.equal(
+    new Date(scheduledRunWorkout.planned_date).toISOString().slice(0, 10),
+    today,
+  );
 
   const [firstStart] = await db`
     select public.start_scheduled_workout(
-      ${firstSchedule.payload.id}::uuid
+      ${scheduledRunWorkout.id}::uuid
     ) as session_id
   `;
   const [resumedStart] = await db`
     select public.start_scheduled_workout(
-      ${firstSchedule.payload.id}::uuid
+      ${scheduledRunWorkout.id}::uuid
     ) as session_id
   `;
   assert.equal(resumedStart.session_id, firstStart.session_id);
@@ -233,7 +231,8 @@ try {
     select * from public.list_calendar_occurrences(${today}::date, ${today}::date)
   `;
   assert.equal(calendar.length, 1);
-  assert.equal(calendar[0].id, firstSchedule.payload.id);
+  assert.equal(calendar[0].id, scheduledRunWorkout.id);
+  assert.equal(calendar[0].program_run_id, runId);
   assert.equal(calendar[0].status, "in_progress");
 
   await db`select set_config('request.jwt.claim.sub', ${ids.coach}, true)`;
@@ -245,8 +244,9 @@ try {
     select public.get_coach_athlete_detail(${ids.athlete}::uuid) as payload
   `;
   assert.equal(coachDetail.payload.athlete.id, ids.athlete);
-  assert.equal(coachDetail.payload.programs.length, 1);
+  assert.equal(coachDetail.payload.programs.length, 0);
   assert.equal(coachDetail.payload.upcoming[0].status, "in_progress");
+  assert.equal(coachDetail.payload.upcoming[0].programRunId, runId);
 
   console.log("V1 performance database smoke passed; transaction will be rolled back.");
 } finally {

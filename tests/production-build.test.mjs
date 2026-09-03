@@ -100,8 +100,6 @@ test("keeps user data behind Supabase and wires every MVP mutation", async () =>
     "updateOwnProfile",
     "createBlankProgram",
     "createProgramFromTemplate",
-    "createScheduledOccurrence",
-    "forkProgramAssignment",
     "scheduleWorkout",
     "deactivateProgram",
     "updateWorkout",
@@ -118,6 +116,12 @@ test("keeps user data behind Supabase and wires every MVP mutation", async () =>
       `${method} must be implemented`,
     );
   }
+
+  assert.doesNotMatch(
+    repository,
+    /createScheduledOccurrence|createCoachScheduledOccurrence|forkProgramAssignment|assignQuickWorkoutToAthletes/,
+    "the repository must not expose pre-run assignment or occurrence writers",
+  );
 
   assert.match(app, /changes save automatically/i);
   // Autosave wiring, reload recovery, conflict rebasing, and completion are

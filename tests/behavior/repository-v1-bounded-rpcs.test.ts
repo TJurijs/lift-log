@@ -71,6 +71,77 @@ function repositoryWithRpc(rpc: ReturnType<typeof vi.fn>) {
 }
 
 describe("v1 bounded repository RPCs", () => {
+  it("finishes a changed timezone sync before bootstrap exposes upcoming data", async () => {
+    const currentTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        profile: {
+          ...profile,
+          timezone: currentTimezone === "UTC" ? "Europe/Riga" : "UTC",
+        },
+        activeSession: null,
+        activeWorkout: null,
+        nextWorkouts: [],
+      },
+      error: null,
+    });
+    let finishTimezoneUpdate!: (value: { error: null }) => void;
+    const timezoneUpdate = new Promise<{ error: null }>((resolve) => {
+      finishTimezoneUpdate = resolve;
+    });
+    const eq = vi.fn(() => timezoneUpdate);
+    const update = vi.fn(() => ({ eq }));
+    const from = vi.fn(() => ({ update }));
+    const repository = new LiftLogRepository(
+      { rpc, from } as never,
+      "viewer-1",
+      "View Er",
+    );
+    let resolved = false;
+
+    const bootstrap = repository.loadBootstrap().then((workspace) => {
+      resolved = true;
+      return workspace;
+    });
+    await vi.waitFor(() => expect(eq).toHaveBeenCalled());
+    expect(resolved).toBe(false);
+
+    finishTimezoneUpdate({ error: null });
+    await bootstrap;
+
+    expect(from).toHaveBeenCalledWith("profiles");
+    expect(update).toHaveBeenCalledWith({ timezone: currentTimezone });
+    expect(eq).toHaveBeenCalledWith("id", "viewer-1");
+    expect(resolved).toBe(true);
+  });
+
+  it("uses the saved estimate in lightweight next-workout summaries", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        profile,
+        activeSession: null,
+        activeWorkout: null,
+        nextWorkouts: [{
+          id: "schedule-1",
+          programVersionId: "version-1",
+          workoutId: "workout-1",
+          workoutTitle: "Jerk technique",
+          estimatedMinutes: 95,
+          programTitle: "Balanced Weightlifting",
+          plannedDate: "2026-09-03",
+          sequenceNumber: 2,
+          status: "planned",
+        }],
+      },
+      error: null,
+    });
+    const { repository } = repositoryWithRpc(rpc);
+
+    const workspace = await repository.loadBootstrap();
+
+    expect(workspace.scheduledWorkouts[0].workout.durationMinutes).toBe(95);
+  });
+
   it("bootstraps profile, active recovery, and six-or-fewer next rows in one RPC", async () => {
     const rpc = vi.fn().mockResolvedValue({
       data: {
@@ -679,6 +750,111 @@ describe("v1 bounded repository RPCs", () => {
     expect(from).not.toHaveBeenCalled();
   });
 
+  it("preserves run provenance when an athlete schedules a coach-created run", async () => {
+    const occurrence = {
+      id: "schedule-coach-run",
+      assignment_id: null,
+      program_run_id: "run-coach",
+      program_run_workout_id: "slot-coach",
+      program_id: "program-1",
+      program_version_id: "version-1",
+      program_title: "Coach plan",
+      workout_id: "workout-1",
+      workout_title: "Snatch",
+      planned_date: "2026-09-10",
+      sequence_number: 1,
+      status: "planned",
+      scheduled_by_id: "viewer-1",
+      source_type: "coach",
+    };
+    const rpc = vi.fn(async (name: string) => {
+      if (name === "get_workspace_bootstrap") {
+        return {
+          data: {
+            profile,
+            activeSession: null,
+            activeWorkout: null,
+            nextWorkouts: [{
+              ...occurrence,
+              programVersionId: occurrence.program_version_id,
+              workoutId: occurrence.workout_id,
+              workoutTitle: occurrence.workout_title,
+              programTitle: occurrence.program_title,
+              plannedDate: occurrence.planned_date,
+              sequenceNumber: occurrence.sequence_number,
+              programRunId: occurrence.program_run_id,
+              programRunWorkoutId: occurrence.program_run_workout_id,
+              scheduledById: occurrence.scheduled_by_id,
+              sourceType: occurrence.source_type,
+            }],
+          },
+          error: null,
+        };
+      }
+      if (name === "list_calendar_occurrences") {
+        return {
+          data: [
+            occurrence,
+            {
+              ...occurrence,
+              id: "schedule-old-coach",
+              program_run_id: "run-old-coach",
+              source_type: undefined,
+              scheduled_by_id: "coach-1",
+            },
+            {
+              ...occurrence,
+              id: "schedule-self",
+              program_run_id: "run-self",
+              source_type: "self",
+            },
+          ],
+          error: null,
+        };
+      }
+      if (name === "get_scheduled_workout_detail") {
+        return {
+          data: {
+            ...occurrence,
+            athleteId: "viewer-1",
+            scheduledById: "viewer-1",
+            sourceType: "coach",
+            programId: "program-1",
+            programVersionId: "version-1",
+            programTitle: "Coach plan",
+            workoutId: "workout-1",
+            plannedDate: "2026-09-10",
+            sequenceNumber: 1,
+            workout: workoutPayload(),
+          },
+          error: null,
+        };
+      }
+      throw new Error(`unexpected RPC ${name}`);
+    });
+    const { repository } = repositoryWithRpc(rpc);
+
+    const bootstrap = await repository.loadBootstrap();
+    expect(bootstrap.scheduledWorkouts[0]).toMatchObject({
+      programRunId: "run-coach",
+      sourceType: "coach",
+    });
+
+    const calendar = await repository.listCalendarOccurrences(
+      "2026-09-01",
+      "2026-09-30",
+    );
+    expect(calendar.items.map((item) => item.sourceType)).toEqual([
+      "coach",
+      "coach",
+      "self",
+    ]);
+
+    await expect(
+      repository.loadScheduledWorkoutDetail("schedule-coach-run"),
+    ).resolves.toMatchObject({ sourceType: "coach" });
+  });
+
   it("loads coaching startup in two bounded RPCs and exposes the athlete cursor", async () => {
     const athleteRows = Array.from({ length: 26 }, (_, index) => ({
       id: `athlete-${index + 1}`,
@@ -771,100 +947,8 @@ describe("v1 bounded repository RPCs", () => {
     expect(from).not.toHaveBeenCalled();
   });
 
-  it("uses exact idempotent shared assignment and occurrence mutations", async () => {
+  it("starts a scheduled workout through the bounded session contract", async () => {
     const rpc = vi.fn(async (name: string) => {
-      if (name === "assign_program_for_use") {
-        return {
-          data: [
-            {
-              athlete_id: "athlete-1",
-              assignment_id: "assignment-1",
-              created: true,
-            },
-          ],
-          error: null,
-        };
-      }
-      if (name === "create_scheduled_occurrence_for_use") {
-        return { data: { id: "schedule-1" }, error: null };
-      }
-      if (name === "get_scheduled_workout_detail") {
-        return {
-          data: {
-            id: "schedule-1",
-            assignmentId: "assignment-1",
-            programId: "program-1",
-            programVersionId: "version-1",
-            programTitle: "Plan",
-            workoutId: "workout-1",
-            plannedDate: "2026-08-29",
-            sequenceNumber: 1,
-            status: "planned",
-            workout: workoutPayload(),
-          },
-          error: null,
-        };
-      }
-      return { data: null, error: null };
-    });
-    const { repository } = repositoryWithRpc(rpc);
-
-    await expect(
-      repository.assignOwnProgramToAthletes(
-        "program-1",
-        ["athlete-1", "athlete-1"],
-        "11111111-1111-4111-8111-111111111111",
-      ),
-    ).resolves.toEqual([
-      {
-        athleteId: "athlete-1",
-        assignmentId: "assignment-1",
-        programId: "program-1",
-        created: true,
-      },
-    ]);
-    await repository.createScheduledOccurrence(
-      "program-1",
-      "assignment-1",
-      "workout-1",
-      "2026-08-29",
-      "22222222-2222-4222-8222-222222222222",
-    );
-
-    expect(rpc.mock.calls[0]).toEqual([
-      "assign_program_for_use",
-      {
-        target_program_id: "program-1",
-        target_athlete_ids: ["athlete-1"],
-        target_idempotency_key: "11111111-1111-4111-8111-111111111111",
-      },
-    ]);
-    expect(rpc.mock.calls[1]).toEqual([
-      "create_scheduled_occurrence_for_use",
-      {
-        target_program_id: null,
-        target_assignment_id: "assignment-1",
-        target_workout_id: "workout-1",
-        target_planned_date: "2026-08-29",
-        target_idempotency_key: "22222222-2222-4222-8222-222222222222",
-      },
-    ]);
-  });
-
-  it("uses the idempotent quick-assignment and scheduled-start contracts directly", async () => {
-    const rpc = vi.fn(async (name: string) => {
-      if (name === "assign_quick_workout_for_use") {
-        return {
-          data: [
-            {
-              athlete_id: "athlete-1",
-              assignment_id: "assignment-1",
-              created: true,
-            },
-          ],
-          error: null,
-        };
-      }
       if (name === "start_scheduled_workout") {
         return { data: "session-1", error: null };
       }
@@ -890,36 +974,12 @@ describe("v1 bounded repository RPCs", () => {
     });
     const { repository, from } = repositoryWithRpc(rpc);
 
-    await expect(
-      repository.assignQuickWorkoutToAthletes(
-        "program-1",
-        ["athlete-1", "athlete-1"],
-        "2026-08-29",
-        "33333333-3333-4333-8333-333333333333",
-      ),
-    ).resolves.toEqual([
-      {
-        athleteId: "athlete-1",
-        assignmentId: "assignment-1",
-        programId: "program-1",
-        created: true,
-      },
-    ]);
     await expect(repository.startOrResumeSession("schedule-1")).resolves.toMatchObject({
       id: "session-1",
       scheduledWorkoutId: "schedule-1",
     });
 
     expect(rpc.mock.calls).toEqual([
-      [
-        "assign_quick_workout_for_use",
-        {
-          target_program_id: "program-1",
-          target_athlete_ids: ["athlete-1"],
-          target_planned_date: "2026-08-29",
-          target_idempotency_key: "33333333-3333-4333-8333-333333333333",
-        },
-      ],
       [
         "start_scheduled_workout",
         { target_scheduled_workout_id: "schedule-1" },

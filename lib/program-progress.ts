@@ -1,4 +1,8 @@
-import type { ScheduledWorkout } from "./domain";
+import type {
+  ProgramRunSummary,
+  ProgramRunWorkout,
+  ScheduledWorkout,
+} from "./domain";
 
 export type ProgramWorkoutProgressState =
   | "unscheduled"
@@ -25,6 +29,22 @@ export type SingleWorkoutStatusSummary = {
   overdueDate?: string;
   lastCompletedDate?: string;
 };
+
+const openableRunWorkoutStatuses = new Set<ProgramRunWorkout["status"]>([
+  "unscheduled",
+  "scheduled",
+  "in_progress",
+]);
+
+/** Selects the first unfinished workout in the immutable run sequence. */
+export function nextIncompleteRunWorkoutId(
+  workouts: readonly ProgramRunWorkout[],
+) {
+  return [...workouts]
+    .sort((left, right) => left.position - right.position)
+    .find((workout) => openableRunWorkoutStatuses.has(workout.status))
+    ?.workoutId;
+}
 
 export function deriveProgramWorkoutProgressState(
   schedule: Pick<ScheduledWorkout, "plannedDate" | "status"> | undefined,
@@ -67,6 +87,24 @@ export function programRunStatusLabel(status: ProgramRunStatus) {
     needs_attention: "Needs attention",
     completed: "Completed",
   }[status];
+}
+
+/**
+ * Describes the lifecycle of a concrete run without implying that skipped or
+ * cancelled workouts were completed.
+ */
+export function programRunLifecycleLabel(
+  run: Pick<
+    ProgramRunSummary,
+    "status" | "completedWorkouts" | "totalWorkouts"
+  >,
+) {
+  if (run.status === "not_started") return "Not started";
+  if (run.status === "in_progress") return "In progress";
+  if (run.status === "ended") return "Ended";
+  return run.totalWorkouts > 0 && run.completedWorkouts >= run.totalWorkouts
+    ? "Completed"
+    : "Closed";
 }
 
 export function programWorkoutProgressLabel(

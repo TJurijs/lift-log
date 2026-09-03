@@ -6,8 +6,13 @@ const migrationUrl = new URL(
   "../supabase/migrations/202608290001_v1_performance_data_architecture.sql",
   import.meta.url,
 );
+const runMigrationUrl = new URL(
+  "../supabase/migrations/202609020003_program_runs.sql",
+  import.meta.url,
+);
 
 const sql = await readFile(migrationUrl, "utf8");
+const runSql = await readFile(runMigrationUrl, "utf8");
 
 function functionBody(name) {
   const escapedName = name.replaceAll(".", "\\.");
@@ -42,7 +47,7 @@ test("forward migration preserves legacy assignment identity", () => {
   assert.doesNotMatch(sql, /delete from public\.(programs|program_versions|program_weeks|workouts)/i);
 });
 
-test("normal assignment is set based and cloning is explicit", () => {
+test("historical assignment migration is set based and cloning was explicit", () => {
   const assign = functionBody("public.assign_published_program_version");
   const fork = functionBody("public.fork_program_assignment");
 
@@ -57,7 +62,7 @@ test("normal assignment is set based and cloning is explicit", () => {
   assert.match(fork, /customized_program_id = new_program_id/);
 });
 
-test("calendar mutation creates one selected idempotent occurrence", () => {
+test("historical calendar mutation created one selected idempotent occurrence", () => {
   const createOccurrence = functionBody("public.create_scheduled_occurrence");
 
   assert.match(createOccurrence, /target_workout_id uuid/);
@@ -73,6 +78,27 @@ test("calendar mutation creates one selected idempotent occurrence", () => {
   assert.match(sql, /drop function if exists public\.set_program_availability\(uuid, boolean\)/);
   assert.match(sql, /drop function if exists public\.assign_own_program_to_athletes\(uuid, uuid\[\]\)/);
   assert.match(sql, /drop function if exists public\.start_or_resume_workout\(uuid, uuid, uuid\)/);
+});
+
+test("program runs retire every historical assignment and occurrence writer", () => {
+  for (const name of [
+    "assign_published_program_version",
+    "fork_program_assignment",
+    "assign_program_for_use",
+    "assign_quick_workout_to_athletes",
+    "assign_quick_workout_for_use",
+    "create_scheduled_occurrence",
+    "create_scheduled_occurrence_for_use",
+    "create_coach_scheduled_occurrence",
+  ]) {
+    assert.match(
+      runSql,
+      new RegExp(
+        `revoke all on function public\\.${name}\\([\\s\\S]*?from public, anon, authenticated;`,
+        "i",
+      ),
+    );
+  }
 });
 
 test("session start snapshots one workout with set-based inserts", () => {

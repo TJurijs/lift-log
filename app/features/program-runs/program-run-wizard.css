@@ -1,0 +1,411 @@
+.program-run-wizard {
+  width: min(760px, 100%);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.program-run-wizard .modal-heading {
+  margin-bottom: 14px;
+}
+
+.program-run-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.program-run-progress > div {
+  flex: 1;
+  display: flex;
+  gap: 5px;
+}
+
+.program-run-progress i {
+  flex: 1;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line-light);
+}
+
+.program-run-progress i.active {
+  background: var(--accent);
+}
+
+.program-run-wizard-body {
+  min-height: 0;
+  padding: 18px 2px 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.program-run-step {
+  display: grid;
+  gap: 16px;
+}
+
+.program-run-step-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.program-run-step-heading > svg {
+  width: 38px;
+  height: 38px;
+  padding: 9px;
+  border-radius: 11px;
+  color: var(--accent);
+  background: rgba(197, 243, 107, 0.075);
+}
+
+.program-run-step-heading h3,
+.program-run-review-heading h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.program-run-step-heading p,
+.program-run-review-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.program-run-search {
+  margin: 0;
+}
+
+.program-run-choice-list,
+.program-run-delivery-options,
+.program-run-review-list {
+  display: grid;
+  gap: 7px;
+}
+
+.program-run-choice-list > button,
+.program-run-delivery-options > button {
+  width: 100%;
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  color: var(--text);
+  background: var(--panel-soft);
+  text-align: left;
+}
+
+.program-run-delivery-options > button {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.program-run-choice-list > button.selected,
+.program-run-delivery-options > button.selected {
+  border-color: rgba(197, 243, 107, 0.65);
+  box-shadow: inset 0 0 0 1px rgba(197, 243, 107, 0.16);
+  background: rgba(197, 243, 107, 0.045);
+}
+
+.program-run-choice-list > button > span:nth-child(2),
+.program-run-delivery-options > button > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.program-run-choice-list strong,
+.program-run-delivery-options strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.program-run-choice-list small,
+.program-run-delivery-options small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.program-run-choice-list svg:last-child,
+.program-run-delivery-options svg {
+  color: var(--accent);
+}
+
+.program-run-choice-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: rgba(197, 243, 107, 0.075);
+}
+
+.program-run-empty-state {
+  min-height: 132px;
+  padding: 22px;
+  border: 1px dashed var(--line);
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.015);
+  text-align: center;
+}
+
+.program-run-empty-state strong {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.program-run-empty-state p {
+  margin: 0;
+  max-width: 290px;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.program-run-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.program-run-load-error .inline-error {
+  flex: 1;
+}
+
+.athlete-choices > button {
+  grid-template-columns: auto minmax(0, 1fr) 20px;
+}
+
+.program-run-schedule-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.program-run-schedule-fields .form-field,
+.program-run-schedule-fields input,
+.program-run-schedule-fields select {
+  min-width: 0;
+}
+
+.program-run-weekdays {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.program-run-weekdays legend {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.program-run-weekdays > div {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.program-run-weekdays button {
+  min-width: 0;
+  min-height: 42px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 9px;
+}
+
+.program-run-weekdays button.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(197, 243, 107, 0.07);
+}
+
+.program-run-loading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+
+.program-run-review-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.program-run-review-heading > span {
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: rgba(197, 243, 107, 0.075);
+  font-size: 9px;
+}
+
+.program-run-review-list article {
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  background: var(--panel-soft);
+}
+
+.program-run-review-list article > span:first-child {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.program-run-review-list article > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.program-run-review-list strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.program-run-review-list small,
+.program-run-review-list em {
+  color: var(--muted);
+  font-size: 8.5px;
+  font-style: normal;
+}
+
+.program-run-review-list label {
+  position: relative;
+  min-width: 94px;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--text-soft);
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 9px;
+}
+
+.program-run-review-list label input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.program-run-wizard-actions {
+  padding-top: 14px;
+  display: grid;
+  grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
+  gap: 8px;
+  background: #11191e;
+}
+
+.program-run-wizard-actions .button {
+  min-height: 46px;
+}
+
+@media (max-width: 700px) {
+  .modal-backdrop:has(.program-run-wizard) {
+    padding: 0;
+    place-items: stretch;
+  }
+
+  .program-run-wizard {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    padding: max(18px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom));
+    border: 0;
+    border-radius: 0;
+  }
+
+  .program-run-wizard .modal-heading {
+    margin-bottom: 10px;
+  }
+
+  .program-run-wizard .modal-heading h2 {
+    font-size: 22px;
+  }
+
+  .program-run-wizard-body {
+    padding-top: 14px;
+  }
+
+  .program-run-choice-list > button,
+  .program-run-delivery-options > button {
+    min-height: 66px;
+  }
+
+  .program-run-schedule-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .program-run-weekdays > div {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .program-run-weekdays button {
+    min-height: 44px;
+  }
+
+  .program-run-review-list article {
+    grid-template-columns: 30px minmax(0, 1fr) 100px;
+  }
+
+  .program-run-wizard-actions {
+    position: sticky;
+    z-index: 3;
+    bottom: calc(-1 * max(12px, env(safe-area-inset-bottom)));
+    margin: 0 -16px;
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -12px 25px rgba(3, 6, 8, 0.32);
+  }
+
+  .program-run-wizard-actions .button {
+    min-height: 48px;
+  }
+}
+
+@media (max-width: 390px) {
+  .program-run-schedule-fields {
+    grid-template-columns: 1fr;
+  }
+}
+.program-run-load-more {
+  margin-top: 10px;
+}

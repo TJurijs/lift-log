@@ -37,7 +37,12 @@ test("exercise ordering is workout-wide and legacy section mutations are retired
   ]);
 
   assert.match(programView, /setReorderingExercises/);
-  assert.match(programView, /onReorderItems\(arrayMove\(ids, from, to\)\)/);
+  assert.match(
+    programView,
+    /function moveExercise[\s\S]*moveItemIds\(workoutItems, index, offset\)[\s\S]*onReorderItems\(ids\)/,
+  );
+  assert.match(programView, /aria-label={`Move \$\{label\} up`}/);
+  assert.match(programView, /aria-label={`Move \$\{label\} down`}/);
   assert.match(repository, /rpc\("reorder_workout_items"/);
   assert.match(migration, /drop function if exists public\.add_workout_section/);
   assert.match(migration, /drop function if exists public\.move_workout_item/);

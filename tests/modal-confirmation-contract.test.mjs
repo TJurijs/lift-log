@@ -12,13 +12,12 @@ test("destructive confirmations always use the shared application overlay", asyn
   ]);
 
   assert.doesNotMatch(app, /window\.(?:confirm|alert|prompt)\s*\(/);
-  assert.equal(
-    [...app.matchAll(/setModal\("delete-content"\)/g)].length,
-    4,
-    "program, assignment, workout, and workout-item deletion must open the shared overlay",
+  assert.ok(
+    [...app.matchAll(/setModal\("delete-content"\)/g)].length >= 5,
+    "program, program-run, assignment, workout, and workout-item deletion must open the shared overlay",
   );
   assert.match(app, /function DeleteContentModal[\s\S]*<ModalShell/);
-  assert.match(app, /kind: "workout"[\s\S]*kind: "workout-item"[\s\S]*kind: "assignment"[\s\S]*kind: "program"/);
+  assert.match(app, /kind: "workout"[\s\S]*kind: "workout-item"[\s\S]*kind: "assignment"[\s\S]*kind: "program-run"[\s\S]*kind: "program"/);
   assert.doesNotMatch(app, /kind: "week"/);
   assert.match(app, /modal === "delete-exercise"[\s\S]*<DeleteExerciseModal/);
   assert.doesNotMatch(app, /modal === "delete-section"|DeleteSectionModal/);

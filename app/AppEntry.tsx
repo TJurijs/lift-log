@@ -24,7 +24,11 @@ type WorkspaceSource = "cache" | "server";
 const localDemoAvailable = import.meta.env.DEV;
 const jwtClockSkewRetryDelays = [750, 1_500];
 const transientWorkspaceRetryDelays = [800];
-const LiftLogApp = lazy(() => import("./LiftLogApp"));
+const LiftLogApp = lazy(() =>
+  import("./LiftLogApp").then(({ default: component }) => ({
+    default: component,
+  })),
+);
 
 async function clearActiveWorkoutPersistenceForUser(userId: string) {
   const persistence = await import(
@@ -439,7 +443,7 @@ export default function AppEntry() {
     return <><main className="auth-loading"><span className="auth-logo">LL</span><strong>Loading your plans and training history…</strong>{testPersonasAvailable && <div className="auth-loading-actions"><button className="text-button" onClick={() => setPersonaSwitcherOpen(true)}>Switch test account</button><button className="text-button" onClick={signOut}>Sign out</button></div>}</main>{personaDialog}</>;
   }
 
-  if (status === "demo") {
+  if (localDemoAvailable && status === "demo") {
     return (
       <Suspense fallback={<ProductShellFallback />}>
         <LiftLogApp

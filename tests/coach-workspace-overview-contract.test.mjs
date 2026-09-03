@@ -6,107 +6,90 @@ const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const domainUrl = new URL("../lib/domain.ts", import.meta.url);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
-const programViewUrl = new URL("../app/features/programs/ProgramView.tsx", import.meta.url);
+const coachWorkspaceUrl = new URL(
+  "../app/features/coaching/CoachWorkspace.tsx",
+  import.meta.url,
+);
 
-function sourceBetween(source, start, end) {
-  const startIndex = source.indexOf(start);
-  const endIndex = source.indexOf(end, startIndex + start.length);
-
-  assert.notEqual(startIndex, -1, "expected source marker: " + start);
-  assert.notEqual(endIndex, -1, "expected source marker: " + end);
-  return source.slice(startIndex, endIndex);
-}
-
-test("coach athlete overview uses bounded aggregate assignment progress", async () => {
-  const [app, domain, repository] = await Promise.all([
-    readFile(appUrl, "utf8"),
+test("coach detail combines bounded activity with complete run aggregates", async () => {
+  const [domain, repository, coachWorkspace] = await Promise.all([
     readFile(domainUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
+    readFile(coachWorkspaceUrl, "utf8"),
   ]);
-  const coaching = sourceBetween(
-    app,
-    "function CoachAthleteOverview",
-    "function ExerciseModal",
-  );
 
-  assert.doesNotMatch(
-    coaching,
-    /athlete\.programTitle|selectedAthlete\.programTitle|Open latest plan|Check in/,
-  );
-  assert.doesNotMatch(
-    coaching,
-    /completedThisWeek|plannedThisWeek|lastTrainingLabel|upcomingSessions/,
-  );
-  assert.match(coaching, /athlete\.assignedPrograms\.map/);
-  assert.match(coaching, /coachProgramStatusLabel\(assignedProgram\.status\)/);
-  assert.match(
-    domain,
-    /scheduledWorkouts: number[\s\S]*scheduledPercent: number[\s\S]*completedWorkouts: number[\s\S]*completionPercent: number[\s\S]*nextWorkout\?:/,
-  );
-  assert.doesNotMatch(domain, /workoutProgress|hiddenWorkoutCount/);
   assert.match(
     repository,
-    /rpc\("get_coach_athlete_detail"[\s\S]*program_limit: 25[\s\S]*upcoming_limit: 6[\s\S]*completed_limit: 6/,
+    /async loadCoachedAthleteDetail[\s\S]*Promise\.all\(\[[\s\S]*rpc\("get_coach_athlete_detail"[\s\S]*this\.listProgramRuns\(athleteId\)/,
+    "the bounded agenda and complete run summaries should load independently in parallel",
   );
   assert.match(
-    coaching,
-    /assignedProgram\.completionPercent[\s\S]*assignedProgram\.completedWorkouts[\s\S]*assignedProgram\.nextWorkout[\s\S]*No workout currently scheduled/,
+    repository,
+    /program_limit: 25[\s\S]*upcoming_limit: 6[\s\S]*completed_limit: 6/,
   );
-  assert.doesNotMatch(coaching, /assignedProgram\.scheduledPercent/);
-  assert.doesNotMatch(coaching, /workoutProgress|hiddenWorkoutCount/);
   assert.match(
-    coaching,
-    /<SourceTag[\s\S]*presentation=\{presentProvenance\(\{[\s\S]*origin: "coach"[\s\S]*viewerId,[\s\S]*athleteOwnerId: athlete\.id,[\s\S]*athleteOwnerName: athlete\.name,[\s\S]*authorId: viewerId,[\s\S]*\}\)\}[\s\S]*compact/,
-    "coach-assigned content must use the viewer-aware provenance projection",
+    repository,
+    /assignedProgramCount:[\s\S]*programRunPage\.items\.length[\s\S]*programRuns: programRunPage\.items[\s\S]*agenda:/,
   );
-  assert.match(coaching, /coachProgramDisplayStatus\(assignedProgram\.status\)/);
-  assert.match(coaching, /onOpenProgram\(assignedProgram\)/);
-  assert.match(coaching, /No programs assigned by you/);
-  assert.match(coaching, /aria-busy=\{openingProgramId === assignedProgram\.id\}/);
-  assert.match(coaching, /LoaderCircle className="button-spinner"/);
+  assert.match(domain, /export interface AthleteSummary[\s\S]*programRuns\?: ProgramRunSummary\[]/);
+  assert.match(coachWorkspace, /function runsForAthlete[\s\S]*athlete\.programRuns\?\.length/);
+  assert.match(coachWorkspace, /className="coach-run-card"/);
+  assert.match(
+    coachWorkspace,
+    /program\.completedWorkouts[\s\S]*program\.totalWorkouts[\s\S]*program\.completionPercent/,
+    "coach progress must use aggregate run counters rather than the bounded agenda rows",
+  );
+  assert.doesNotMatch(coachWorkspace, /completedHistory\(athlete\)\.length\s*\/\s*program\.totalWorkouts/);
 });
 
-test("coach agenda opens the exact historical program version", async () => {
-  const app = await readFile(appUrl, "utf8");
-
-  assert.match(
-    app,
-    /programVersionId\s*\?\s*await repository\.loadProgramVersionForAthleteById\([\s\S]*athlete\.id,[\s\S]*assignedProgram\.programId \?\? assignedProgram\.id,[\s\S]*programVersionId,[\s\S]*assignedProgram\.assignmentId/,
-  );
-  assert.match(
-    app,
-    /openCoachAgendaEntry[\s\S]*candidate\.assignmentId === entry\.assignmentId[\s\S]*entry\.workoutId,[\s\S]*entry\.programVersionId/,
-  );
-});
-
-test("athlete activity lives inside the program drill-in instead of a separate calendar", async () => {
-  const [app, programView] = await Promise.all([
+test("coach history opens an exact completed result without requiring an active assignment", async () => {
+  const [app, coachWorkspace] = await Promise.all([
     readFile(appUrl, "utf8"),
-    readFile(programViewUrl, "utf8"),
+    readFile(coachWorkspaceUrl, "utf8"),
   ]);
-  const overview = sourceBetween(
-    app,
-    "function CoachAthleteOverview",
-    "function ExerciseModal",
-  );
 
-  assert.doesNotMatch(overview, /Athlete calendar|Your programs on their agenda|CoachAgendaGroup/);
-  assert.match(overview, /Schedule workout/);
-  assert.match(programView, /workoutActivity\?: CoachAgendaEntry\[\]/);
-  assert.match(programView, /Athlete activity/);
-  assert.match(programView, /entry\.kind === "completed"/);
-  assert.match(programView, /RPE \{entry\.rpe\}/);
-  assert.match(programView, /onOpenActivity\?\.\(entry\)/);
+  assert.match(
+    app,
+    /function openCoachAgendaEntry[\s\S]*entry\.kind === "completed" && entry\.sessionId[\s\S]*openCalendarResults\([\s\S]*id: entry\.sessionId[\s\S]*programVersionId: entry\.programVersionId[\s\S]*athlete\.id,[\s\S]*"coaching"[\s\S]*return;/,
+  );
+  assert.match(
+    app,
+    /entry\.programRunId[\s\S]*athlete\.programRuns\?\.find[\s\S]*openAthleteProgram\([\s\S]*entry\.workoutId,[\s\S]*entry\.programVersionId/,
+    "planned run entries must open the immutable revision associated with that run",
+  );
+  assert.match(coachWorkspace, /onOpenAgendaEntry\?:/);
+  assert.match(coachWorkspace, /if \(onOpenAgendaEntry\) onOpenAgendaEntry\(entry\)/);
+  assert.doesNotMatch(
+    coachWorkspace,
+    /disabled=\{!program\}/,
+    "ended runs must not make completed history inaccessible",
+  );
 });
 
-test("coach rows remain keyboard-visible and stack without mobile overflow", async () => {
-  const styles = await readFile(stylesUrl, "utf8");
-  const mobile = sourceBetween(
-    styles,
-    "@media (max-width: 520px)",
-    "@media (prefers-reduced-motion: reduce)",
-  );
+test("athlete planning and history are separate drill-in tabs, not a second calendar", async () => {
+  const coachWorkspace = await readFile(coachWorkspaceUrl, "utf8");
 
-  assert.match(styles, /\.program-catalog-card:hover/);
-  assert.match(mobile, /\.coach-assigned-program\s*\{[^}]*min-height:\s*0/);
+  assert.match(coachWorkspace, /value: "plan"[\s\S]*label: "Plan"/);
+  assert.match(coachWorkspace, /value: "history"[\s\S]*label: "History"/);
+  assert.match(coachWorkspace, /className="coach-run-timeline"/);
+  assert.match(coachWorkspace, /className="coach-history-list"/);
+  assert.doesNotMatch(
+    coachWorkspace,
+    /Athlete calendar|Your programs on their agenda|CoachAgendaGroup/,
+  );
+});
+
+test("coach master and detail screens do not stack on mobile", async () => {
+  const [styles, coachWorkspace] = await Promise.all([
+    readFile(stylesUrl, "utf8"),
+    readFile(coachWorkspaceUrl, "utf8"),
+  ]);
+
+  assert.match(coachWorkspace, /className="coach-mobile-back"/);
+  assert.match(coachWorkspace, /className="[^"]*coach-athlete-directory[^"]*"/);
+  assert.match(coachWorkspace, /className="coach-athlete-detail"/);
+  assert.match(
+    styles,
+    /@media \(max-width: 700px\)[\s\S]*\.coach-athlete-detail\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-directory\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-detail\s*\{[^}]*display:\s*block/,
+  );
 });

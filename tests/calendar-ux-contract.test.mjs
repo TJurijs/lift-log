@@ -125,7 +125,10 @@ test("calendar event clicks open plans and immutable completed results", async (
     ),
     "clicking a completed calendar event must open its saved results",
   );
-  assert.ok(app.includes("repository.loadCompletedSessionDetail("));
+  assert.match(
+    app,
+    /restoreCompletedWorkoutFromHistory[\s\S]*repository[\s\S]*\.loadCompletedSessionDetail\(/,
+  );
   assert.ok(/async loadCompletedSessionDetail\s*\(/.test(repository));
   assert.match(
     app,
@@ -134,11 +137,20 @@ test("calendar event clicks open plans and immutable completed results", async (
   );
   assert.match(
     app,
-    /function openCalendarResults[\s\S]*setDetail\(\{[\s\S]*kind: "completed-workout"[\s\S]*navigate\("today"\)/,
+    /function openCalendarResults[\s\S]*pushAppDetailHistory\("workout-log", "today"[\s\S]*kind: "workout-log"[\s\S]*session[\s\S]*restoreCompletedWorkoutFromHistory/,
     "completed calendar events must use the shared full workout result screen",
   );
   assert.match(app, /function CompletedWorkoutView/);
   assert.doesNotMatch(app, /function CalendarWorkoutModal/);
+});
+
+test("completed history is hidden from the calendar until requested", async () => {
+  const calendarView = await readFile(calendarViewUrl, "utf8");
+
+  assert.match(calendarView, /const \[showCompleted, setShowCompleted\] = useState\(false\)/);
+  assert.match(calendarView, /aria-pressed=\{showCompleted\}/);
+  assert.match(calendarView, /showCompleted \? "Hide completed" : "Show completed"/);
+  assert.match(calendarView, /if \(!showCompleted\) return result/);
 });
 
 test("completed workout logs mirror the active logging grid and RPE palette", async () => {
@@ -252,13 +264,16 @@ test("scheduled workouts can be removed from plans, calendar hover, or availabil
   );
 });
 
-test("Calendar owns removal while permanent deletion stays in Programs", async () => {
+test("Calendar owns occurrence removal while reusable content stays in Programs", async () => {
   const app = await readFile(appUrl, "utf8");
   const programsHome = sourceBetween(app, "function ProgramsHome", "function CoachProgramEmpty");
   const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
 
   assert.doesNotMatch(programsHome, /In schedule|availabilityAction|onAvailability/);
-  assert.match(programsHome, /Used content stays locked; duplicate it to make changes/);
+  assert.match(
+    programsHome,
+    /saved for future (?:runs|uses) without altering active or completed plans/i,
+  );
   assert.match(programsHome, /programItems[\s\S]*workoutItems/);
   assert.match(programsHome, />Programs<[/]strong>/);
   assert.match(programsHome, />Single workouts<[/]strong>/);
@@ -266,7 +281,7 @@ test("Calendar owns removal while permanent deletion stays in Programs", async (
   assert.match(programRow, /canDelete && onDelete/);
 });
 
-test("Programs have no template route and locked content can be duplicated", async () => {
+test("Programs have no template route and reusable content can be duplicated", async () => {
   const [app, styles] = await Promise.all([
     readFile(appUrl, "utf8"),
     readFile(stylesUrl, "utf8"),

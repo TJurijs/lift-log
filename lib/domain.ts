@@ -6,6 +6,18 @@ export type TrainingContentType = "program" | "quick_workout";
 export type ProgramVersionLifecycle = "draft" | "published" | "superseded";
 export type OccurrenceStatus = "planned" | "in_progress" | "completed" | "skipped";
 export type WorkoutSessionStatus = "in_progress" | "completed" | "abandoned";
+export type ProgramRunStatus =
+  | "not_started"
+  | "in_progress"
+  | "completed"
+  | "ended";
+export type ProgramRunWorkoutStatus =
+  | "unscheduled"
+  | "scheduled"
+  | "in_progress"
+  | "completed"
+  | "skipped"
+  | "cancelled";
 
 export interface OwnProfile {
   id: string;
@@ -232,6 +244,8 @@ export interface PlannedWorkout {
 export interface ScheduledWorkout {
   id: string;
   assignmentId?: string;
+  programRunId?: string;
+  programRunWorkoutId?: string;
   programId: string;
   programTitle: string;
   programVersionId: string;
@@ -279,6 +293,8 @@ export interface Program {
   templateId?: string;
   /** Present when immutable published content is assigned without cloning. */
   assignmentId?: string;
+  /** Present when viewing the immutable content used by one concrete run. */
+  programRunId?: string;
   /** Present after an assigned program is explicitly forked for customization. */
   customizedProgramId?: string;
   /** A quick workout uses the same editable workout tree without week planning. */
@@ -302,6 +318,68 @@ export interface ProgramAssignment {
   created: boolean;
 }
 
+export interface ProgramRunWorkoutDate {
+  workoutId: string;
+  plannedDate?: string;
+}
+
+export interface ProgramRunMutation {
+  athleteId: string;
+  runId: string;
+  programId: string;
+  programVersionId: string;
+  created: boolean;
+}
+
+export interface ProgramRunWorkout {
+  id: string;
+  runId: string;
+  workoutId: string;
+  title: string;
+  position: number;
+  estimatedMinutes: number;
+  plannedDate?: string;
+  status: ProgramRunWorkoutStatus;
+  scheduledWorkoutId?: string;
+  /** Completed-session identity for this exact run slot, when available. */
+  sessionId?: string;
+  completedAt?: string;
+  completedForDate?: string;
+  sessionRpe?: number;
+  /** Athlete/run-specific adjustments; the immutable source revision is untouched. */
+  prescriptionOverrides: Record<string, unknown>;
+}
+
+export interface ProgramRunSummary {
+  id: string;
+  athleteId: string;
+  createdById: string;
+  programId: string;
+  programVersionId: string;
+  title: string;
+  /** Lets mixed run lists use workout-specific language for quick workouts. */
+  contentType?: TrainingContentType;
+  status: ProgramRunStatus;
+  totalWorkouts: number;
+  scheduledWorkouts: number;
+  completedWorkouts: number;
+  completionPercent: number;
+  nextWorkout?: {
+    id: string;
+    title: string;
+    plannedDate?: string;
+    status: ProgramRunWorkoutStatus;
+  };
+  repeatedFromRunId?: string;
+  createdAt: string;
+  finishedAt?: string;
+  endedAt?: string;
+}
+
+export interface ProgramRunDetail extends ProgramRunSummary {
+  workouts: ProgramRunWorkout[];
+}
+
 export interface CursorPage<TItem, TCursor> {
   items: TItem[];
   /** Cursor for the next keyset page. Missing when this page is exhausted. */
@@ -310,6 +388,12 @@ export interface CursorPage<TItem, TCursor> {
 }
 
 export interface ProgramCursor {
+  createdAt: string;
+  id: string;
+}
+
+/** Stable keyset position based only on immutable run identity fields. */
+export interface ProgramRunCursor {
   createdAt: string;
   id: string;
 }
@@ -381,6 +465,8 @@ export interface ProgramTemplate {
 
 export interface CompletedSession {
   id: string;
+  programRunId?: string;
+  programRunWorkoutId?: string;
   programVersionId?: string;
   workoutId?: string;
   workoutTitle: string;
@@ -446,6 +532,8 @@ export interface CoachAssignedProgramSummary {
 export interface CoachAgendaEntry {
   id: string;
   assignmentId?: string;
+  programRunId?: string;
+  programRunWorkoutId?: string;
   kind: "upcoming" | "completed";
   status: "planned" | "overdue" | "in_progress" | "completed";
   programId: string;
@@ -467,7 +555,15 @@ export interface AthleteSummary {
   assignedProgramCount?: number;
   detailsLoaded?: boolean;
   assignedPrograms: CoachAssignedProgramSummary[];
+  /** Universal self/coach runs; absent while an older backend is rolling out. */
+  programRuns?: ProgramRunSummary[];
+  /** Keyset cursor for the athlete's next page of program runs. */
+  programRunCursor?: ProgramRunCursor;
+  hasMoreProgramRuns?: boolean;
   agenda: CoachAgendaEntry[];
+  /** Keyset cursor for older coach-visible workout results. */
+  historyCursor?: HistoryCursor;
+  hasMoreHistory?: boolean;
 }
 
 export interface CoachConnection {
@@ -524,6 +620,8 @@ export interface ActiveSession {
   draftWriteToken?: string;
   draftSavedAt?: string;
   assignmentId?: string;
+  programRunId?: string;
+  programRunWorkoutId?: string;
   workoutId: string;
   programVersionId: string;
   scheduledWorkoutId?: string;
@@ -543,6 +641,15 @@ export interface WorkspaceData {
     pendingInviteCount: number;
   };
   programCatalog: Program[];
+  /** Universal self/coach runs; absent while an older backend is rolling out. */
+  programRuns?: ProgramRunSummary[];
+  /** Keyset cursor for the viewer's next page of program runs. */
+  programRunCursor?: ProgramRunCursor;
+  hasMoreProgramRuns?: boolean;
+  /** Independently paged coach-authored runs for the Programs source tab. */
+  coachProgramRuns?: ProgramRunSummary[];
+  coachProgramRunCursor?: ProgramRunCursor;
+  hasMoreCoachProgramRuns?: boolean;
   schedulableProgramIds: string[];
   schedulablePrograms: Program[];
   draftProgram: Program | null;
@@ -586,4 +693,14 @@ export type ProgramWorkspaceData = Pick<
   | "schedulablePrograms"
   | "draftProgram"
   | "activeProgram"
->;
+> & {
+  /** Universal self/coach runs; absent while an older backend is rolling out. */
+  programRuns?: ProgramRunSummary[];
+  /** Keyset cursor for the viewer's next page of program runs. */
+  programRunCursor?: ProgramRunCursor;
+  hasMoreProgramRuns?: boolean;
+  /** Independently paged coach-authored runs for the Programs source tab. */
+  coachProgramRuns?: ProgramRunSummary[];
+  coachProgramRunCursor?: ProgramRunCursor;
+  hasMoreCoachProgramRuns?: boolean;
+};

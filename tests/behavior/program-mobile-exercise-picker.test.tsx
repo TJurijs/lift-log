@@ -3,7 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import ProgramView from "../../app/features/programs/ProgramView";
 import type { TrainingContentCapabilities } from "../../lib/capabilities";
-import type { Exercise, PlannedWorkout, Program } from "../../lib/domain";
+import type {
+  Exercise,
+  PlannedWorkout,
+  Program,
+  WorkoutItem,
+} from "../../lib/domain";
 
 const workout: PlannedWorkout = {
   id: "workout-1",
@@ -45,6 +50,25 @@ const exercise: Exercise = {
   defaultFields: ["reps", "load", "rpe"],
 };
 
+const workoutItems: WorkoutItem[] = [
+  {
+    id: "squat-item",
+    title: "Back squat",
+    cue: "Brace and stand tall.",
+    mode: "sets",
+    fields: ["reps", "load", "rpe"],
+    prescription: { sets: 3, reps: "5" },
+  },
+  {
+    id: "row-item",
+    title: "Barbell row",
+    cue: "Pull toward the ribs.",
+    mode: "sets",
+    fields: ["reps", "load"],
+    prescription: { sets: 3, reps: "8" },
+  },
+];
+
 const capabilities: TrainingContentCapabilities = {
   view: true,
   copyToOwn: false,
@@ -83,7 +107,6 @@ describe("mobile program exercise picker", () => {
         onSave={vi.fn()}
         onBack={vi.fn()}
         onEditWorkout={vi.fn()}
-        renderWorkoutDetails={() => null}
         renderWorkoutItem={() => null}
       />,
     );
@@ -105,6 +128,120 @@ describe("mobile program exercise picker", () => {
     expect(onAddExercise).toHaveBeenCalledWith(exercise);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(document.body.style.overflow).toBe("");
+  });
+
+  it("offers one compact native workout selector for a long program", async () => {
+    const user = userEvent.setup();
+    const onSelectWorkout = vi.fn();
+    const workouts = Array.from({ length: 40 }, (_, index): PlannedWorkout => ({
+      ...workout,
+      id: `workout-${index + 1}`,
+      title: `Workout ${index + 1}`,
+    }));
+    const longProgram: Program = {
+      ...program,
+      weeks: [{ ...program.weeks[0], workouts }],
+    };
+
+    const { container } = render(
+      <ProgramView
+        program={longProgram}
+        action={null}
+        mutationPending={false}
+        viewerId="viewer-1"
+        capabilities={capabilities}
+        workouts={workouts}
+        selectedWorkout={workouts[0]}
+        onSearchExercises={vi.fn().mockResolvedValue([])}
+        onSelectWorkout={onSelectWorkout}
+        onAddWorkout={vi.fn()}
+        onDeleteWorkout={vi.fn()}
+        onReorderWorkouts={vi.fn()}
+        onAddExercise={vi.fn()}
+        onEditItem={vi.fn()}
+        onRemoveItem={vi.fn()}
+        onReorderItems={vi.fn()}
+        onSave={vi.fn()}
+        onBack={vi.fn()}
+        onEditWorkout={vi.fn()}
+        renderWorkoutItem={() => null}
+      />,
+    );
+
+    const selector = screen.getByRole("combobox", { name: "Current workout" });
+    expect(selector).toHaveValue("workout-1");
+    expect(screen.getAllByRole("option")).toHaveLength(40);
+    await user.selectOptions(selector, "workout-40");
+    expect(onSelectWorkout).toHaveBeenCalledWith("workout-40");
+
+    const workoutList = container.querySelector(".workout-list");
+    expect(workoutList).not.toHaveClass("mobile-reorder-open");
+    await user.click(screen.getAllByRole("button", { name: "Reorder" })[0]);
+    expect(workoutList).toHaveClass("mobile-reorder-open");
+  });
+
+  it("reorders workouts and exercises with accessible move controls", async () => {
+    const user = userEvent.setup();
+    const onReorderWorkouts = vi.fn();
+    const onReorderItems = vi.fn();
+    const firstWorkout: PlannedWorkout = {
+      ...workout,
+      title: "First workout",
+      sections: [{ ...workout.sections[0], items: workoutItems }],
+    };
+    const secondWorkout: PlannedWorkout = {
+      ...workout,
+      id: "workout-2",
+      title: "Second workout",
+    };
+
+    render(
+      <ProgramView
+        program={program}
+        action={null}
+        mutationPending={false}
+        viewerId="viewer-1"
+        capabilities={capabilities}
+        workouts={[firstWorkout, secondWorkout]}
+        selectedWorkout={firstWorkout}
+        onSearchExercises={vi.fn().mockResolvedValue([])}
+        onSelectWorkout={vi.fn()}
+        onAddWorkout={vi.fn()}
+        onDeleteWorkout={vi.fn()}
+        onReorderWorkouts={onReorderWorkouts}
+        onAddExercise={vi.fn()}
+        onEditItem={vi.fn()}
+        onRemoveItem={vi.fn()}
+        onReorderItems={onReorderItems}
+        onSave={vi.fn()}
+        onBack={vi.fn()}
+        onEditWorkout={vi.fn()}
+        renderWorkoutItem={(item) => <span>{item.title}</span>}
+      />,
+    );
+
+    await user.click(screen.getAllByRole("button", { name: "Reorder" })[0]);
+    expect(
+      screen.getByRole("button", { name: "Move First workout up" }),
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "Move First workout down" }),
+    );
+    expect(onReorderWorkouts).toHaveBeenCalledWith([
+      "workout-2",
+      "workout-1",
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Reorder" }));
+    expect(
+      screen.getByRole("button", { name: "Move Back squat up" }),
+    ).toBeDisabled();
+    const moveExerciseDown = screen.getByRole("button", {
+      name: "Move Back squat down",
+    });
+    moveExerciseDown.focus();
+    await user.keyboard("{Enter}");
+    expect(onReorderItems).toHaveBeenCalledWith(["row-item", "squat-item"]);
   });
 
 });

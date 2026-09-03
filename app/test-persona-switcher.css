@@ -1,0 +1,254 @@
+.test-login-panel {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(8, 13, 16, 0.42);
+}
+.test-login-toggle {
+  width: 100%;
+  min-height: 54px;
+  padding: 10px 13px;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+.test-login-toggle > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+.test-login-toggle > span > svg {
+  color: var(--accent);
+}
+.test-login-toggle span span {
+  display: grid;
+  gap: 2px;
+}
+.test-login-toggle strong {
+  font-size: 10px;
+}
+.test-login-toggle small {
+  color: var(--muted);
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.test-login-toggle > svg {
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+.test-login-toggle > svg.rotated {
+  transform: rotate(180deg);
+}
+.test-login-content {
+  padding: 0 12px 12px;
+}
+.test-password-field {
+  margin: 5px 0 12px;
+  display: grid;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 9px;
+  font-weight: 700;
+}
+.test-password-field input {
+  width: 100%;
+  min-height: 45px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-light);
+  border-radius: 9px;
+  outline: 0;
+  color: var(--text);
+  background: var(--panel-soft);
+  font: inherit;
+  font-size: 16px;
+}
+.test-password-field input:focus {
+  border-color: var(--accent-dark);
+  box-shadow: 0 0 0 3px rgba(197, 243, 107, 0.07);
+}
+.test-password-field small {
+  color: var(--muted-dark);
+  font-size: 8px;
+  font-weight: 500;
+}
+.test-persona-grid {
+  max-height: 310px;
+  padding-right: 3px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.test-persona-grid > button {
+  min-height: 58px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  color: var(--text);
+  background: var(--panel-soft);
+  text-align: left;
+  cursor: pointer;
+}
+.test-persona-grid > button:hover:not(:disabled) {
+  border-color: var(--accent-dark);
+  background: rgba(197, 243, 107, 0.05);
+}
+.test-persona-grid > button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+.test-persona-grid > button.current {
+  border-color: var(--accent-dark);
+  opacity: 1;
+}
+.test-persona-grid > button > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.test-persona-grid strong {
+  overflow: hidden;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.test-persona-grid small {
+  color: var(--muted);
+  font-size: 8.5px;
+  line-height: 1.35;
+}
+.test-persona-grid em {
+  color: var(--accent-dark);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.test-persona-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: rgba(197, 243, 107, 0.08);
+  font-size: 8px;
+  font-weight: 900;
+}
+.test-switcher-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  padding: 22px;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 6, 8, 0.78);
+  backdrop-filter: blur(8px);
+}
+.test-switcher-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(820px, 100%);
+  max-height: calc(100dvh - 44px);
+  padding: 25px;
+  border: 1px solid var(--line-light);
+  border-radius: 20px;
+  overflow: auto;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.test-switcher-dialog > header {
+  margin-bottom: 20px;
+  display: grid;
+  grid-template-columns: 48px 1fr 34px;
+  gap: 13px;
+  align-items: start;
+}
+.test-switcher-dialog .auth-card-icon {
+  margin: 0;
+}
+.test-switcher-dialog h2 {
+  margin: 1px 0 0;
+  font-size: 24px;
+  letter-spacing: -0.04em;
+}
+.test-switcher-dialog header p:last-child {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+}
+.test-switcher-dialog .test-persona-grid {
+  max-height: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.test-switcher-footer {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.test-persona-open {
+  width: 100%;
+  min-height: 38px;
+  margin: 0 0 11px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--muted);
+  background: rgba(197, 243, 107, 0.035);
+  font-size: 8.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.test-persona-open:hover {
+  color: var(--accent);
+  border-color: var(--accent-dark);
+}
+
+@media (max-width: 700px) {
+  .test-switcher-backdrop {
+    padding: 8px 8px 0;
+    place-items: end center;
+  }
+  .test-switcher-dialog {
+    width: 100%;
+    max-height: calc(100dvh - 8px);
+    padding: 20px 17px calc(20px + env(safe-area-inset-bottom));
+    border-radius: 18px 18px 0 0;
+  }
+  .test-switcher-dialog > header {
+    grid-template-columns: 44px 1fr 44px;
+  }
+  .test-switcher-dialog .test-persona-grid {
+    grid-template-columns: 1fr;
+  }
+  .test-switcher-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .test-persona-grid > button {
+    min-height: 64px;
+  }
+}
+

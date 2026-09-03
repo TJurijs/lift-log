@@ -21,7 +21,10 @@ test("bootstrap loads are bounded, deduplicated, and observable", async () => {
     appEntry,
     /recordClientPerformance\("bootstrap"[\s\S]{0,160}phase: "shell"/,
   );
-  assert.match(appEntry, /lazy\(\(\) => import\("\.\/LiftLogApp"\)\)/);
+  assert.match(
+    appEntry,
+    /const LiftLogApp = lazy\(\(\) =>[\s\S]*import\("\.\/LiftLogApp"\)\.then\(\(\{ default: component \}\)/,
+  );
   assert.doesNotMatch(appEntry, /import LiftLogApp from "\.\/LiftLogApp"/);
   assert.match(repository, /private bootstrapLoadPromise: Promise<WorkspaceData> \| null = null/);
   assert.match(repository, /if \(this\.bootstrapLoadPromise\) return this\.bootstrapLoadPromise/);

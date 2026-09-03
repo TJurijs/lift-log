@@ -1,0 +1,241 @@
+.self-runs {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.self-runs-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.self-runs-heading h2 {
+  margin: 3px 0 0;
+  font-size: 18px;
+}
+
+.self-runs-heading > span,
+.self-finished-runs summary small {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 7px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 9px;
+}
+
+.self-run-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.self-run-card,
+.self-finished-runs {
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--panel);
+}
+
+.self-run-title {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+}
+
+.self-run-title > span {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: rgba(197, 243, 107, 0.075);
+}
+
+.self-run-title h3 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.self-run-title p,
+.self-run-next {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.self-run-progress {
+  height: 4px;
+  margin: 12px 0 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--line-light);
+}
+
+.self-run-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.self-run-actions {
+  margin-top: 11px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.self-finished-runs summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  cursor: pointer;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 750;
+  list-style: none;
+}
+
+.self-finished-runs summary::-webkit-details-marker {
+  display: none;
+}
+
+.self-finished-runs summary > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.self-finished-runs[open] summary {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.self-finished-runs > div {
+  padding-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.self-finished-runs article {
+  min-height: 48px;
+  padding: 6px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto auto;
+  gap: 7px;
+  align-items: center;
+}
+
+.self-finished-runs article > span {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: rgba(197, 243, 107, 0.06);
+}
+
+.self-finished-runs article > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.self-finished-runs article strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.self-finished-runs article small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.self-runs-empty {
+  min-height: 150px;
+  padding: 24px;
+  border: 1px dashed var(--line);
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.012);
+  text-align: center;
+}
+
+.self-runs-empty h3,
+.self-runs-empty p {
+  margin: 0;
+}
+
+.self-runs-load-more {
+  width: fit-content;
+  min-height: 44px;
+  justify-self: center;
+}
+
+.self-runs-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--danger);
+  font-size: 10px;
+  text-align: center;
+}
+
+.self-runs-empty h3 {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.self-runs-empty p {
+  max-width: 320px;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+@media (max-width: 700px) {
+  .self-run-list {
+    grid-template-columns: 1fr;
+  }
+
+  .self-run-card {
+    padding: 12px;
+  }
+
+  .self-run-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .self-run-actions .button {
+    min-width: 0;
+  }
+
+  .self-finished-runs article {
+    grid-template-columns: 30px minmax(0, 1fr) auto auto;
+  }
+
+  .self-runs-load-more {
+    width: 100%;
+  }
+}

@@ -53,36 +53,56 @@ describe("repository data boundary", () => {
   });
 
   it("loads only the selected athlete's bounded detail", async () => {
-    const rpc = vi.fn().mockResolvedValueOnce({
-      data: {
-        athlete: {
-          id: "athlete-1",
-          relationshipId: "relationship-1",
-          displayName: "Athlete One",
-        },
-        assignedProgramCount: 1,
-        programs: [
-          {
-            kind: "assignment",
-            id: "assignment-1",
-            assignmentId: "assignment-1",
-            programId: "program-1",
-            versionId: "version-1",
-            title: "Snapshot title",
-            assignedAt: "2026-08-20",
-            totalWorkouts: 4,
-            scheduledWorkouts: 3,
-            completedWorkouts: 2,
-            nextWorkout: {
-              id: "schedule-1",
-              workoutTitle: "Workout one",
-              plannedDate: "2026-08-23",
-              status: "in_progress",
-            },
+    const rpc = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: {
+          athlete: {
+            id: "athlete-1",
+            relationshipId: "relationship-1",
+            displayName: "Athlete One",
           },
-        ],
-        upcoming: [],
-        completed: [
+          assignedProgramCount: 1,
+          programs: [
+            {
+              kind: "assignment",
+              id: "assignment-1",
+              assignmentId: "assignment-1",
+              programId: "program-1",
+              versionId: "version-1",
+              title: "Snapshot title",
+              assignedAt: "2026-08-20",
+              totalWorkouts: 4,
+              scheduledWorkouts: 3,
+              completedWorkouts: 2,
+              nextWorkout: {
+                id: "schedule-1",
+                workoutTitle: "Workout one",
+                plannedDate: "2026-08-23",
+                status: "in_progress",
+              },
+            },
+          ],
+          upcoming: [],
+          completed: [
+            {
+              id: "session-1",
+              programId: "program-1",
+              programVersionId: "version-1",
+              programTitle: "Snapshot title",
+              workoutId: "workout-1",
+              workoutTitle: "Workout one",
+              completedForDate: "2026-08-22",
+              sessionRpe: "8",
+              athleteNote: "must not enter the view model",
+            },
+          ],
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: [], error: null })
+      .mockResolvedValueOnce({
+        data: [
           {
             id: "session-1",
             programId: "program-1",
@@ -90,14 +110,14 @@ describe("repository data boundary", () => {
             programTitle: "Snapshot title",
             workoutId: "workout-1",
             workoutTitle: "Workout one",
+            startedAt: "2026-08-22T10:00:00.000Z",
+            completedAt: "2026-08-22T11:00:00.000Z",
             completedForDate: "2026-08-22",
             sessionRpe: "8",
-            athleteNote: "must not enter the view model",
           },
         ],
-      },
-      error: null,
-    });
+        error: null,
+      });
     const from = vi.fn(() => {
       throw new Error("selected coach detail must remain an RPC projection");
     });
@@ -109,13 +129,29 @@ describe("repository data boundary", () => {
 
     const detail = await repository.loadCoachedAthleteDetail("athlete-1");
 
-    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledTimes(3);
     expect(rpc).toHaveBeenCalledWith("get_coach_athlete_detail", {
       target_athlete_id: "athlete-1",
       program_limit: 25,
       upcoming_limit: 6,
       completed_limit: 6,
     });
+    expect(rpc).toHaveBeenCalledWith("list_program_run_summaries", {
+      target_athlete_id: "athlete-1",
+      page_limit: 26,
+      after_created_at: null,
+      after_id: null,
+      creator_scope: "all",
+    });
+    expect(rpc).toHaveBeenCalledWith(
+      "list_authored_coach_session_summaries",
+      {
+        target_athlete_id: "athlete-1",
+        target_limit: 26,
+        target_before_started_at: null,
+        target_before_id: null,
+      },
+    );
     expect(from).not.toHaveBeenCalled();
     expect(detail).toMatchObject({
       id: "athlete-1",
@@ -130,6 +166,7 @@ describe("repository data boundary", () => {
           completionPercent: 50,
         },
       ],
+      programRuns: [],
       agenda: [{ id: "session:session-1", rpe: 8 }],
     });
     expect(detail?.agenda[0]).not.toHaveProperty("athleteNote");

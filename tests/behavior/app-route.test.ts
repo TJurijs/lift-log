@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  appDetailDataFromHistory,
   appDetailFromHistory,
   appViewHash,
   leaveAppDetailHistory,
@@ -42,6 +43,137 @@ describe("app view routing", () => {
 
     expect(replace).toHaveBeenCalledTimes(1);
     expect(appDetailFromHistory()).toBe("workout-log");
+  });
+
+  it("can stack a completed result over its program detail for native back", () => {
+    window.history.replaceState({}, "", "/#/program");
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    pushAppDetailHistory("program", "program");
+    push.mockClear();
+
+    pushAppDetailHistory("workout-log", "today", {
+      stackOnDetail: true,
+      data: {
+        kind: "workout-log",
+        session: {
+          id: "session-1",
+          workoutTitle: "Snatch technique",
+          date: "2026-09-03",
+          durationMinutes: 55,
+          rpe: 8,
+        },
+        athleteId: "athlete-1",
+        returnView: "program",
+      },
+    });
+
+    expect(push).toHaveBeenCalledOnce();
+    expect(replace).not.toHaveBeenCalled();
+    expect(appDetailFromHistory()).toBe("workout-log");
+    expect(appDetailDataFromHistory()).toMatchObject({
+      kind: "workout-log",
+      athleteId: "athlete-1",
+      returnView: "program",
+      session: { id: "session-1" },
+    });
+    expect(window.location.hash).toBe(appViewHash("today"));
+  });
+
+  it("stores a mobile athlete drill-down in native history", () => {
+    window.history.replaceState({}, "", "/#/coaching");
+
+    pushAppDetailHistory("coach-athlete", "coaching", {
+      data: {
+        kind: "coach-athlete",
+        athleteId: "athlete-7",
+        tab: "history",
+      },
+    });
+
+    expect(appDetailFromHistory()).toBe("coach-athlete");
+    expect(appDetailDataFromHistory()).toEqual({
+      kind: "coach-athlete",
+      athleteId: "athlete-7",
+      tab: "history",
+    });
+  });
+
+  it("stacks a completed result over the exact coach History context", () => {
+    window.history.replaceState({}, "", "/#/coaching");
+    pushAppDetailHistory("coach-athlete", "coaching", {
+      data: {
+        kind: "coach-athlete",
+        athleteId: "athlete-7",
+        tab: "history",
+      },
+    });
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+
+    pushAppDetailHistory("workout-log", "today", {
+      stackOnDetail: true,
+      data: {
+        kind: "workout-log",
+        session: {
+          id: "session-coach-1",
+          workoutTitle: "Clean pulls",
+          date: "2026-09-03",
+          durationMinutes: 48,
+          rpe: 8,
+        },
+        athleteId: "athlete-7",
+        returnView: "coaching",
+      },
+    });
+
+    expect(push).toHaveBeenCalledOnce();
+    expect(replace).not.toHaveBeenCalled();
+    expect(appDetailDataFromHistory()).toMatchObject({
+      kind: "workout-log",
+      athleteId: "athlete-7",
+      returnView: "coaching",
+    });
+  });
+
+  it("stores enough identity to restore an exact program or run", () => {
+    window.history.replaceState({}, "", "/#/program");
+
+    pushAppDetailHistory("program", "program", {
+      data: {
+        kind: "program",
+        programId: "program-1",
+        programVersionId: "version-4",
+        athleteId: "athlete-7",
+        assignmentId: "assignment-2",
+        programRunId: "run-9",
+        workoutId: "workout-3",
+        returnView: "coaching",
+      },
+    });
+
+    expect(appDetailDataFromHistory()).toEqual({
+      kind: "program",
+      programId: "program-1",
+      programVersionId: "version-4",
+      athleteId: "athlete-7",
+      assignmentId: "assignment-2",
+      programRunId: "run-9",
+      workoutId: "workout-3",
+      returnView: "coaching",
+    });
+  });
+
+  it("does not leak one detail payload into the next history entry", () => {
+    window.history.replaceState({}, "", "/#/coaching");
+    pushAppDetailHistory("coach-athlete", "coaching", {
+      data: { kind: "coach-athlete", athleteId: "athlete-7", tab: "plan" },
+    });
+
+    pushAppDetailHistory("program", "program");
+
+    expect(appDetailFromHistory()).toBe("program");
+    expect(appDetailDataFromHistory()).toBeNull();
   });
 
   it("uses browser back only when the current entry is an app detail", () => {

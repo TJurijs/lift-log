@@ -72,6 +72,7 @@ export default function CalendarView({
   onVisibleRangeChange,
 }: CalendarViewProps) {
   const [monthOffset, setMonthOffset] = useState(0);
+  const [showCompleted, setShowCompleted] = useState(false);
   const [draggingScheduleId, setDraggingScheduleId] = useState<string | null>(
     null,
   );
@@ -98,13 +99,14 @@ export default function CalendarView({
   }, [monthEnd, monthStart, onVisibleRangeChange]);
   const sessionsByDate = useMemo(() => {
     const result = new Map<string, CompletedSession[]>();
+    if (!showCompleted) return result;
     for (const session of sessions) {
       const group = result.get(session.date) ?? [];
       group.push(session);
       result.set(session.date, group);
     }
     return result;
-  }, [sessions]);
+  }, [sessions, showCompleted]);
   const schedulesByDate = useMemo(() => {
     const result = new Map<string, ScheduledWorkout[]>();
     for (const schedule of schedules) {
@@ -158,6 +160,15 @@ export default function CalendarView({
   return (
     <>
       <PageHeader>
+        <button
+          type="button"
+          className="button secondary"
+          aria-pressed={showCompleted}
+          onClick={() => setShowCompleted((visible) => !visible)}
+        >
+          <Check size={15} />
+          {showCompleted ? "Hide completed" : "Show completed"}
+        </button>
         {canSchedule ? (
           <button className="button primary" onClick={onSchedule}>
             <CalendarPlus size={15} />
@@ -323,7 +334,7 @@ export default function CalendarView({
           </section>
           <div className="calendar-legend">
             <span><i className="planned-dot" />Scheduled by you</span>
-            <span><i className="completed-dot" />Completed</span>
+            {showCompleted && <span><i className="completed-dot" />Completed</span>}
             <span><i className="today-dot" />Today</span>
           </div>
         </section>

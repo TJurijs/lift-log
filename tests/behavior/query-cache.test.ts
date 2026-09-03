@@ -20,6 +20,63 @@ describe("BoundedQueryCache", () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
+  it("invalidates an in-flight read without letting its stale result replace a refresh", async () => {
+    const cache = new BoundedQueryCache();
+    let resolveStale!: (value: string) => void;
+    let resolveFresh!: (value: string) => void;
+    const stale = cache.getOrLoad(
+      "program-runs:self",
+      () => new Promise<string>((resolve) => { resolveStale = resolve; }),
+    );
+
+    cache.invalidate("program-runs:");
+    const fresh = cache.getOrLoad(
+      "program-runs:self",
+      () => new Promise<string>((resolve) => { resolveFresh = resolve; }),
+    );
+
+    resolveFresh("fresh");
+    await expect(fresh).resolves.toBe("fresh");
+    resolveStale("stale");
+    await expect(stale).resolves.toBe("fresh");
+    expect(cache.peek("program-runs:self")).toBe("fresh");
+  });
+
+  it("retries an invalidated in-flight read when no refresh has started yet", async () => {
+    const cache = new BoundedQueryCache();
+    let resolveStale!: (value: string) => void;
+    const loader = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(
+        () => new Promise<string>((resolve) => { resolveStale = resolve; }),
+      )
+      .mockResolvedValueOnce("fresh");
+
+    const result = cache.getOrLoad("coach-summary:athlete", loader);
+    cache.invalidate("coach-summary:");
+    resolveStale("stale");
+
+    await expect(result).resolves.toBe("fresh");
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(cache.peek("coach-summary:athlete")).toBe("fresh");
+  });
+
+  it("does not surface an invalidated in-flight failure over a fresh result", async () => {
+    const cache = new BoundedQueryCache();
+    let rejectStale!: (reason: Error) => void;
+    const stale = cache.getOrLoad(
+      "program-runs:self",
+      () => new Promise<string>((_resolve, reject) => { rejectStale = reject; }),
+    );
+
+    cache.invalidate("program-runs:");
+    const fresh = cache.getOrLoad("program-runs:self", async () => "fresh");
+    await expect(fresh).resolves.toBe("fresh");
+    rejectStale(new Error("stale failure"));
+
+    await expect(stale).resolves.toBe("fresh");
+  });
+
   it("does not retain rejected or explicitly non-cacheable values", async () => {
     const cache = new BoundedQueryCache();
     const failure = vi.fn().mockRejectedValueOnce(new Error("offline"));
