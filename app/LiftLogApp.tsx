@@ -14,7 +14,6 @@ import {
   Clock3,
   Copy,
   Dumbbell,
-  FlaskConical,
   Gauge,
   Info,
   LayoutDashboard,
@@ -438,13 +437,11 @@ export function scrollToAppTop() {
 export default function LiftLogApp({
   viewer,
   onSignOut,
-  onOpenTestPersonas,
   initialWorkspace,
   repository,
 }: {
   viewer: AppViewer;
   onSignOut: () => void;
-  onOpenTestPersonas?: () => void;
   initialWorkspace: WorkspaceData;
   repository: LiftLogRepository | null;
 }) {
@@ -4305,7 +4302,6 @@ export default function LiftLogApp({
         profile={workspace.profile}
         onAccount={() => setModal("account")}
         onSignOut={onSignOut}
-        onOpenTestPersonas={onOpenTestPersonas}
         coachingRequestCount={workspace.pendingCoachInvites.length}
       />
 
@@ -4319,18 +4315,6 @@ export default function LiftLogApp({
             "has-detail-navigation",
         )}
       >
-        {viewer.isTest && (
-          <div className="test-data-banner">
-            <FlaskConical size={15} />
-            <span>
-              <strong>Test account</strong> Fictional development data can be
-              reset at any time.
-            </span>
-            {onOpenTestPersonas && (
-              <button onClick={onOpenTestPersonas}>Switch persona</button>
-            )}
-          </div>
-        )}
         <div className="mobile-topbar">
           <button className="brand-mark" onClick={() => navigate("today")}>
             LL
@@ -5320,7 +5304,6 @@ function Sidebar({
   profile,
   onAccount,
   onSignOut,
-  onOpenTestPersonas,
   coachingRequestCount,
 }: {
   activeView: ViewName;
@@ -5329,7 +5312,6 @@ function Sidebar({
   profile: WorkspaceData["profile"];
   onAccount: () => void;
   onSignOut: () => void;
-  onOpenTestPersonas?: () => void;
   coachingRequestCount: number;
 }) {
   const profileInitials = getInitials(profile.displayName);
@@ -5368,12 +5350,6 @@ function Sidebar({
           })}
       </nav>
       <div className="sidebar-footer">
-        {onOpenTestPersonas && (
-          <button className="test-persona-open" onClick={onOpenTestPersonas}>
-            <FlaskConical size={15} />
-            Test accounts
-          </button>
-        )}
         <div className="profile-menu">
           <button
             className="profile-identity"
@@ -5384,11 +5360,7 @@ function Sidebar({
             <span>
               <strong>{profile.displayName}</strong>
               <small>
-                {viewer.isDemo
-                  ? "Local demo workspace"
-                  : viewer.isTest
-                    ? "Test population"
-                    : viewer.email}
+                {viewer.isDemo ? "Local demo workspace" : viewer.email}
               </small>
             </span>
           </button>

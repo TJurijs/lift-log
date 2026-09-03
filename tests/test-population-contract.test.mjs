@@ -22,11 +22,6 @@ const extensibilityMigrationUrl = new URL(
   import.meta.url,
 );
 const appEntryUrl = new URL("../app/AppEntry.tsx", import.meta.url);
-const stylesUrl = new URL("../app/globals.css", import.meta.url);
-const testPersonaStylesUrl = new URL(
-  "../app/test-persona-switcher.css",
-  import.meta.url,
-);
 const environmentValidatorUrl = new URL(
   "../scripts/validate-build-env.mjs",
   import.meta.url,
@@ -379,21 +374,16 @@ test("test-population has an explicit loopback-only local runner", async () => {
   );
 });
 
-test("test-persona UI is strictly gated in hosted and loopback modes and remains usable on mobile", async () => {
-  const [entry, styles, testPersonaStyles, validator, viteConfig] =
+test("test-population tooling remains guarded while its user-facing UI stays disabled", async () => {
+  const [entry, validator, viteConfig] =
     await Promise.all([
       readFile(appEntryUrl, "utf8"),
-      readFile(stylesUrl, "utf8"),
-      readFile(testPersonaStylesUrl, "utf8"),
       readFile(environmentValidatorUrl, "utf8"),
       readFile(viteConfigUrl, "utf8"),
     ]);
 
-  assert.match(entry, /mode === "nonprod"/);
-  assert.match(entry, /mode === "localdev"/);
-  assert.match(entry, /VITE_ENABLE_TEST_PERSONAS === "true"/);
-  assert.match(entry, /ofyeejyfroblunbspgve\.supabase\.co/);
-  assert.match(entry, /\["localhost", "127\.0\.0\.1", "dev\.liftlog\.cc"\]/);
+  assert.doesNotMatch(entry, /TestPersonaSwitcher/);
+  assert.doesNotMatch(entry, /Test population|Test accounts|Switch test account/);
   assert.match(
     validator,
     /mode === "production" && environment\.VITE_ENABLE_TEST_PERSONAS === "true"/,
@@ -406,16 +396,4 @@ test("test-persona UI is strictly gated in hosted and loopback modes and remains
   assert.match(validator, /hostedDevelopment = mode === "nonprod"/);
   assert.match(validator, /isolatedLocal = mode === "localdev"/);
   assert.match(viteConfig, /mode === "nonprod" \|\| mode === "localdev"/);
-  assert.match(
-    styles,
-    /@media \(max-width: 900px\)[\s\S]*\.brand,[\s\S]*\.profile-menu\s*\{\s*display:\s*none;\s*\}/,
-  );
-  assert.match(
-    testPersonaStyles,
-    /@media \(max-width: 700px\)[\s\S]*\.test-switcher-dialog \.test-persona-grid\s*\{\s*grid-template-columns:\s*1fr;\s*\}/,
-  );
-  assert.match(
-    testPersonaStyles,
-    /\.test-switcher-dialog \{[^}]*max-height: calc\(100dvh - 44px\)/,
-  );
 });
