@@ -53,13 +53,12 @@ describe("SelfProgramRuns", () => {
     const user = userEvent.setup();
     const { callbacks } = renderRuns([activeRun]);
 
-    expect(screen.getByText("11 of 40 workouts completed")).toBeVisible();
-    expect(screen.getByLabelText("28% complete")).toBeVisible();
-    expect(screen.getByText(/Workout 12/)).toHaveTextContent("no date");
+    expect(screen.getByText("In use · 11/40 completed")).toBeVisible();
+    expect(screen.getByText("40 workouts")).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "View plan" }));
-    await user.click(screen.getByRole("button", { name: "Schedule remaining" }));
-    await user.click(screen.getByRole("button", { name: "End program" }));
+    await user.click(screen.getByRole("button", { name: "Open active Ten-week plan training" }));
+    await user.click(screen.getByRole("button", { name: "Schedule Ten-week plan" }));
+    await user.click(screen.getByRole("button", { name: "End Ten-week plan" }));
 
     expect(callbacks.onOpen).toHaveBeenCalledWith(activeRun);
     expect(callbacks.onSchedule).toHaveBeenCalledWith(activeRun);
@@ -85,18 +84,19 @@ describe("CoachProgramRuns", () => {
     render(
       <CoachProgramRuns
         viewerId="viewer-1"
-        runs={[activeRun, coachRun]}
+        runs={[activeRun, coachRun, coachRun]}
         {...callbacks}
       />,
     );
 
     expect(screen.getByText("Coach-assigned strength")).toBeVisible();
+    expect(screen.getAllByText("Coach-assigned strength")).toHaveLength(1);
     expect(screen.queryByText("Ten-week plan")).not.toBeInTheDocument();
     expect(screen.getByText(/Coach assigned/)).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "View plan" }));
-    await user.click(screen.getByRole("button", { name: "Schedule remaining" }));
-    await user.click(screen.getByRole("button", { name: "End program" }));
+    await user.click(screen.getByRole("button", { name: "Open active Coach-assigned strength training" }));
+    await user.click(screen.getByRole("button", { name: "Schedule Coach-assigned strength" }));
+    await user.click(screen.getByRole("button", { name: "End Coach-assigned strength" }));
 
 
     expect(callbacks.onOpen).toHaveBeenCalledWith(coachRun);

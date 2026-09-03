@@ -68,5 +68,5 @@ test("coach assignment status requires a real upcoming dated occurrence", async 
     /nextStatus === "planned"[\s\S]*?\? "scheduled"[\s\S]*?: "awaiting_schedule"/,
   );
   assert.doesNotMatch(repository, /scheduledWorkouts > 0[\s\S]*?\? "scheduled"/);
-  assert.match(coachWorkspace, /unscheduledCount[\s\S]*unscheduled/);
+  assert.match(coachWorkspace, /ProgramRunCompactCard/);
 });

@@ -10,12 +10,17 @@ const coachWorkspaceUrl = new URL(
   "../app/features/coaching/CoachWorkspace.tsx",
   import.meta.url,
 );
+const compactRunCardUrl = new URL(
+  "../app/features/program-runs/ProgramRunCompactCard.tsx",
+  import.meta.url,
+);
 
 test("coach detail combines bounded activity with complete run aggregates", async () => {
-  const [domain, repository, coachWorkspace] = await Promise.all([
+  const [domain, repository, coachWorkspace, compactRunCard] = await Promise.all([
     readFile(domainUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
     readFile(coachWorkspaceUrl, "utf8"),
+    readFile(compactRunCardUrl, "utf8"),
   ]);
 
   assert.match(
@@ -33,10 +38,10 @@ test("coach detail combines bounded activity with complete run aggregates", asyn
   );
   assert.match(domain, /export interface AthleteSummary[\s\S]*programRuns\?: ProgramRunSummary\[]/);
   assert.match(coachWorkspace, /function runsForAthlete[\s\S]*athlete\.programRuns\?\.length/);
-  assert.match(coachWorkspace, /className="coach-run-card"/);
+  assert.match(coachWorkspace, /ProgramRunCompactCard/);
   assert.match(
-    coachWorkspace,
-    /program\.completedWorkouts[\s\S]*program\.totalWorkouts[\s\S]*program\.completionPercent/,
+    compactRunCard,
+    /run\.completedWorkouts[\s\S]*run\.totalWorkouts/,
     "coach progress must use aggregate run counters rather than the bounded agenda rows",
   );
   assert.doesNotMatch(coachWorkspace, /completedHistory\(athlete\)\.length\s*\/\s*program\.totalWorkouts/);
@@ -71,7 +76,8 @@ test("athlete planning and history are separate drill-in tabs, not a second cale
 
   assert.match(coachWorkspace, /value: "plan"[\s\S]*label: "Plan"/);
   assert.match(coachWorkspace, /value: "history"[\s\S]*label: "History"/);
-  assert.match(coachWorkspace, /className="coach-run-timeline"/);
+  assert.doesNotMatch(coachWorkspace, /className="coach-run-timeline"/);
+  assert.match(coachWorkspace, /ProgramRunCompactCard/);
   assert.match(coachWorkspace, /className="coach-history-list"/);
   assert.doesNotMatch(
     coachWorkspace,

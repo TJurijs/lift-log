@@ -1,16 +1,13 @@
 import {
-  BookOpen,
-  CalendarPlus,
   Check,
   Dumbbell,
   LoaderCircle,
   RefreshCw,
-  Square,
   Users,
 } from "lucide-react";
 import type { ProgramRunSummary } from "../../../lib/domain";
 import { programRunLifecycleLabel } from "../../../lib/program-progress";
-import { StatusBadge } from "../../ui-primitives";
+import { ProgramRunCompactCard } from "./ProgramRunCompactCard";
 
 export interface SelfProgramRunsProps {
   runs: ProgramRunSummary[];
@@ -36,14 +33,6 @@ function createdLabel(value: string) {
   }).format(new Date(value));
 }
 
-function plannedDateLabel(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(new Date(`${value}T12:00:00`));
-}
-
 function RunCard({
   run,
   sourceLabel,
@@ -57,53 +46,14 @@ function RunCard({
   onSchedule: () => void;
   onEnd: () => void;
 }) {
-  const unscheduled = Math.max(0, run.totalWorkouts - run.scheduledWorkouts);
-  const isQuickWorkout = run.contentType === "quick_workout";
   return (
-    <article className="self-run-card">
-      <div className="self-run-title">
-        <span><Dumbbell size={17} /></span>
-        <div>
-          <h3>{run.title}</h3>
-          <p>
-            {sourceLabel ? `${sourceLabel} · ` : ""}
-            {run.completedWorkouts} of {run.totalWorkouts} workouts completed
-          </p>
-        </div>
-        <StatusBadge
-          status={run.status === "in_progress" ? "in_progress" : "planned"}
-          label={programRunLifecycleLabel(run)}
-          compact
-        />
-      </div>
-      <div className="self-run-progress" aria-label={`${run.completionPercent}% complete`}>
-        <i style={{ width: `${Math.min(100, Math.max(0, run.completionPercent))}%` }} />
-      </div>
-      {run.nextWorkout && (
-        <p className="self-run-next">
-          <strong>Next:</strong> {run.nextWorkout.title}
-          {run.nextWorkout.plannedDate
-            ? ` · ${plannedDateLabel(run.nextWorkout.plannedDate)}`
-            : " · no date"}
-        </p>
-      )}
-      <div className="self-run-actions">
-        <button type="button" className="button secondary small" onClick={onOpen}>
-          <BookOpen size={14} />{isQuickWorkout ? "View workout" : "View plan"}
-        </button>
-        {unscheduled > 0 && (
-          <button type="button" className="button secondary small" onClick={onSchedule}>
-            <CalendarPlus size={14} />
-            {isQuickWorkout
-              ? "Schedule workout"
-              : `Schedule ${unscheduled === run.totalWorkouts ? "program" : "remaining"}`}
-          </button>
-        )}
-        <button type="button" className="button danger small" onClick={onEnd}>
-          <Square size={13} />End {isQuickWorkout ? "workout" : "program"}
-        </button>
-      </div>
-    </article>
+    <ProgramRunCompactCard
+      run={run}
+      sourceLabel={sourceLabel}
+      onOpen={onOpen}
+      onSchedule={onSchedule}
+      onEnd={onEnd}
+    />
   );
 }
 
@@ -260,9 +210,15 @@ export function CoachProgramRuns({
   loadError,
   onLoadMore,
 }: CoachProgramRunsProps) {
-  const coachRuns = runs.filter(
-    (run) => run.athleteId === viewerId && run.createdById !== viewerId,
-  );
+  const coachRuns = [
+    ...new Map(
+      runs
+        .filter(
+          (run) => run.athleteId === viewerId && run.createdById !== viewerId,
+        )
+        .map((run) => [run.id, run]),
+    ).values(),
+  ];
   return (
     <ProgramRunSections
       runs={coachRuns}

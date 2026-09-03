@@ -9,7 +9,6 @@ import {
   LoaderCircle,
   RefreshCw,
   Search,
-  Trash2,
   UserRound,
   Users,
 } from "lucide-react";
@@ -28,13 +27,12 @@ import {
   leaveAppDetailHistory,
   pushAppDetailHistory,
 } from "../../../lib/app-route";
-import { programRunLifecycleLabel } from "../../../lib/program-progress";
 import {
   InlineError,
   PersonAvatar,
   SegmentedTabs,
-  StatusBadge,
 } from "../../ui-primitives";
+import { ProgramRunCompactCard } from "../program-runs/ProgramRunCompactCard";
 
 export type CoachAthleteWorkspaceTab = "plan" | "history";
 
@@ -159,15 +157,6 @@ function dateLabel(value: string, includeYear = false) {
     month: "short",
     ...(includeYear ? { year: "numeric" } : {}),
   });
-}
-
-function agendaStatusLabel(entry: CoachAgendaEntry) {
-  if (entry.kind === "completed" || entry.status === "completed") {
-    return "Completed";
-  }
-  if (entry.status === "in_progress") return "In progress";
-  if (entry.status === "overdue") return "Overdue";
-  return "Scheduled";
 }
 
 function agendaForProgram(
@@ -677,10 +666,7 @@ function AthleteWorkspace({
             onAssign={onAssign}
             onSchedule={onSchedule}
             onUnassign={onUnassign}
-            onRepeat={onRepeat}
-            onViewHistory={() => onTab("history")}
             onOpenProgram={onOpenProgram}
-            onOpenAgendaEntry={onOpenAgendaEntry}
           />
         ) : (
           <AthleteHistory
@@ -719,23 +705,17 @@ function AthletePlan({
   onAssign,
   onSchedule,
   onUnassign,
-  onRepeat,
-  onViewHistory,
   onOpenProgram,
-  onOpenAgendaEntry,
 }: {
   athlete: AthleteSummary;
   openingProgramId: string | null;
   onAssign: () => void;
   onSchedule: (program?: CoachWorkspaceRun) => void;
   onUnassign: (program: CoachWorkspaceRun) => void;
-  onRepeat: (program: CoachWorkspaceRun) => void;
-  onViewHistory: () => void;
   onOpenProgram: (
     program: CoachWorkspaceRun,
     workoutId?: string,
   ) => void;
-  onOpenAgendaEntry?: (entry: CoachAgendaEntry) => void;
 }) {
   const runs = runsForAthlete(athlete).filter(
     (run) => run.status === "not_started" || run.status === "in_progress",
@@ -756,16 +736,12 @@ function AthletePlan({
           {runs.map((program) => (
             <ProgramRunCard
               key={program.id}
-              athlete={athlete}
               program={program}
               opening={openingProgramId === program.id}
               openingDisabled={Boolean(openingProgramId)}
               onSchedule={() => onSchedule(program)}
               onUnassign={() => onUnassign(program)}
-              onRepeat={() => onRepeat(program)}
-              onViewHistory={onViewHistory}
-              onOpen={(workoutId) => onOpenProgram(program, workoutId)}
-              onOpenEntry={onOpenAgendaEntry}
+              onOpen={() => onOpenProgram(program)}
             />
           ))}
         </div>
@@ -785,192 +761,30 @@ function AthletePlan({
 }
 
 function ProgramRunCard({
-  athlete,
   program,
   opening,
   openingDisabled,
   onSchedule,
   onUnassign,
-  onRepeat,
-  onViewHistory,
   onOpen,
-  onOpenEntry,
 }: {
-  athlete: AthleteSummary;
   program: CoachWorkspaceRun;
   opening: boolean;
   openingDisabled: boolean;
   onSchedule: () => void;
   onUnassign: () => void;
-  onRepeat: () => void;
-  onViewHistory: () => void;
-  onOpen: (workoutId?: string) => void;
-  onOpenEntry?: (entry: CoachAgendaEntry) => void;
-}) {
-  const presentation = programStatusPresentation[program.status];
-  const agenda = agendaForProgram(athlete, program).sort((first, second) =>
-    first.date.localeCompare(second.date),
-  );
-  const visibleCompleted = agenda.filter((entry) => entry.kind === "completed");
-  const visibleUpcoming = agenda.filter((entry) => entry.kind === "upcoming");
-  const upcomingPreview = visibleUpcoming.slice(0, 3);
-  const completedPreviewSlots = Math.max(0, 3 - upcomingPreview.length);
-  const completedPreview = completedPreviewSlots
-    ? visibleCompleted.slice(-completedPreviewSlots)
-    : [];
-  const activityPreview = [...completedPreview, ...upcomingPreview];
-  const previewIds = new Set(activityPreview.map((entry) => entry.id));
-  const hiddenActivity = agenda.filter((entry) => !previewIds.has(entry.id));
-  const unscheduledCount = Math.max(
-    0,
-    program.totalWorkouts - program.scheduledWorkouts,
-  );
-  const completePlanHasMore =
-    !program.legacy &&
-    agenda.length + unscheduledCount < program.totalWorkouts;
-  const shouldOpenCompletePlan =
-    completePlanHasMore ||
-    hiddenActivity.some((entry) => entry.kind === "upcoming");
-  const hasMoreCompletedActivity = hiddenActivity.some(
-    (entry) => entry.kind === "completed",
-  );
-  const isQuickWorkout = program.contentType === "quick_workout";
-
-  return (
-    <article className="coach-run-card">
-      <div className="coach-run-heading">
-        <span className="coach-run-icon"><Dumbbell size={18} /></span>
-        <div>
-          <h3>{program.title}</h3>
-          <p>Assigned {dateLabel(program.createdAt, true)}</p>
-        </div>
-        <StatusBadge
-          status={presentation.badge}
-          label={programRunLifecycleLabel(program)}
-          compact
-        />
-      </div>
-
-      <div className="coach-run-progress">
-        <span>
-          <strong>{program.completedWorkouts} of {program.totalWorkouts}</strong>
-          {" workouts completed"}
-        </span>
-        <span>{program.completionPercent}%</span>
-        <div aria-hidden="true">
-          <i style={{ width: `${Math.min(100, Math.max(0, program.completionPercent))}%` }} />
-        </div>
-      </div>
-
-      <div className="coach-run-timeline" aria-label={`${program.title} workout progress`}>
-        {activityPreview.map((entry) => (
-          <WorkoutTimelineRow
-            key={entry.id}
-            entry={entry}
-            onOpen={() =>
-              onOpenEntry ? onOpenEntry(entry) : onOpen(entry.workoutId)
-            }
-          />
-        ))}
-        {unscheduledCount > 0 && (
-          <div className="coach-timeline-row unscheduled">
-            <span className="coach-timeline-marker" aria-hidden="true" />
-            <div>
-              <strong>
-                {unscheduledCount} unscheduled {unscheduledCount === 1 ? "workout" : "workouts"}
-              </strong>
-              <small>Dates can be added when the athlete is ready</small>
-            </div>
-          </div>
-        )}
-        {!agenda.length && !unscheduledCount && (
-          <p className="coach-run-no-sessions">No workout activity yet.</p>
-        )}
-        {shouldOpenCompletePlan ? (
-          <button
-            type="button"
-            className="coach-run-history-link"
-            disabled={openingDisabled}
-            onClick={() => onOpen()}
-          >
-            Open complete {isQuickWorkout ? "workout" : "plan"}
-            <ChevronRight size={14} />
-          </button>
-        ) : hasMoreCompletedActivity ? (
-          <button
-            type="button"
-            className="coach-run-history-link"
-            onClick={onViewHistory}
-          >
-            View more results in History
-            <ChevronRight size={14} />
-          </button>
-        ) : null}
-      </div>
-
-      <div className="coach-run-actions">
-        <button
-          type="button"
-          className="button secondary small"
-          disabled={openingDisabled}
-          onClick={() => onOpen()}
-        >
-          {opening ? <LoaderCircle className="button-spinner" size={15} /> : <ChevronRight size={15} />}
-          {opening ? "Opening…" : isQuickWorkout ? "Open workout" : "Open full plan"}
-        </button>
-        {program.scheduledWorkouts < program.totalWorkouts && (
-          <button type="button" className="button secondary small" onClick={onSchedule}>
-            <CalendarPlus size={15} />
-            Schedule remaining
-          </button>
-        )}
-        <button
-          type="button"
-          className="button danger small coach-end-program"
-          onClick={onUnassign}
-        >
-          <Trash2 size={15} />
-          End {isQuickWorkout ? "workout" : "program"}
-        </button>
-        {!program.legacy && (program.status === "completed" || program.status === "ended") && (
-          <button type="button" className="button secondary small" onClick={onRepeat}>
-            <RefreshCw size={15} />
-            Repeat
-          </button>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function WorkoutTimelineRow({
-  entry,
-  onOpen,
-}: {
-  entry: CoachAgendaEntry;
   onOpen: () => void;
 }) {
-  const completed = entry.kind === "completed" || entry.status === "completed";
   return (
-    <button
-      type="button"
-      className={`coach-timeline-row ${completed ? "completed" : entry.status}`}
-      onClick={onOpen}
-      aria-label={`${entry.workoutTitle}, ${agendaStatusLabel(entry)} ${dateLabel(entry.date)}`}
-    >
-      <span className="coach-timeline-marker" aria-hidden="true">
-        {completed && <Check size={12} />}
-      </span>
-      <span>
-        <strong>{entry.workoutTitle}</strong>
-        <small>{entry.programTitle}</small>
-      </span>
-      <span className="coach-timeline-meta">
-        <strong>{agendaStatusLabel(entry)}</strong>
-        <small>{dateLabel(entry.date)}</small>
-      </span>
-      <ChevronRight size={16} />
-    </button>
+    <ProgramRunCompactCard
+      run={program}
+      sourceLabel="Assigned by you"
+      opening={opening}
+      openingDisabled={openingDisabled}
+      onOpen={onOpen}
+      onSchedule={onSchedule}
+      onEnd={onUnassign}
+    />
   );
 }
 

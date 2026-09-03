@@ -1,5 +1,5 @@
 import userEvent from "@testing-library/user-event";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { axe } from "vitest-axe";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -219,8 +219,8 @@ describe("CoachWorkspace", () => {
     const user = userEvent.setup();
     const { callbacks } = renderWorkspace();
 
-    expect(screen.getByText("1 of 3")).toBeVisible();
-    expect(screen.getByText("1 unscheduled workout")).toBeVisible();
+    expect(screen.getByText("In use · 1/3 completed")).toBeVisible();
+    expect(screen.getByText("3 workouts")).toBeVisible();
 
     await user.click(screen.getByRole("tab", { name: "History" }));
     expect(screen.getByRole("tabpanel", { name: "Workout history" })).toBeVisible();
@@ -238,7 +238,7 @@ describe("CoachWorkspace", () => {
     const user = userEvent.setup();
     const { callbacks } = renderWorkspace();
 
-    await user.click(screen.getByRole("button", { name: "End program" }));
+    await user.click(screen.getByRole("button", { name: "End Balanced strength" }));
     expect(callbacks.onUnassignAthlete).toHaveBeenCalledWith(athlete, program);
   });
 
@@ -341,7 +341,7 @@ describe("CoachWorkspace", () => {
     ).toEqual([completedEntry]);
   });
 
-  it("keeps the bounded activity preview honest and routes to the complete plan", async () => {
+  it("keeps the plan compact and opens the complete plan", async () => {
     const user = userEvent.setup();
     const extraAgenda: CoachAgendaEntry[] = Array.from(
       { length: 4 },
@@ -372,25 +372,10 @@ describe("CoachWorkspace", () => {
       selectedAthlete: athleteWithPreview,
     });
 
-    const timeline = screen.getByLabelText(
-      "Balanced strength workout progress",
-    );
-    expect(
-      within(timeline).getAllByRole("button").filter((button) =>
-        button.classList.contains("coach-timeline-row"),
-      ),
-    ).toHaveLength(3);
-    await user.click(
-      within(timeline).getByRole("button", {
-        name: "Open complete plan",
-      }),
-    );
-    expect(
-      within(timeline).getAllByRole("button").filter((button) =>
-        button.classList.contains("coach-timeline-row"),
-      ),
-    ).toHaveLength(3);
-    expect(screen.queryByText(/View all \d+ workouts/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Upcoming workout 1")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", {
+      name: "Open active Balanced strength training",
+    }));
     expect(callbacks.onOpenAssignedProgram).toHaveBeenCalledWith(
       athleteWithPreview,
       program,
@@ -398,7 +383,7 @@ describe("CoachWorkspace", () => {
     );
   });
 
-  it("routes older completed activity to the History tab", async () => {
+  it("keeps completed activity in the History tab", async () => {
     const user = userEvent.setup();
     const completedAgenda: CoachAgendaEntry[] = Array.from(
       { length: 5 },
@@ -421,14 +406,8 @@ describe("CoachWorkspace", () => {
       selectedAthlete: historyAthlete,
     });
 
-    const timeline = screen.getByLabelText(
-      "Balanced strength workout progress",
-    );
-    await user.click(
-      within(timeline).getByRole("button", {
-        name: "View more results in History",
-      }),
-    );
+    expect(screen.queryByText("Completed workout 1")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "History" }));
     expect(
       screen.getByRole("tabpanel", { name: "Workout history" }),
     ).toBeVisible();

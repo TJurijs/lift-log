@@ -10,6 +10,10 @@ const coachWorkspaceUrl = new URL(
   "../app/features/coaching/CoachWorkspace.tsx",
   import.meta.url,
 );
+const compactRunCardUrl = new URL(
+  "../app/features/program-runs/ProgramRunCompactCard.tsx",
+  import.meta.url,
+);
 const wizardUrl = new URL(
   "../app/features/program-runs/ProgramRunWizard.tsx",
   import.meta.url,
@@ -156,9 +160,10 @@ test("coach master/detail navigation does not stack on mobile", async () => {
 });
 
 test("ending a run preserves history and both participant roles can do it", async () => {
-  const [app, coachWorkspace, repository, migration] = await Promise.all([
+  const [app, coachWorkspace, compactRunCard, repository, migration] = await Promise.all([
     readFile(appUrl, "utf8"),
     readFile(coachWorkspaceUrl, "utf8"),
+    readFile(compactRunCardUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
     readFile(runMigrationUrl, "utf8"),
   ]);
@@ -166,7 +171,8 @@ test("ending a run preserves history and both participant roles can do it", asyn
     /create or replace function public\.end_program_run[\s\S]*?\n\$\$;/i,
   )?.[0] ?? "";
 
-  assert.match(coachWorkspace, /End \{isQuickWorkout \? "workout" : "program"\}/);
+  assert.match(coachWorkspace, /ProgramRunCompactCard/);
+  assert.match(compactRunCard, /title=\{quickWorkout \? "End workout" : "End program"\}/);
   assert.match(coachWorkspace, /if \(onOpenAgendaEntry\) onOpenAgendaEntry\(entry\)/);
   assert.doesNotMatch(coachWorkspace, /disabled=\{!program/);
   assert.match(app, /repository\.endProgramRun\(/);

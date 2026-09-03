@@ -4751,7 +4751,11 @@ export default function LiftLogApp({
           ) : (
             <ProgramsHome
               programs={programCatalog}
-              programRuns={[...(workspace.programRuns ?? []), ...coachProgramRuns]}
+              programRuns={[
+                ...new Map(
+                  [...(workspace.programRuns ?? []), ...coachProgramRuns].map((run) => [run.id, run]),
+                ).values(),
+              ]}
               hasMoreProgramRuns={Boolean(workspace.hasMoreCoachProgramRuns)}
               programRunsLoadingMore={coachProgramRunsLoadingMore}
               programRunsLoadError={coachProgramRunsLoadError}
