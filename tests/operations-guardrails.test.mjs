@@ -112,7 +112,7 @@ test("CI gates static quality and isolated local database/runtime performance", 
   assert.match(source, /npm run perf:runtime:check/u);
   assert.match(
     packageSource,
-    /"ci:local-supabase": "npm run db:reset && npm run db:lint && npm run test:integration && npm run test:v1:database-smoke && npm run perf:database:local:report"/u,
+    /"ci:local-supabase": "npm run db:reset && npm run db:lint && npm run test:integration && npm run test:v1:database-smoke && npm run test:authoring:database-smoke && npm run perf:database:local:report"/u,
   );
   assert.match(
     packageSource,

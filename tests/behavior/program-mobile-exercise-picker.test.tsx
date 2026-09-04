@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import ProgramView from "../../app/features/programs/ProgramView";
@@ -85,6 +85,7 @@ describe("mobile program exercise picker", () => {
   it("opens one workout-wide picker and adds the selected exercise", async () => {
     const user = userEvent.setup();
     const onAddExercise = vi.fn();
+    const onSearchExercises = vi.fn().mockResolvedValue([exercise]);
 
     render(
       <ProgramView
@@ -95,7 +96,7 @@ describe("mobile program exercise picker", () => {
         capabilities={capabilities}
         workouts={[workout]}
         selectedWorkout={workout}
-        onSearchExercises={vi.fn().mockResolvedValue([exercise])}
+        onSearchExercises={onSearchExercises}
         onSelectWorkout={vi.fn()}
         onAddWorkout={vi.fn()}
         onDeleteWorkout={vi.fn()}
@@ -113,6 +114,10 @@ describe("mobile program exercise picker", () => {
 
     expect(screen.getAllByRole("button", { name: "Add exercise" })).toHaveLength(1);
     expect(screen.queryByText("Week 1")).not.toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+    expect(onSearchExercises).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Add exercise" }));
 

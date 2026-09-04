@@ -10,7 +10,7 @@ import type {
   ProgramRunSummary,
   ProgramRunWorkoutDate,
 } from "../../../lib/domain";
-import { addCalendarDays, localDateOnly } from "../../../lib/date-only";
+import { addCalendarDays, formatDateOnly, localDateOnly } from "../../../lib/date-only";
 import {
   generateProgramRunDates,
   programRunDateOrderError,
@@ -37,11 +37,11 @@ const weekDays = [
 ];
 
 function readableDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
+  return formatDateOnly(value, {
     weekday: "short",
     month: "short",
     day: "numeric",
-  }).format(new Date(`${value}T12:00:00`));
+  });
 }
 
 export default function ProgramRunScheduleWizard({

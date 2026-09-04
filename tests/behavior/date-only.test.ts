@@ -4,6 +4,7 @@ import {
   activeWeekForDate,
   addCalendarDays,
   differenceInCalendarDays,
+  formatDateOnly,
   localDateOnly,
 } from "../../lib/date-only";
 
@@ -50,6 +51,12 @@ describe("localDateOnly", () => {
 });
 
 describe("date-only calendar arithmetic", () => {
+  it("formats date-only values without moving them across local midnight", () => {
+    expect(formatDateOnly("2026-03-08", { year: "numeric", month: "long", day: "numeric" }, "en-US"))
+      .toBe("March 8, 2026");
+    expect(() => formatDateOnly("2026-02-30", { day: "numeric" }, "en-US"))
+      .toThrow("Invalid date-only value");
+  });
   it.each([
     ["2026-03-07", 1, "2026-03-08"],
     ["2026-03-08", 1, "2026-03-09"],

@@ -47,7 +47,7 @@ test("workspace startup stays bounded and does not hydrate the program catalog",
     "startup must not include an unbounded program tree or catalog",
   );
   assert.doesNotMatch(repository, /loadWorkspace(?:Data)?\s*\(/);
-  assert.doesNotMatch(repository, /collectAll(?:Pages|Batches)/);
+  assert.doesNotMatch(bootstrap, /collectAll(?:Pages|Batches)|collectCursorPages/);
 });
 
 test("program summaries use one keyset-bounded RPC page", async () => {

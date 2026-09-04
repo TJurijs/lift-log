@@ -278,7 +278,7 @@ test("run progress comes from the complete materialized run, never the bounded N
 
 test("self run progress is attached to its template while Next stays schedule-focused", async () => {
   const app = await readFile(appUrl, "utf8");
-  const nextWorkouts = sourceBetween(app, "function NextWorkoutsView", "function TodayView");
+  const nextWorkouts = await readFile(new URL("../app/features/next-workouts/NextWorkoutsView.tsx", import.meta.url), "utf8");
   const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
 
   assert.doesNotMatch(nextWorkouts, /SelfProgramRuns|Active training|Your training plans/);

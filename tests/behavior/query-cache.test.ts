@@ -61,6 +61,46 @@ describe("BoundedQueryCache", () => {
     expect(cache.peek("coach-summary:athlete")).toBe("fresh");
   });
 
+  it.each(["resolve", "reject"])(
+    "refreshes every coalesced caller when the invalidated loader later %ss",
+    async (settlement) => {
+      const cache = new BoundedQueryCache();
+      let resolveStale!: (value: string) => void;
+      let rejectStale!: (reason: Error) => void;
+      const loader = vi.fn(() => new Promise<string>((resolve, reject) => {
+        resolveStale = resolve;
+        rejectStale = reject;
+      }));
+      const first = cache.getOrLoad("program:1", loader);
+      const follower = cache.getOrLoad("program:1", loader);
+      const allCallers = Promise.all([first, follower]);
+
+      cache.invalidate("program:");
+      await cache.getOrLoad("program:1", async () => "fresh");
+      if (settlement === "resolve") resolveStale("stale");
+      else rejectStale(new Error("stale failure"));
+
+      await expect(allCallers).resolves.toEqual(["fresh", "fresh"]);
+      expect(loader).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("shares one retry among coalesced callers after invalidation", async () => {
+    const cache = new BoundedQueryCache();
+    let resolveStale!: (value: string) => void;
+    const loader = vi.fn<() => Promise<string>>()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveStale = resolve; }))
+      .mockResolvedValueOnce("fresh");
+    const first = cache.getOrLoad("program:1", loader);
+    const follower = cache.getOrLoad("program:1", loader);
+
+    cache.delete("program:1");
+    resolveStale("stale");
+
+    await expect(Promise.all([first, follower])).resolves.toEqual(["fresh", "fresh"]);
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
   it("does not surface an invalidated in-flight failure over a fresh result", async () => {
     const cache = new BoundedQueryCache();
     let rejectStale!: (reason: Error) => void;

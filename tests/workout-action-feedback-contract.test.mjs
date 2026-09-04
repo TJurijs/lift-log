@@ -6,9 +6,10 @@ const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const primitivesPath = new URL("../app/ui-primitives.tsx", import.meta.url);
 
 test("start and finish actions give immediate feedback and reject repeat clicks", async () => {
-  const [app, primitives] = await Promise.all([
+  const [app, primitives, nextView] = await Promise.all([
     readFile(appPath, "utf8"),
     readFile(primitivesPath, "utf8"),
+    readFile(new URL("../app/features/next-workouts/NextWorkoutsView.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(
@@ -27,10 +28,8 @@ test("start and finish actions give immediate feedback and reject repeat clicks"
     app,
     /loading=\{workoutAction === "starting"\}[\s\S]*Starting workout…/,
   );
-  assert.match(
-    app,
-    /startingScheduleId=\{startingScheduleId\}[\s\S]*loading=\{startingScheduleId === schedule\.id\}[\s\S]*Starting workout…/,
-  );
+  assert.match(app, /startingScheduleId=\{startingScheduleId\}/);
+  assert.match(nextView, /loading=\{startingScheduleId === schedule\.id\}/);
   assert.match(
     app,
     /loading=\{workoutAction === "finishing"\}[\s\S]*Finishing session…/,

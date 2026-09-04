@@ -79,8 +79,10 @@ jobs:
       - name: Build the isolated local app
         run: npm run build:local
       - name: Install runtime browser
-        run: npx playwright install --with-deps chromium
-      - name: Measure and gate navigation and detail performance
+        run: npx playwright install --with-deps chromium webkit
+      - name: Verify local desktop and mobile user journeys
+        run: npx playwright test --project=desktop-chromium --project=mobile-webkit
+      - name: Verify offline reload and gate navigation and detail performance
         shell: bash
         run: |
           npm run preview:ci > artifacts/performance/runtime-server.log 2>&1 &
@@ -96,13 +98,17 @@ jobs:
             fi
             sleep 1
           done
+          PLAYWRIGHT_BUILT_UI=1 npx playwright test tests/e2e/local-offline-shell.spec.ts --project=desktop-chromium --project=mobile-webkit --output=artifacts/performance/offline-browser-results
           npm run perf:measure:local
           npm run perf:runtime:check
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: local-supabase-performance-${{ github.run_id }}
-          path: artifacts/performance
+          path: |
+            artifacts/performance
+            test-results
+            playwright-report
           if-no-files-found: error
       - name: Stop isolated local Supabase
         if: always()

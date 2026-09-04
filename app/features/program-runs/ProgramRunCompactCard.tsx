@@ -7,6 +7,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { ProgramRunSummary } from "../../../lib/domain";
+import { formatDateOnly } from "../../../lib/date-only";
 
 function assignmentDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
@@ -17,10 +18,10 @@ function assignmentDate(value: string) {
 }
 
 function shortDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
+  return formatDateOnly(value, {
     month: "short",
     day: "numeric",
-  }).format(new Date(`${value}T12:00:00`));
+  });
 }
 
 export function ProgramRunCompactCard({
@@ -66,7 +67,7 @@ export function ProgramRunCompactCard({
           </span>
           <span>
             <strong>{run.title}</strong>
-            <small>{sourceLabel ? `${sourceLabel} · ` : ""}Assigned {assignmentDate(run.createdAt)}</small>
+            <small>{sourceLabel ? `${sourceLabel} · ` : ""}{run.createdById === run.athleteId ? "Started" : "Assigned"} {assignmentDate(run.createdAt)}</small>
           </span>
           {opening && (
             <span className="program-card-loading" aria-label="Opening training">

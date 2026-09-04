@@ -1,7 +1,7 @@
 import { Activity, ArrowRight, Check, LockKeyhole } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
-import { InlineError } from "./ui-primitives";
+import { InlineError, Toast } from "./ui-primitives";
 import { demoWorkspace } from "../lib/demo-data";
 import {
   demoViewer,
@@ -100,6 +100,7 @@ export default function AppEntry() {
     useState<WorkspaceSource | null>(null);
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceRetryKey, setWorkspaceRetryKey] = useState(0);
+  const [repositoryRetryKey, setRepositoryRetryKey] = useState(0);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [repositoryState, setRepositoryState] = useState<{
     userId: string;
@@ -107,6 +108,8 @@ export default function AppEntry() {
   } | null>(null);
   const processedInvite = useRef(false);
   const activeUserId = useRef<string | null | undefined>(undefined);
+  const authGeneration = useRef(0);
+  const signingOut = useRef(false);
   const repository =
     session && repositoryState?.userId === session.user.id
       ? repositoryState.value
@@ -145,13 +148,14 @@ export default function AppEntry() {
       .catch((loadError: unknown) => {
         if (!active) return;
         console.warn("[LiftLog] Data layer failed to load", loadError);
+        setWorkspaceLoading(false);
         setWorkspaceError("Your training workspace could not be opened. Please try again.");
       });
     return () => {
       active = false;
       nextRepository?.dispose();
     };
-  }, [session]);
+  }, [session, repositoryRetryKey]);
 
   useEffect(() => {
     const client = getSupabaseBrowserClient();
@@ -162,8 +166,11 @@ export default function AppEntry() {
     function applySession(nextSession: Session | null) {
       const nextUserId = nextSession?.user.id ?? null;
       if (activeUserId.current !== nextUserId) {
+        authGeneration.current += 1;
         if (typeof activeUserId.current === "string") {
-          void clearActiveWorkoutPersistenceForUser(activeUserId.current);
+          void clearActiveWorkoutPersistenceForUser(activeUserId.current).catch(
+            () => undefined,
+          );
         }
         activeUserId.current = nextUserId;
         processedInvite.current = false;
@@ -171,13 +178,15 @@ export default function AppEntry() {
         setWorkspace(null);
         setWorkspaceSource(null);
         setWorkspaceError("");
+        setError("");
       }
       setSession(nextSession);
       setStatus(nextSession ? "authenticated" : "anonymous");
     }
 
-    client.auth.getSession().then(({ data }) => {
+    void client.auth.getSession().then(({ data, error: sessionError }) => {
       if (!mounted || authEventObserved) return;
+      if (sessionError) throw sessionError;
       if (
         shouldApplyAuthSession(
           "INITIAL_SESSION",
@@ -187,6 +196,10 @@ export default function AppEntry() {
       ) {
         applySession(data.session);
       }
+    }).catch(() => {
+      if (!mounted || authEventObserved) return;
+      applySession(null);
+      setError("Your sign-in session could not be restored. Please sign in again.");
     });
 
     const { data } = client.auth.onAuthStateChange((event, nextSession) => {
@@ -220,11 +233,12 @@ export default function AppEntry() {
         processedInvite.current = true;
         try {
           await activeRepository.acceptCoachInvite(invitationToken);
+          if (!active) return null;
           const cleanUrl = new URL(window.location.href);
           cleanUrl.searchParams.delete("coach_invite");
           window.history.replaceState({}, "", cleanUrl);
         } catch (inviteError) {
-          processedInvite.current = false;
+          if (active) processedInvite.current = false;
           throw inviteError;
         }
       }
@@ -247,6 +261,7 @@ export default function AppEntry() {
         } catch {
           // A damaged cache must never block the authoritative workspace load.
         }
+        if (!active) return;
         let nextWorkspace: WorkspaceData | null = null;
         let lastError: unknown;
         let jwtRetry = 0;
@@ -254,6 +269,7 @@ export default function AppEntry() {
         while (!nextWorkspace) {
           try {
             nextWorkspace = await loadWorkspaceAttempt();
+            if (!active) return;
           } catch (loadError) {
             lastError = loadError;
             const retryDelay = isFutureJwtError(loadError)
@@ -319,7 +335,8 @@ export default function AppEntry() {
   function retryWorkspace() {
     setWorkspaceError("");
     setWorkspaceLoading(true);
-    setWorkspaceRetryKey((current) => current + 1);
+    if (repository) setWorkspaceRetryKey((current) => current + 1);
+    else setRepositoryRetryKey((current) => current + 1);
   }
 
   async function signInWithGoogle() {
@@ -327,11 +344,16 @@ export default function AppEntry() {
     if (!client) return;
     setConnecting(true);
     setError("");
-    const { error: signInError } = await client.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    });
-    if (signInError) {
+    try {
+      const redirectTo = new URL(window.location.origin);
+      const invitationToken = new URLSearchParams(window.location.search).get("coach_invite");
+      if (invitationToken) redirectTo.searchParams.set("coach_invite", invitationToken);
+      const { error: signInError } = await client.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: redirectTo.href },
+      });
+      if (signInError) throw signInError;
+    } catch {
       setConnecting(false);
       setError("Sign-in didn’t complete. Please try again.");
     }
@@ -342,21 +364,40 @@ export default function AppEntry() {
       setStatus("anonymous");
       return;
     }
+    if (signingOut.current) return;
+    signingOut.current = true;
     const signingOutUserId = session?.user.id;
-    repository?.dispose();
-    const client = getSupabaseBrowserClient();
-    await client?.auth.signOut();
-    if (signingOutUserId) {
-      await clearActiveWorkoutPersistenceForUser(signingOutUserId).catch(
-        () => undefined,
-      );
+    const signingOutGeneration = authGeneration.current;
+    setError("");
+    try {
+      const client = getSupabaseBrowserClient();
+      const result = await client?.auth.signOut();
+      if (authGeneration.current !== signingOutGeneration) return;
+      // Supabase may report a server revocation error after successfully
+      // removing the local session and emitting SIGNED_OUT.
+      if (result?.error && activeUserId.current === signingOutUserId) {
+        throw result.error;
+      }
+      if (signingOutUserId) {
+        await clearActiveWorkoutPersistenceForUser(signingOutUserId).catch(
+          () => undefined,
+        );
+      }
+      // Another account can sign in while sign-out or cache cleanup is pending.
+      if (authGeneration.current !== signingOutGeneration) return;
+      activeUserId.current = null;
+      setSession(null);
+      setRepositoryState(null);
+      setWorkspace(null);
+      setWorkspaceSource(null);
+      setStatus("anonymous");
+    } catch {
+      if (authGeneration.current === signingOutGeneration) {
+        setError("Sign-out didn’t complete. Please try again.");
+      }
+    } finally {
+      signingOut.current = false;
     }
-    activeUserId.current = null;
-    setSession(null);
-    setRepositoryState(null);
-    setWorkspace(null);
-    setWorkspaceSource(null);
-    setStatus("anonymous");
   }
 
   if (status === "loading") {
@@ -372,6 +413,7 @@ export default function AppEntry() {
         initialWorkspace={workspace}
         repository={repository}
       />
+      {error && <Toast message={error} />}
     </Suspense>;
   }
 

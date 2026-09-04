@@ -1,6 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000";
+const dataEnvironment = process.env.PLAYWRIGHT_DATA_ENVIRONMENT ?? "local";
+if (!["local", "hosted-dev"].includes(dataEnvironment)) {
+  throw new Error("PLAYWRIGHT_DATA_ENVIRONMENT must be local or hosted-dev.");
+}
+const appUrl = new URL(baseURL);
+if (appUrl.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(appUrl.hostname)) {
+  throw new Error("Browser tests require a loopback HTTP frontend.");
+}
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -15,7 +23,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "npm run dev:hosted",
+    command: dataEnvironment === "local" ? "npm run dev:local" : "npm run dev:hosted",
     reuseExistingServer: true,
     url: baseURL,
   },

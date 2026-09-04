@@ -101,11 +101,25 @@ export class BoundedQueryCache {
     if (existing) return existing.promise;
 
     const pending: PendingQuery<Value> = { promise: load(), valid: true };
+    const loading = pending.promise;
+    // Every caller must await the validated settlement, including callers that
+    // join this request before a mutation invalidates it.
+    pending.promise = this.settleLoad(key, load, options, pending, loading);
     this.pending.set(key, pending as PendingQuery<unknown>);
+    return pending.promise;
+  }
+
+  private async settleLoad<Value>(
+    key: string,
+    load: () => Promise<Value>,
+    options: QueryCacheOptions<Value>,
+    pending: PendingQuery<Value>,
+    loading: Promise<Value>,
+  ): Promise<Value> {
     try {
       let value: Value;
       try {
-        value = await pending.promise;
+        value = await loading;
       } catch (error) {
         if (!pending.valid || this.pending.get(key) !== pending) {
           return this.getOrLoad(key, load, options);

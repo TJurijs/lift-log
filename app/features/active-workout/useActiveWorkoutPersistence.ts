@@ -31,6 +31,11 @@ import {
   type ActiveWorkoutRevisionConflict,
 } from "../../../lib/active-workout-local";
 import type { SessionDraftSaveStatus } from "../../../lib/session-draft-coordinator";
+import {
+  acquireActiveWorkoutWriter,
+  ActiveWorkoutWriterUnavailableError,
+  type ActiveWorkoutWriterLease,
+} from "../../../lib/active-workout-writer-lock";
 
 const POINTER_PREFIX = "liftlog:active-workout-pointer:v1:";
 const SERVER_SYNC_DELAY_MS = 2_500;
@@ -39,6 +44,15 @@ const MAX_REVISION_RECOVERIES = 3;
 let sharedCache: ActiveWorkoutCache | null = null;
 const userClearGenerations = new Map<string, number>();
 const sessionWorkTails = new Map<string, Promise<void>>();
+
+interface PersistenceScope {
+  userId: string;
+  sessionId: string;
+  snapshot: ActiveWorkoutDraftSnapshot;
+  abortController: AbortController;
+  writerState: "initializing" | "blocked" | "unavailable" | "ready";
+  lease: ActiveWorkoutWriterLease | null;
+}
 
 function sessionWorkKey(userId: string, sessionId: string) {
   return `${encodeURIComponent(userId)}:${encodeURIComponent(sessionId)}`;
@@ -50,7 +64,7 @@ function trackSessionWork(
   operation: Promise<unknown>,
 ) {
   const key = sessionWorkKey(userId, sessionId);
-  const tail = operation.then(
+  const tail = Promise.allSettled([sessionWorkTails.get(key), operation]).then(
     () => undefined,
     () => undefined,
   );
@@ -211,9 +225,8 @@ export async function loadCachedActiveWorkoutWorkspace(
     clearPointer(viewer.id, sessionId);
     return null;
   }
-  let materialized: ReturnType<typeof materializeActiveWorkoutEntry>;
   try {
-    materialized = materializeActiveWorkoutEntry(entry);
+    materializeActiveWorkoutEntry(entry);
   } catch {
     clearPointer(viewer.id, sessionId);
     await cache().deleteSession(viewer.id, sessionId).catch(() => undefined);
@@ -234,7 +247,10 @@ export async function loadCachedActiveWorkoutWorkspace(
       ? { scheduledWorkoutId: identity.scheduledWorkoutId }
       : {}),
     itemLogIds: identity.itemLogIds ?? {},
-    ...materialized.snapshot,
+    // A session revision must stay paired with the snapshot confirmed at that
+    // revision. The controller restores the journal's newer local edits after
+    // it acquires the writer lease; they are not a server revision of their own.
+    ...entry.record.confirmedSnapshot,
   };
   const schedule: ScheduledWorkout = plan.schedule
     ? {
@@ -418,6 +434,23 @@ export function useActiveWorkoutPersistence(
   );
   const [conflict, setConflict] =
     useState<ActiveWorkoutUiConflict | null>(null);
+  const [writerState, setWriterState] = useState<{
+    userId: string;
+    sessionId: string;
+    workoutId: string;
+    attempt: number;
+    status: PersistenceScope["writerState"];
+    message?: string;
+  } | null>(null);
+  const [writerAttempt, setWriterAttempt] = useState(0);
+  const retryEditing = useCallback(() => setWriterAttempt((attempt) => attempt + 1), []);
+  const currentWriterState =
+    writerState?.userId === options.userId &&
+    writerState.sessionId === options.session?.id &&
+    writerState.workoutId === options.workout?.id &&
+    writerState.attempt === writerAttempt
+      ? writerState.status
+      : "initializing";
   const controllerRef =
     useRef<ActiveWorkoutLocalController<CachedActiveWorkoutPlan> | null>(null);
   const readySessionIdRef = useRef<string | null>(null);
@@ -425,10 +458,6 @@ export function useActiveWorkoutPersistence(
     userClearGeneration(options.userId),
   );
   const clearedSessionIdsRef = useRef(new Set<string>());
-  const queuedSnapshotRef = useRef<{
-    sessionId: string;
-    snapshot: ActiveWorkoutDraftSnapshot;
-  } | null>(null);
   const initializationPromiseRef = useRef<Promise<void>>(Promise.resolve());
   const stageTailRef = useRef<Promise<void>>(Promise.resolve());
   const syncPromiseRef = useRef<Promise<number> | null>(null);
@@ -437,6 +466,7 @@ export function useActiveWorkoutPersistence(
     ((required?: boolean) => Promise<number>) | undefined
   >(undefined);
   const synchronousDraftStoreRef = useRef(new ActiveWorkoutDraftStore());
+  const scopeRef = useRef<PersistenceScope | null>(null);
 
   const clearSyncTimer = useCallback(() => {
     if (syncTimerRef.current !== null) {
@@ -447,10 +477,24 @@ export function useActiveWorkoutPersistence(
 
   const persistenceInvalidated = useCallback(
     (userId: string, sessionId: string) =>
+      optionsRef.current.userId !== userId ||
+      optionsRef.current.session?.id !== sessionId ||
       clearedSessionIdsRef.current.has(sessionId) ||
       userClearGeneration(userId) !== controllerUserGenerationRef.current,
     [],
   );
+
+  const assertScope = useCallback((scope: PersistenceScope | null) => {
+    if (
+      !scope ||
+      scopeRef.current !== scope ||
+      !scope.lease ||
+      scope.abortController.signal.aborted ||
+      persistenceInvalidated(scope.userId, scope.sessionId)
+    ) {
+      throw new DOMException("The active workout changed", "AbortError");
+    }
+  }, [persistenceInvalidated]);
 
   const scheduleSync = useCallback(
     (delayMs = SERVER_SYNC_DELAY_MS) => {
@@ -467,6 +511,19 @@ export function useActiveWorkoutPersistence(
     (next: ActiveWorkoutDraftSnapshot) => {
       const stagedFor = optionsRef.current;
       const stagedSessionId = stagedFor.session?.id;
+      const scope = scopeRef.current;
+      if (
+        !scope ||
+        scope.sessionId !== stagedSessionId ||
+        scope.userId !== stagedFor.userId ||
+        scope.writerState === "blocked" ||
+        scope.writerState === "unavailable"
+      ) {
+        return Promise.resolve();
+      }
+      // Keep the latest input with its owning session even while its cache is
+      // initializing or the component is about to switch to another workout.
+      scope.snapshot = next;
       const readyAtCall =
         Boolean(stagedSessionId) &&
         readySessionIdRef.current === stagedSessionId &&
@@ -487,13 +544,13 @@ export function useActiveWorkoutPersistence(
         if (mirrored) setLocalRecoveryAvailable(true);
       }
       const operation = stageTailRef.current.then(async () => {
+        if (scopeRef.current !== scope || scope.abortController.signal.aborted) return;
         const controller = controllerRef.current;
         const currentOptions = optionsRef.current;
         const sessionId = currentOptions.session?.id;
         if (!sessionId) return;
         if (persistenceInvalidated(currentOptions.userId, sessionId)) return;
         if (!controller || readySessionIdRef.current !== sessionId) {
-          queuedSnapshotRef.current = { sessionId, snapshot: next };
           return;
         }
         const current = controller.getSnapshot()?.snapshot;
@@ -508,8 +565,10 @@ export function useActiveWorkoutPersistence(
           return;
         }
         for (const change of diffActiveWorkoutSnapshots(current, next)) {
+          assertScope(scope);
           await controller.applyPatch(change);
         }
+        assertScope(scope);
         if (cache().kind !== "memory") {
           synchronousDraftStoreRef.current.clearAfterCompletion(
             currentOptions.userId,
@@ -531,16 +590,19 @@ export function useActiveWorkoutPersistence(
         trackSessionWork(stagedFor.userId, stagedSessionId, operation);
       }
       return operation.catch((error) => {
+        if (scopeRef.current !== scope || scope.abortController.signal.aborted) return;
         setLocalRecoveryAvailable(false);
         setStatus("error");
         optionsRef.current.onSyncError?.(error);
         throw error;
       });
     },
-    [persistenceInvalidated, scheduleSync],
+    [assertScope, persistenceInvalidated, scheduleSync],
   );
 
   const reconcileRevisionConflict = useCallback(async () => {
+    const scope = scopeRef.current;
+    assertScope(scope);
     const controller = controllerRef.current;
     const repository = optionsRef.current.repository;
     const session = optionsRef.current.session;
@@ -548,6 +610,7 @@ export function useActiveWorkoutPersistence(
       throw new Error("The active workout recovery context is unavailable");
     }
     const authoritative = await repository.reloadActiveSession(session.id);
+    assertScope(scope);
     if (!authoritative) {
       throw new Error(
         "This workout is no longer active. Your entries remain saved on this device.",
@@ -558,6 +621,7 @@ export function useActiveWorkoutPersistence(
       activeSnapshot(authoritative),
       authoritative.draftWriteToken,
     );
+    assertScope(scope);
     optionsRef.current.onSessionRefresh(authoritative);
     optionsRef.current.onApplySnapshot(state.snapshot);
     const nextConflict = uiConflict(session.id, state.revisionConflict);
@@ -569,14 +633,17 @@ export function useActiveWorkoutPersistence(
       );
     }
     return state;
-  }, []);
+  }, [assertScope]);
 
   const syncNow = useCallback(
     (required = false): Promise<number> => {
+      const scope = scopeRef.current;
+      if (!scope) return Promise.resolve(0);
       if (syncPromiseRef.current) {
         const currentSync = syncPromiseRef.current;
         if (!required) return currentSync;
         return currentSync.then(() => {
+          assertScope(scope);
           const nextSync = syncNowRef.current;
           if (!nextSync) {
             throw new Error("The active workout sync context is unavailable");
@@ -585,15 +652,19 @@ export function useActiveWorkoutPersistence(
         });
       }
       clearSyncTimer();
+      const requestedOptions = optionsRef.current;
+      const initialization = initializationPromiseRef.current;
       const operation = (async () => {
-        await initializationPromiseRef.current;
+        await initialization;
+        assertScope(scope);
         await stageTailRef.current;
+        assertScope(scope);
         const controller = controllerRef.current;
-        const repository = optionsRef.current.repository;
-        const session = optionsRef.current.session;
-        if (!controller || !session) return 0;
-        if (persistenceInvalidated(optionsRef.current.userId, session.id)) {
-          return controller.getSnapshot()?.confirmedRevision ?? 0;
+        const repository = requestedOptions.repository;
+        const session = requestedOptions.session;
+        if (!controller || !session) {
+          if (required) throw new Error("Open this workout for editing before saving it.");
+          return 0;
         }
         if (!repository) return controller.getSnapshot()?.confirmedRevision ?? 0;
         if (typeof navigator !== "undefined" && !navigator.onLine) {
@@ -602,12 +673,11 @@ export function useActiveWorkoutPersistence(
           return controller.getSnapshot()?.confirmedRevision ?? 0;
         }
 
-        for (
-          let recoveryAttempt = 0;
-          recoveryAttempt < MAX_REVISION_RECOVERIES;
-          recoveryAttempt += 1
-        ) {
+        let recoveryAttempts = 0;
+        while (true) {
+          assertScope(scope);
           const pending = await controller.preparePendingMutation();
+          assertScope(scope);
           if (!pending) {
             setStatus("saved");
             return controller.getSnapshot()?.confirmedRevision ?? 0;
@@ -616,19 +686,11 @@ export function useActiveWorkoutPersistence(
           try {
             const result = await runWithActiveWorkoutRetry(
               async () => {
-                if (
-                  persistenceInvalidated(optionsRef.current.userId, session.id)
-                ) {
-                  return {
-                    revision:
-                      controller.getSnapshot()?.confirmedRevision ??
-                      pending.expectedRevision,
-                  };
-                }
+                assertScope(scope);
                 await controller.recordMutationAttempt(pending.idempotencyKey);
-                const currentSession = optionsRef.current.session ?? session;
+                assertScope(scope);
                 return repository.saveSessionDraft(
-                  currentSession,
+                  session,
                   pending.snapshot.setLogs,
                   pending.snapshot.resultLogs,
                   pending.snapshot.sessionRpe,
@@ -639,8 +701,10 @@ export function useActiveWorkoutPersistence(
               },
               {
                 maxAttempts: 4,
+                signal: scope.abortController.signal,
                 classify: retryDecision,
                 onRetry: async (decision, _attempt, delayMs) => {
+                  assertScope(scope);
                   await controller.recordMutationFailure(
                     pending.idempotencyKey,
                     decision,
@@ -649,23 +713,24 @@ export function useActiveWorkoutPersistence(
                 },
               },
             );
-            if (persistenceInvalidated(optionsRef.current.userId, session.id)) {
-              return result.revision;
-            }
+            assertScope(scope);
             await controller.acknowledgeMutation(
               pending.idempotencyKey,
               result.revision,
             );
+            assertScope(scope);
             optionsRef.current.onRevisionConfirmed(
               result.revision,
               pending.idempotencyKey,
             );
           } catch (error) {
-            if (persistenceInvalidated(optionsRef.current.userId, session.id)) {
-              return controller.getSnapshot()?.confirmedRevision ?? 0;
-            }
+            assertScope(scope);
             const decision = retryDecision(error);
-            if (decision.category === "revision-conflict") {
+            if (
+              decision.category === "revision-conflict" &&
+              recoveryAttempts < MAX_REVISION_RECOVERIES
+            ) {
+              recoveryAttempts += 1;
               await reconcileRevisionConflict();
               continue;
             }
@@ -686,15 +751,15 @@ export function useActiveWorkoutPersistence(
             throw error;
           }
         }
-        throw new SessionRevisionConflictError();
       })();
       const tracked = operation.finally(() => {
         if (syncPromiseRef.current === tracked) syncPromiseRef.current = null;
       });
       syncPromiseRef.current = tracked;
+      trackSessionWork(scope.userId, scope.sessionId, tracked);
       return tracked;
     },
-    [clearSyncTimer, persistenceInvalidated, reconcileRevisionConflict],
+    [assertScope, clearSyncTimer, reconcileRevisionConflict],
   );
   useEffect(() => {
     syncNowRef.current = syncNow;
@@ -708,13 +773,34 @@ export function useActiveWorkoutPersistence(
     controllerRef.current = null;
     readySessionIdRef.current = null;
     stageTailRef.current = Promise.resolve();
-    queuedSnapshotRef.current = null;
     initializationPromiseRef.current = Promise.resolve();
+    syncPromiseRef.current = null;
+    scopeRef.current = null;
     if (!session || !workout) {
       return;
     }
 
     let cancelled = false;
+    const scope: PersistenceScope = {
+      userId: options.userId,
+      sessionId: session.id,
+      snapshot: options.snapshot,
+      abortController: new AbortController(),
+      writerState: "initializing",
+      lease: null,
+    };
+    scopeRef.current = scope;
+    const updateWriterState = (status: PersistenceScope["writerState"], message?: string) => {
+      scope.writerState = status;
+      setWriterState({
+        userId: options.userId,
+        sessionId: session.id,
+        workoutId: workout.id,
+        attempt: writerAttempt,
+        status,
+        ...(message ? { message } : {}),
+      });
+    };
     clearedSessionIdsRef.current.delete(session.id);
     const initialUserGeneration = userClearGeneration(options.userId);
     controllerUserGenerationRef.current = initialUserGeneration;
@@ -734,12 +820,25 @@ export function useActiveWorkoutPersistence(
       cache: cache(),
       userId: options.userId,
       sessionId: session.id,
-      onPersistenceError: () => setLocalRecoveryAvailable(false),
+      onPersistenceError: () => {
+        if (!cancelled && scopeRef.current === scope) setLocalRecoveryAvailable(false);
+      },
     });
 
     const initialization = (async () => {
       await previousSessionWork;
-      if (!cancelled) setConflict(null);
+      if (cancelled || invalidated()) return;
+      updateWriterState("initializing");
+      setConflict(null);
+      scope.lease = await acquireActiveWorkoutWriter(options.userId, session.id);
+      if (cancelled || invalidated()) {
+        await scope.lease?.release();
+        return;
+      }
+      if (!scope.lease) {
+        updateWriterState("blocked");
+        return;
+      }
       await importLegacyActiveWorkoutDraft({
         cache: cache(),
         userId: options.userId,
@@ -747,23 +846,23 @@ export function useActiveWorkoutPersistence(
         serverRevision: session.draftRevision,
         plan,
       });
-      await controller.initialize({
+      const initialized = await controller.initialize({
         session: sessionIdentity(session),
         plan,
         serverRevision: session.draftRevision,
         serverWriteToken: session.draftWriteToken,
         serverSnapshot: activeSnapshot(session),
       });
-      const reconciled = await controller.reconcileAuthoritative(
-        session.draftRevision,
-        activeSnapshot(session),
-        session.draftWriteToken,
-      );
-      const queued = queuedSnapshotRef.current;
-      const newestUiSnapshot =
-        queued?.sessionId === session.id
-          ? queued.snapshot
-          : optionsRef.current.snapshot;
+      // Bootstrap or a cached shell can predate a save that finished while
+      // they were loading. Never regress a newer, confirmed local revision.
+      const reconciled = session.draftRevision < initialized.confirmedRevision
+        ? initialized
+        : await controller.reconcileAuthoritative(
+            session.draftRevision,
+            activeSnapshot(session),
+            session.draftWriteToken,
+          );
+      const newestUiSnapshot = scope.snapshot;
       const desiredSnapshot = activeWorkoutSnapshotsEqual(
         newestUiSnapshot,
         initialUiSnapshot,
@@ -792,7 +891,6 @@ export function useActiveWorkoutPersistence(
       }
       controllerRef.current = controller;
       readySessionIdRef.current = session.id;
-      queuedSnapshotRef.current = null;
       writePointer(options.userId, session.id);
       setLocalRecoveryAvailable(cache().kind !== "memory");
 
@@ -802,6 +900,8 @@ export function useActiveWorkoutPersistence(
       if (!activeWorkoutSnapshotsEqual(desiredSnapshot, reconciled.snapshot)) {
         await stageSnapshot(desiredSnapshot);
       }
+      if (cancelled || invalidated() || scopeRef.current !== scope) return;
+      updateWriterState("ready");
       const latestState = controller.getSnapshot();
       if (nextConflict) setStatus("error");
       else if (latestState?.dirty) {
@@ -820,6 +920,17 @@ export function useActiveWorkoutPersistence(
         return;
       }
       controller.dispose();
+      updateWriterState("unavailable", error instanceof ActiveWorkoutWriterUnavailableError
+        ? error.message
+        : "This workout’s saved data could not be opened. Try again. If the problem continues, check your browser storage settings.");
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+        readySessionIdRef.current = null;
+      }
+      const lease = scope.lease;
+      scope.lease = null;
+      const release = lease?.release();
+      if (release) trackSessionWork(options.userId, session.id, release);
       setLocalRecoveryAvailable(false);
       setStatus(
         typeof navigator !== "undefined" && !navigator.onLine
@@ -831,6 +942,14 @@ export function useActiveWorkoutPersistence(
 
     return () => {
       cancelled = true;
+      scope.abortController.abort();
+      if (scopeRef.current === scope) scopeRef.current = null;
+      // A tab must not acquire the same journal while the old writer is still
+      // finishing a durable patch, retry, or initialization.
+      const pendingWork = sessionWorkTails.get(sessionWorkKey(options.userId, session.id));
+      const release = Promise.resolve(pendingWork).then(() => scope.lease?.release());
+      trackSessionWork(options.userId, session.id, release);
+      void release.catch(() => undefined);
       const wasReady = controllerRef.current === controller;
       if (wasReady) {
         controllerRef.current = null;
@@ -840,7 +959,7 @@ export function useActiveWorkoutPersistence(
     };
     // The session/workout identity owns a controller. Other values flow via refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options.userId, options.session?.id, options.workout?.id]);
+  }, [options.userId, options.session?.id, options.workout?.id, writerAttempt]);
 
   useEffect(() => {
     if (!options.session || conflict) {
@@ -853,7 +972,8 @@ export function useActiveWorkoutPersistence(
     const resume = () => {
       const connected = navigator.onLine;
       setOnline(connected);
-      if (connected) void syncNowRef.current?.(false).catch(() => undefined);
+      if (scopeRef.current?.writerState === "blocked") retryEditing();
+      else if (connected) void syncNowRef.current?.(false).catch(() => undefined);
       else if (controllerRef.current?.getSnapshot()?.dirty) {
         setStatus("unsaved-offline");
       }
@@ -885,25 +1005,32 @@ export function useActiveWorkoutPersistence(
       document.removeEventListener("visibilitychange", visibility);
       clearSyncTimer();
     };
-  }, [clearSyncTimer, stageSnapshot]);
+  }, [clearSyncTimer, retryEditing, stageSnapshot]);
 
   const resolveConflict = useCallback(
     async (keepLocal: boolean) => {
+      const scope = scopeRef.current;
+      assertScope(scope);
       const controller = controllerRef.current;
       if (!controller) throw new Error("The active workout is not ready");
       const state = await controller.resolveRevisionConflict(
         keepLocal ? "local" : "server",
       );
+      assertScope(scope);
       setConflict(null);
       optionsRef.current.onApplySnapshot(state.snapshot);
       if (state.dirty) scheduleSync(0);
       else setStatus("saved");
       return state;
     },
-    [scheduleSync],
+    [assertScope, scheduleSync],
   );
 
   const clearAfterCompletion = useCallback(async (sessionId: string) => {
+    const scope = scopeRef.current;
+    await initializationPromiseRef.current;
+    assertScope(scope);
+    if (scope?.sessionId !== sessionId) throw new Error("The active workout changed");
     clearSyncTimer();
     clearedSessionIdsRef.current.add(sessionId);
     const userId = optionsRef.current.userId;
@@ -933,13 +1060,24 @@ export function useActiveWorkoutPersistence(
     }
     setConflict(null);
     setStatus("saved");
-  }, [clearSyncTimer]);
+    setWriterState(null);
+    const lease = scope.lease;
+    scope.lease = null;
+    await lease?.release();
+  }, [assertScope, clearSyncTimer]);
 
   return {
     status,
     online,
     localRecoveryAvailable,
     conflict,
+    editable: currentWriterState === "ready",
+    editingBlockedReason: currentWriterState === "blocked"
+      ? "This workout is open for editing in another tab. Close it there, then try again."
+      : currentWriterState === "unavailable"
+        ? writerState?.message ?? "Workout editing could not be opened. Try again."
+        : null,
+    retryEditing,
     flush: () => syncNow(true),
     recover: async () => {
       await reconcileRevisionConflict();

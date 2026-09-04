@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useEffectEvent,
   useId,
   useRef,
   type ButtonHTMLAttributes,
@@ -326,6 +327,7 @@ export function AsyncButton({
 }) {
   return (
     <button
+      type="button"
       className={className}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
@@ -404,6 +406,9 @@ export function InlineError({
   );
 }
 
+const openModalDialogs = new Set<HTMLElement>();
+let overflowBeforeModals = "";
+
 export function ModalShell({
   title,
   description,
@@ -424,35 +429,54 @@ export function ModalShell({
   const dialogRef = useRef<HTMLElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const dismissOnEscape = useEffectEvent((event: globalThis.KeyboardEvent) => {
+    if (!dismissible) return;
+    event.preventDefault();
+    onClose();
+  });
 
   useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
     const previousFocus =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    const previousOverflow = document.body.style.overflow;
+    if (!openModalDialogs.size) overflowBeforeModals = document.body.style.overflow;
+    openModalDialogs.add(dialog);
     document.body.style.overflow = "hidden";
-    const dialog = dialogRef.current;
+    const focusableElements = () => {
+      return [...dialog.querySelectorAll<HTMLElement>(
+        "a[href], button, input, select, textarea, summary, [tabindex]",
+      )].filter((element) => {
+        if (
+          element.tabIndex < 0 ||
+          element.matches(":disabled, input[type='hidden']") ||
+          element.closest("[hidden], [inert]") ||
+          getComputedStyle(element).visibility === "hidden"
+        ) return false;
+        for (let ancestor: HTMLElement | null = element; ancestor && ancestor !== dialog; ancestor = ancestor.parentElement) {
+          if (getComputedStyle(ancestor).display === "none") return false;
+        }
+        return true;
+      });
+    };
+    const initialCandidates = focusableElements();
     const initialFocus =
-      dialog?.querySelector<HTMLElement>("[data-modal-initial-focus]") ??
-      dialog?.querySelector<HTMLElement>(
-        "input:not(:disabled), select:not(:disabled), textarea:not(:disabled)",
-      ) ??
+      initialCandidates.find((element) => element.hasAttribute("data-modal-initial-focus")) ??
+      initialCandidates.find((element) => element.matches("input, select, textarea")) ??
       dialog;
     initialFocus?.focus();
 
     function handleKeyDown(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape" && dismissible) {
-        event.preventDefault();
-        onClose();
+      const dialogs = document.querySelectorAll("[aria-modal='true']");
+      if (dialogs.item(dialogs.length - 1) !== dialog) return;
+      if (event.key === "Escape") {
+        dismissOnEscape(event);
         return;
       }
       if (event.key !== "Tab" || !dialog) return;
-      const focusable = [
-        ...dialog.querySelectorAll<HTMLElement>(
-          "input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex='-1'])",
-        ),
-      ];
+      const focusable = focusableElements();
       if (!focusable.length) {
         event.preventDefault();
         dialog.focus();
@@ -460,10 +484,11 @@ export function ModalShell({
       }
       const first = focusable[0];
       const last = focusable.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) {
+      const focusInside = focusable.includes(document.activeElement as HTMLElement);
+      if (event.shiftKey && (!focusInside || document.activeElement === first)) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && (!focusInside || document.activeElement === last)) {
         event.preventDefault();
         first.focus();
       }
@@ -472,14 +497,16 @@ export function ModalShell({
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      previousFocus?.focus();
+      openModalDialogs.delete(dialog);
+      if (!openModalDialogs.size) document.body.style.overflow = overflowBeforeModals;
+      if (previousFocus?.isConnected) previousFocus.focus();
     };
-  }, [dismissible, onClose]);
+  }, []);
 
   return (
     <div className="modal-backdrop">
       <button
+        type="button"
         className="modal-dismiss-layer"
         tabIndex={-1}
         onClick={dismissible ? onClose : undefined}
@@ -503,6 +530,7 @@ export function ModalShell({
             <p id={descriptionId}>{description}</p>
           </div>
           <button
+            type="button"
             className="icon-button"
             onClick={onClose}
             disabled={!dismissible}

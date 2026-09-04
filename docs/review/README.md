@@ -1,5 +1,8 @@
 # Stabilization review evidence
 
+Latest: [4 September 2026 technical review and cleanup](TECHNICAL_REVIEW_2026_09_04.md),
+including local Docker/browser verification and remaining architecture work.
+
 The primary assignment and acceptance criteria are in the [major review, cleanup, and testing guide](../MAJOR_REVIEW_CLEANUP_TESTING_GUIDE.md).
 
 - Phase 0: [recorded repository and validation baseline](PHASE_0_BASELINE.md) and [desktop/mobile visual evidence](evidence/phase-0/README.md)

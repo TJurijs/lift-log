@@ -16,7 +16,7 @@ function getPersonaPassword() {
 
   if (!personaPassword) {
     throw new Error(
-      "TEST_PERSONA_PASSWORD is required for hosted-development persona tests.",
+      "TEST_PERSONA_PASSWORD is required for seeded persona tests.",
     );
   }
 
@@ -24,7 +24,22 @@ function getPersonaPassword() {
 }
 
 export async function signInAsTestPersona(page: Page, personaName: string) {
-  const environment = loadEnv("nonprod", process.cwd(), "");
+  const local = (process.env.PLAYWRIGHT_DATA_ENVIRONMENT ?? "local") === "local";
+  const environment = loadEnv(local ? "localdev" : "nonprod", process.cwd(), "");
+  if (local) {
+    const allowedHosts = new Set(["127.0.0.1", "localhost", "[::1]"]);
+    if (!allowedHosts.has(new URL(environment.VITE_SUPABASE_URL).hostname)) {
+      throw new Error("Local browser tests require a loopback Supabase URL.");
+    }
+    await page.context().route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (["http:", "https:"].includes(url.protocol) && !allowedHosts.has(url.hostname)) {
+        await route.abort("blockedbyclient");
+        throw new Error(`Local browser test blocked an external request to ${url.origin}.`);
+      }
+      await route.continue();
+    });
+  }
   await signInSeededPersona(page, {
     personaName,
     password: getPersonaPassword(),

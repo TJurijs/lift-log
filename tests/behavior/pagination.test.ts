@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { collectAllBatches, collectAllPages } from "../../lib/pagination";
+import { collectAllBatches, collectAllPages, collectCursorPages } from "../../lib/pagination";
 
 function sourceWithRows(rowCount: number, pageSize = 500) {
   const rows = Array.from({ length: rowCount }, (_, id) => ({ id }));
@@ -103,5 +103,31 @@ describe("collectAllBatches", () => {
 
     expect(rows).toEqual([]);
     expect(called).toBe(false);
+  });
+});
+
+describe("collectCursorPages", () => {
+  it("completes a finite range without losing subsequent pages", async () => {
+    const cursors: Array<string | undefined> = [];
+    const result = await collectCursorPages<number, string>("Calendar", async (cursor) => {
+      cursors.push(cursor);
+      return cursor
+        ? { items: [3], hasMore: false }
+        : { items: [1, 2], hasMore: true, nextCursor: "second" };
+    });
+    expect(result).toEqual([1, 2, 3]);
+    expect(cursors).toEqual([undefined, "second"]);
+  });
+
+  it("rejects a non-advancing cursor instead of returning duplicates forever", async () => {
+    await expect(collectCursorPages("Calendar", async () => ({
+      items: [1], hasMore: true, nextCursor: { id: "same" },
+    }))).rejects.toThrow("did not advance its cursor");
+  });
+
+  it("fails explicitly instead of returning a partial viewport at its safety ceiling", async () => {
+    await expect(collectCursorPages<number, number>("Calendar", async (cursor = 0) => ({
+      items: [cursor], hasMore: true, nextCursor: cursor + 1,
+    }), 2)).rejects.toThrow("exceeded 2 pages");
   });
 });

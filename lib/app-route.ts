@@ -63,7 +63,7 @@ export function updateAppViewUrl(
 ) {
   if (typeof window === "undefined") return;
   const nextHash = appViewHash(view);
-  if (window.location.hash === nextHash) return;
+  if (window.location.hash === nextHash && appDetailFromHistory() === null) return;
   const url = new URL(window.location.href);
   url.hash = nextHash;
   if (mode === "replace") window.history.replaceState({}, "", url);

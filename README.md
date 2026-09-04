@@ -89,6 +89,7 @@ npm run test:coverage
 npm run test:e2e
 npm run test:integration
 npm run test:v1:database-smoke
+npm run test:authoring:database-smoke
 npm run db:lint
 npm run ci:verify
 npm run ci:local-supabase
@@ -97,6 +98,17 @@ npm run perf:bundle:report
 npm run perf:measure:local
 npm run perf:runtime:check
 ```
+
+Browser tests default to the local Docker Supabase stack and block external
+requests during authenticated tests. Start Docker and seed the disposable local
+personas before `npm run test:e2e`. The local suite covers desktop/mobile
+navigation, accessibility, program authoring, offline draft recovery, and
+exclusive workout editing across tabs. Hosted read tests require explicitly
+setting `PLAYWRIGHT_DATA_ENVIRONMENT=hosted-dev`; the separate hosted draft test
+also retains its explicit mutation opt-in.
+
+The September 4 cleanup findings, verified scope, and remaining architecture
+work are recorded in [the technical review](docs/review/TECHNICAL_REVIEW_2026_09_04.md).
 
 The integration test creates three temporary, namespaced test users and proves athlete isolation, active and revoked coach access, publishing, schedule creation, and immutable completed history. `npm run test:integration` remains loopback-only. Hosted development is a separate, fail-closed path:
 

@@ -21,6 +21,7 @@ import type {
   ProgramRunStatus,
   ProgramRunSummary,
 } from "../../../lib/domain";
+import { formatDateOnly } from "../../../lib/date-only";
 import {
   appDetailDataFromHistory,
   appDetailFromHistory,
@@ -150,13 +151,18 @@ function runsForAthlete(athlete: AthleteSummary) {
 }
 
 function dateLabel(value: string, includeYear = false) {
-  const parsed = new Date(value.includes("T") ? value : `${value}T12:00:00`);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString("en-GB", {
+  const options: Intl.DateTimeFormatOptions = {
     day: "numeric",
     month: "short",
     ...(includeYear ? { year: "numeric" } : {}),
-  });
+  };
+  if (!value.includes("T")) {
+    try { return formatDateOnly(value, options, "en-GB"); }
+    catch { return value; }
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-GB", options);
 }
 
 function agendaForProgram(

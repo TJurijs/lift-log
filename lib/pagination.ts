@@ -74,3 +74,33 @@ export async function collectAllBatches<T, Id>(
   }
   return rows;
 }
+
+/** Complete a finite viewport without discarding a bounded endpoint's cursor. */
+export async function collectCursorPages<T, Cursor>(
+  context: string,
+  loadPage: (cursor?: Cursor) => Promise<{
+    items: T[];
+    hasMore: boolean;
+    nextCursor?: Cursor;
+  }>,
+  maxPages = DEFAULT_MAX_PAGES,
+): Promise<T[]> {
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
+    throw new Error("Maximum pages must be a positive integer");
+  }
+  const rows: T[] = [];
+  const visitedCursors = new Set<string>();
+  let cursor: Cursor | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await loadPage(cursor);
+    rows.push(...result.items);
+    if (!result.hasMore) return rows;
+    const nextKey = JSON.stringify(result.nextCursor);
+    if (nextKey === undefined || visitedCursors.has(nextKey)) {
+      throw new Error(`${context}: the data source did not advance its cursor`);
+    }
+    visitedCursors.add(nextKey);
+    cursor = result.nextCursor;
+  }
+  throw new Error(`${context}: exceeded ${maxPages} pages; use a narrower range`);
+}

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AthleteSummary, Program } from "../../../lib/domain";
-import { localDateOnly } from "../../../lib/date-only";
+import { formatDateOnly, localDateOnly } from "../../../lib/date-only";
 import {
   generateProgramRunDates,
   programRunDateOrderError,
@@ -58,11 +58,11 @@ const weekDays = [
 ];
 
 function formatShortDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
+  return formatDateOnly(value, {
     weekday: "short",
     month: "short",
     day: "numeric",
-  }).format(new Date(`${value}T12:00:00`));
+  });
 }
 
 function createIdempotencyKey() {
@@ -287,7 +287,7 @@ export default function ProgramRunWizard({
       plannedDate?: string;
     }> =
       delivery === "scheduled"
-        ? workoutDates
+        ? workoutDates.map((entry) => ({ ...entry, plannedDate: entry.plannedDate || undefined }))
         : workouts.map((workout) => ({ workoutId: workout.id }));
     const dateOrderError = programRunDateOrderError(
       workouts.map((workout) => ({
@@ -604,13 +604,13 @@ export default function ProgramRunWizard({
                   <article key={workout.id}>
                     <span>{index + 1}</span>
                     <div><strong>{workout.title}</strong><small>~{workout.durationMinutes} min</small></div>
-                    {delivery === "scheduled" && generated?.plannedDate ? (
+                    {delivery === "scheduled" ? (
                       <label>
-                        <span>{formatShortDate(generated.plannedDate)}</span>
+                        <span>{generated?.plannedDate ? formatShortDate(generated.plannedDate) : "Schedule later"}</span>
                         <input
                           type="date"
                           aria-label={`Date for ${workout.title}`}
-                          value={generated.plannedDate}
+                          value={generated?.plannedDate ?? ""}
                           onChange={(event) => setDateOverrides((current) => ({ ...current, [workout.id]: event.target.value }))}
                         />
                       </label>

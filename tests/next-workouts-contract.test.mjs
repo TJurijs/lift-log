@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
+const nextViewUrl = new URL("../app/features/next-workouts/NextWorkoutsView.tsx", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 const migrationUrl = new URL(
@@ -15,7 +16,7 @@ const statusMigrationUrl = new URL(
 );
 
 test("Next workouts opens a full read-only workout preview before starting", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const app = `${await readFile(appUrl, "utf8")}\n${await readFile(nextViewUrl, "utf8")}`;
 
   assert.match(app, /title="Next workouts"/);
   assert.match(app, /function NextWorkoutsView/);
@@ -80,7 +81,7 @@ test("Next workouts opens a full read-only workout preview before starting", asy
 
 test("mobile workout cards reserve stable action space", async () => {
   const [app, styles] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readFile(nextViewUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
   ]);
 
@@ -91,11 +92,7 @@ test("mobile workout cards reserve stable action space", async () => {
 });
 
 test("Next workouts renders server-loaded pages without hiding items in local pagination", async () => {
-  const app = await readFile(appUrl, "utf8");
-  const component = app.slice(
-    app.indexOf("function NextWorkoutsView"),
-    app.indexOf("function TodayView"),
-  );
+  const component = await readFile(nextViewUrl, "utf8");
 
   assert.match(component, /hasMore = false/);
   assert.match(component, /loading = false/);

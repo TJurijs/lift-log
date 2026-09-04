@@ -51,6 +51,7 @@ import { trackingFieldsForMode } from "./domain";
 import { recordClientPerformance } from "./performance";
 import { implicitProgramWeek } from "./program-tree";
 import { BoundedQueryCache } from "./query-cache";
+import { collectAllBatches, collectAllPages, collectCursorPages } from "./pagination";
 import { activeWeekForDate, localDateOnly } from "./date-only";
 
 const REPOSITORY_QUERY_CACHE_MAX_SERIALIZED_BYTES = 12 * 1024 * 1024;
@@ -169,19 +170,6 @@ interface OwnSessionNotes {
   sessionNote: string;
   itemNotes: Record<string, string>;
   entryNotes: Record<string, string>;
-}
-
-interface PrescriptionInsert {
-  workout_item_id: string;
-  position: number;
-  reps_min?: number;
-  reps_max?: number;
-  target_rpe_min?: number;
-  target_rpe_max?: number;
-  rounds?: number;
-  work_seconds?: number;
-  rest_seconds?: number;
-  duration_seconds?: number;
 }
 
 export interface CreateExerciseInput {
@@ -1127,6 +1115,36 @@ function parsePrescriptionPayload(
   }));
 }
 
+function parseWorkoutItemPayload(
+  value: unknown,
+  itemIndex = 0,
+): (WorkoutItem & { position: number }) | null {
+  const item = jsonRecord(value);
+  if (!item) return null;
+  const itemId = jsonString(item, "id");
+  if (!itemId) return null;
+  const mode = parseEntryMode(jsonField(item, "entryMode", "entry_mode"));
+  return {
+    id: itemId,
+    exerciseId:
+      jsonNullableString(item, "sourceExerciseId", "source_exercise_id") ?? undefined,
+    category:
+      jsonNullableString(item, "category", "exerciseCategory", "exercise_category") ?? undefined,
+    videoUrl: jsonNullableString(item, "videoUrl", "video_url") ?? undefined,
+    title: jsonString(item, "name", "snapshotName", "snapshot_name") ?? "Exercise",
+    cue: jsonString(item, "cue", "snapshotCue", "snapshot_cue") ?? "",
+    mode,
+    fields: parseTrackingFields(jsonField(item, "trackingFields", "tracking_fields")),
+    prescription: prescriptionFromRows(
+      mode,
+      parsePrescriptionPayload(
+        jsonField(item, "prescribedEntries", "prescribed_entries"), itemId,
+      ),
+    ),
+    position: jsonInteger(item, "position") ?? itemIndex,
+  };
+}
+
 function parseWorkoutPayload(
   value: unknown,
   programVersionId: string,
@@ -1153,46 +1171,7 @@ function parseWorkoutPayload(
       if (!sectionId) return null;
       const kind = jsonString(section, "kind", "sectionKind", "section_kind");
       const items = jsonRecords(jsonField(section, "items"))
-        .map((item, itemIndex): (WorkoutItem & { position: number }) | null => {
-          const itemId = jsonString(item, "id");
-          if (!itemId) return null;
-          const mode = parseEntryMode(
-            jsonField(item, "entryMode", "entry_mode"),
-          );
-          return {
-            id: itemId,
-            exerciseId:
-              jsonNullableString(
-                item,
-                "sourceExerciseId",
-                "source_exercise_id",
-              ) ?? undefined,
-            category:
-              jsonNullableString(
-                item,
-                "category",
-                "exerciseCategory",
-                "exercise_category",
-              ) ?? undefined,
-            videoUrl:
-              jsonNullableString(item, "videoUrl", "video_url") ?? undefined,
-            title: jsonString(item, "name", "snapshotName", "snapshot_name") ??
-              "Exercise",
-            cue: jsonString(item, "cue", "snapshotCue", "snapshot_cue") ?? "",
-            mode,
-            fields: parseTrackingFields(
-              jsonField(item, "trackingFields", "tracking_fields"),
-            ),
-            prescription: prescriptionFromRows(
-              mode,
-              parsePrescriptionPayload(
-                jsonField(item, "prescribedEntries", "prescribed_entries"),
-                itemId,
-              ),
-            ),
-            position: jsonInteger(item, "position") ?? itemIndex,
-          };
-        })
+        .map(parseWorkoutItemPayload)
         .filter((item): item is WorkoutItem & { position: number } => item !== null)
         .sort((left, right) => left.position - right.position);
       const normalizedKind: WorkoutSection["kind"] =
@@ -2175,17 +2154,35 @@ export class LiftLogRepository {
     limit = 100,
   ): Promise<CompletedSession[]> {
     const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 200);
-    const result = await this.client.rpc("list_calendar_session_summaries", {
-      range_start: rangeStart,
-      range_end: rangeEnd,
-      page_limit: boundedLimit,
-    });
-    if (result.error)
-      fail("Could not load completed workouts for your calendar", result.error);
-    return jsonRecords(result.data).flatMap((row): CompletedSession[] => {
-      const session = parseSessionRow(row);
-      return session ? [mapCompletedSession(session)] : [];
-    });
+    return collectCursorPages<CompletedSession, CalendarCursor>(
+      "Could not load completed workouts for your calendar",
+      async (cursor) => {
+        const result = await this.client.rpc("list_calendar_session_summaries", {
+          range_start: rangeStart,
+          range_end: rangeEnd,
+          page_limit: boundedLimit,
+          ...(cursor ? {
+            after_completed_for_date: cursor.plannedDate,
+            after_id: cursor.id,
+          } : {}),
+        });
+        if (result.error)
+          fail("Could not load completed workouts for your calendar", result.error);
+        const rows = jsonRecords(result.data);
+        const last = rows.at(-1);
+        return {
+          items: rows.flatMap((row): CompletedSession[] => {
+            const session = parseSessionRow(row);
+            return session ? [mapCompletedSession(session)] : [];
+          }),
+          hasMore: rows.length >= boundedLimit,
+          nextCursor: last ? {
+            plannedDate: jsonString(last, "completed_for_date", "completedForDate") ?? "",
+            id: jsonString(last, "id") ?? "",
+          } : undefined,
+        };
+      },
+    );
   }
 
   async listSchedulableWorkouts(
@@ -2495,12 +2492,15 @@ export class LiftLogRepository {
     return this.queryCache.getOrLoad(
       `feature:calendar:${rangeStart}:${rangeEnd}`,
       async () => {
-        const [calendarPage, completedSessions] = await Promise.all([
-          this.listCalendarOccurrences(rangeStart, rangeEnd, { limit: 100 }),
+        const [scheduledWorkouts, completedSessions] = await Promise.all([
+          collectCursorPages<ScheduledWorkout, CalendarCursor>(
+            "Could not load your calendar",
+            (cursor) => this.listCalendarOccurrences(rangeStart, rangeEnd, { limit: 100, cursor }),
+          ),
           this.listCalendarSessionSummaries(rangeStart, rangeEnd),
         ]);
         return {
-          scheduledWorkouts: calendarPage.items,
+          scheduledWorkouts,
           completedSessions,
         };
       },
@@ -3141,48 +3141,16 @@ export class LiftLogRepository {
     const week = implicitProgramWeek(program);
     if (!week || program.weeks.length !== 1)
       fail("The program workout sequence is unavailable", null);
-    const workoutResult = await this.client
-      .from("workouts")
-      .insert({
-        program_week_id: week.id,
-        title,
-        day_of_week: null,
-        schedule_label: `Workout ${week.workouts.length + 1}`,
-        position: week.workouts.length,
-        estimated_minutes: 45,
-      })
-      .select("id")
-      .single();
-    if (workoutResult.error || !workoutResult.data)
-      fail("Could not add the workout", workoutResult.error);
-    const workoutId = String(workoutResult.data.id);
-    const sectionResult = await this.client
-      .from("workout_sections")
-      .insert({
-        workout_id: workoutId,
-        title: "Exercises",
-        section_kind: "main",
-        position: 0,
-      })
-      .select("id, title, section_kind, position");
-    if (sectionResult.error || !sectionResult.data || sectionResult.data.length !== 1)
-      fail("Could not prepare the workout sections", sectionResult.error);
-    return {
-      id: workoutId,
-      title,
-      dayLabel: `Workout ${week.workouts.length + 1}`,
-      durationMinutes: 45,
-      sections: [
-        ...sectionResult.data
-          .sort((left, right) => left.position - right.position)
-          .map((section) => ({
-            id: String(section.id),
-            title: String(section.title),
-            kind: section.section_kind as WorkoutSection["kind"],
-            items: [],
-          })),
-      ],
-    };
+    const result = await this.client.rpc("append_program_workout", {
+      target_week_id: week.id,
+      target_title: title,
+    });
+    if (result.error) fail("Could not add the workout", result.error);
+    const workout = parseWorkoutPayload(result.data, program.versionId);
+    if (!workout || workout.sections.length !== 1)
+      fail("Could not add the workout", null);
+    this.invalidatePrograms();
+    return workout;
   }
 
   async updateWorkout(
@@ -3207,74 +3175,16 @@ export class LiftLogRepository {
     section: WorkoutSection,
     exercise: Exercise,
   ): Promise<WorkoutItem> {
-    const result = await this.client
-      .from("workout_items")
-      .insert({
-        section_id: section.id,
-        source_exercise_id: exercise.id,
-        snapshot_name: exercise.name,
-        snapshot_cue: exercise.cue,
-        entry_mode: exercise.defaultMode,
-        tracking_fields: exercise.defaultFields,
-        position: section.items.length,
-      })
-      .select("id")
-      .single();
-    if (result.error || !result.data)
+    const result = await this.client.rpc("append_workout_exercise", {
+      target_section_id: section.id,
+      target_exercise_id: exercise.id,
+    });
+    if (result.error)
       fail("Could not add the exercise to the workout", result.error);
-    const itemId = String(result.data.id);
-    const prescription: Prescription =
-      exercise.defaultMode === "sets"
-        ? { sets: 3, reps: "8", targetRpe: "7–8" }
-        : exercise.defaultMode === "intervals"
-          ? { rounds: 5, workSeconds: 60, restSeconds: 60 }
-          : exercise.defaultMode === "result" &&
-              exercise.defaultFields.includes("duration")
-            ? { durationMinutes: 20 }
-            : {};
-
-    const entries: PrescriptionInsert[] =
-      exercise.defaultMode === "sets"
-        ? Array.from({ length: 3 }, (_, position) => ({
-            workout_item_id: itemId,
-            position,
-            reps_min: 8,
-            reps_max: 8,
-            target_rpe_min: 7,
-            target_rpe_max: 8,
-          }))
-        : exercise.defaultMode === "intervals"
-          ? [
-              {
-                workout_item_id: itemId,
-                position: 0,
-                rounds: 5,
-                work_seconds: 60,
-                rest_seconds: 60,
-              },
-            ]
-          : exercise.defaultMode === "result" &&
-              exercise.defaultFields.includes("duration")
-            ? [{ workout_item_id: itemId, position: 0, duration_seconds: 1200 }]
-            : [];
-    if (entries.length) {
-      const entriesResult = await this.client
-        .from("prescribed_entries")
-        .insert(entries);
-      if (entriesResult.error)
-        fail("Could not save the exercise prescription", entriesResult.error);
-    }
-    return {
-      id: itemId,
-      exerciseId: exercise.id,
-      category: exercise.category,
-      videoUrl: exercise.videoUrl,
-      title: exercise.name,
-      cue: exercise.cue,
-      mode: exercise.defaultMode,
-      fields: exercise.defaultFields,
-      prescription,
-    };
+    const item = parseWorkoutItemPayload(result.data);
+    if (!item) fail("Could not add the exercise to the workout", null);
+    this.invalidatePrograms();
+    return item;
   }
 
   async removeWorkoutItem(itemId: string) {
@@ -3492,32 +3402,42 @@ export class LiftLogRepository {
     if (!sessionResult.data) return null;
 
     const session = sessionResult.data as SessionRow;
-    const [itemsResult, notes] = await Promise.all([
-      this.client
-        .from("session_item_logs")
-        .select(
-          "id, workout_session_id, source_workout_item_id, snapshot_name, snapshot_category, snapshot_video_url, snapshot_cue, entry_mode, tracking_fields, position",
-        )
-        .eq("workout_session_id", session.id)
-        .order("position"),
+    const [items, notes] = await Promise.all([
+      collectAllPages<CompletedSessionItemRow>(
+        "Could not load completed workout items",
+        (from, to) => this.client
+          .from("session_item_logs")
+          .select(
+            "id, workout_session_id, source_workout_item_id, snapshot_name, snapshot_category, snapshot_video_url, snapshot_cue, entry_mode, tracking_fields, position",
+          )
+          .eq("workout_session_id", session.id)
+          .order("position")
+          .order("id")
+          .range(from, to),
+      ),
       this.loadOwnSessionNotes(session.id),
     ]);
-    if (itemsResult.error)
-      fail("Could not load completed workout items", itemsResult.error);
-    const items = itemsResult.data as CompletedSessionItemRow[];
     const itemIds = items.map((item) => item.id);
-    const entriesResult = itemIds.length
-      ? await this.client
+    const entries = await collectAllBatches<SessionEntryRow, string>(
+      "Could not load completed workout entries",
+      itemIds,
+      (batch, from, to) => this.client
           .from("session_entries")
           .select(
             "id, session_item_log_id, position, reps, load_kg, duration_seconds, distance_metres, rounds, heart_rate, rpe",
           )
-          .in("session_item_log_id", itemIds)
+          .in("session_item_log_id", [...batch])
+          .order("session_item_log_id")
           .order("position")
-      : { data: [], error: null };
-    if (entriesResult.error)
-      fail("Could not load completed workout entries", entriesResult.error);
-    const entries = entriesResult.data as SessionEntryRow[];
+          .order("id")
+          .range(from, to),
+    );
+    const entriesByItem = new Map<string, SessionEntryRow[]>();
+    for (const entry of entries) {
+      const itemEntries = entriesByItem.get(entry.session_item_log_id);
+      if (itemEntries) itemEntries.push(entry);
+      else entriesByItem.set(entry.session_item_log_id, [entry]);
+    }
 
     return {
       ...mapCompletedSession(session, notes.sessionNote),
@@ -3531,9 +3451,7 @@ export class LiftLogRepository {
         fields: item.tracking_fields,
         position: item.position,
         note: notes.itemNotes[item.id] || undefined,
-        entries: entries
-          .filter((entry) => entry.session_item_log_id === item.id)
-          .sort((left, right) => left.position - right.position)
+        entries: (entriesByItem.get(item.id) ?? [])
           .map((entry) => ({
             position: entry.position,
             reps: numberValue(entry.reps) ?? undefined,

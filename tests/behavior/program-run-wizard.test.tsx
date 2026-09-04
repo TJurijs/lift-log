@@ -59,6 +59,29 @@ const athletes: AthleteSummary[] = [
 ];
 
 describe("ProgramRunWizard", () => {
+  it("keeps a cleared review date editable and submits it as an optional date", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    render(<ProgramRunWizard mode="self" viewerId="viewer-1" viewerName="Viewer One"
+      programs={[program]} athletes={[]} initialProgramId={program.id}
+      onLoadProgram={vi.fn().mockResolvedValue(program)} onClose={vi.fn()} onCreate={onCreate} />);
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    const date = screen.getByLabelText("Date for Snatch");
+    const originalDate = (date as HTMLInputElement).value;
+    fireEvent.change(date, { target: { value: "" } });
+    expect(screen.getByLabelText("Date for Snatch")).toHaveValue("");
+    fireEvent.change(date, { target: { value: originalDate } });
+    expect(screen.getByLabelText("Date for Snatch")).toHaveValue(originalDate);
+    fireEvent.change(date, { target: { value: "" } });
+    await user.click(screen.getByRole("button", { name: "Start and schedule program" }));
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      workoutDates: [
+        { workoutId: "workout-1", plannedDate: undefined },
+        { workoutId: "workout-2", plannedDate: expect.any(String) },
+      ],
+    }));
+  });
+
   it("keeps the initial frequency and selected training days in one rhythm", async () => {
     const user = userEvent.setup();
     render(

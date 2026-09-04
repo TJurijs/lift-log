@@ -111,7 +111,6 @@ import {
   formatDuration,
   formatWorkoutCount,
   getInitials,
-  sourceFromScheduledWorkout,
 } from "../lib/presentation";
 import {
   presentProgramProvenance,
@@ -162,9 +161,11 @@ import { ExerciseVideoLink } from "./exercise-video-link";
 import { useActiveWorkoutPersistence } from "./features/active-workout/useActiveWorkoutPersistence";
 import type { CoachWorkspaceProgram } from "./features/coaching/CoachWorkspace";
 import type { ProgramRunWizardSubmission } from "./features/program-runs/ProgramRunWizard";
+import { useCompletedHistory } from "./features/next-workouts/useCompletedHistory";
 import "./features/feature-styles.css";
 
 const CalendarView = lazy(() => import("./features/calendar/CalendarView"));
+const NextWorkoutsView = lazy(() => import("./features/next-workouts/NextWorkoutsView"));
 const loadProgramView = () => import("./features/programs/ProgramView");
 const ProgramView = lazy(loadProgramView);
 const CoachWorkspace = lazy(() =>
@@ -861,14 +862,14 @@ export default function LiftLogApp({
   const [upcomingCursor, setUpcomingCursor] = useState<CalendarCursor>();
   const [upcomingLoading, setUpcomingLoading] = useState(false);
   const [upcomingLoadError, setUpcomingLoadError] = useState("");
-  const [completedHistory, setCompletedHistory] = useState<CompletedSession[]>(
-    initialWorkspace.completedSessions,
-  );
-  const [completedHistoryLoaded, setCompletedHistoryLoaded] = useState(
-    !repository,
-  );
-  const [completedHistoryLoading, setCompletedHistoryLoading] = useState(false);
-  const [completedHistoryError, setCompletedHistoryError] = useState("");
+  const {
+    sessions: completedHistory,
+    loading: completedHistoryLoading,
+    error: completedHistoryError,
+    cursor: completedHistoryCursor,
+    load: loadCompletedHistory,
+    invalidate: invalidateCompletedHistory,
+  } = useCompletedHistory(repository, initialWorkspace.completedSessions);
   const upcomingLoadingRef = useRef(false);
   const upcomingInitializedRef = useRef(false);
   const upcomingCursorRef = useRef<CalendarCursor | undefined>(undefined);
@@ -1017,23 +1018,6 @@ export default function LiftLogApp({
     [repository],
   );
   upcomingLoaderRef.current = loadUpcomingWorkouts;
-
-  const loadCompletedHistory = useCallback(async () => {
-    if (!repository || completedHistoryLoaded || completedHistoryLoading) return;
-    setCompletedHistoryLoading(true);
-    setCompletedHistoryError("");
-    try {
-      const page = await repository.listCompletedSessionSummaries({ limit: 20 });
-      setCompletedHistory(page.items);
-      setCompletedHistoryLoaded(true);
-    } catch (error) {
-      setCompletedHistoryError(
-        error instanceof Error ? error.message : "Completed workouts could not be loaded.",
-      );
-    } finally {
-      setCompletedHistoryLoading(false);
-    }
-  }, [completedHistoryLoaded, completedHistoryLoading, repository]);
 
   useEffect(() => {
     if (
@@ -1741,6 +1725,7 @@ export default function LiftLogApp({
       return;
     }
     if (programAction) return;
+    const requestId = ++programHistoryRequestRef.current;
     setProgramAction({ id: targetProgram.id, kind: "open" });
     try {
       const detail = await repository.loadProgramDetail(
@@ -1749,10 +1734,12 @@ export default function LiftLogApp({
         targetProgram.versionId,
         targetProgram.assignmentId,
       );
+      if (programHistoryRequestRef.current !== requestId) return;
       if (!detail) throw new Error("This program is no longer available.");
       selectProgram(detail);
       setActiveView("program");
     } catch (error) {
+      if (programHistoryRequestRef.current !== requestId) return;
       notify(
         error instanceof Error
           ? error.message
@@ -1764,6 +1751,7 @@ export default function LiftLogApp({
   }
 
   async function viewScheduledPlan(schedule: ScheduledWorkout) {
+    const requestId = ++programHistoryRequestRef.current;
     try {
       const matchingProgram = programCatalog.find(
         (candidate) => candidate.id === schedule.programId,
@@ -1783,6 +1771,7 @@ export default function LiftLogApp({
               : matchingProgram,
             null,
           ];
+      if (programHistoryRequestRef.current !== requestId) return;
       if (!nextProgram) throw new Error("This plan version is no longer available.");
       programWorkoutPreviewOriginRef.current = {
         schedule,
@@ -1802,6 +1791,7 @@ export default function LiftLogApp({
       setActiveView("program");
       scrollToAppTop();
     } catch (error) {
+      if (programHistoryRequestRef.current !== requestId) return;
       notify(
         error instanceof Error ? error.message : "The plan could not be opened",
       );
@@ -1902,12 +1892,19 @@ export default function LiftLogApp({
   }
 
   function navigate(view: ViewName) {
+    completedWorkoutRequestRef.current += 1;
+    completedWorkoutRestoreKeyRef.current = null;
+    programHistoryRequestRef.current += 1;
+    programHistoryRestoreKeyRef.current = null;
+    setDetail(null);
     if (view === "today" && activeSession && activeWorkoutVisible) {
       setActiveWorkoutVisible(false);
       setDetail(null);
     }
-    if (view === "program" && programOwnerId !== viewer.id) {
+    if (view === "program") {
       setProgram(null);
+      setViewingProgramRunId(null);
+      setViewingProgramRunDetail(null);
       setProgramOwnerId(viewer.id);
     }
     if (
@@ -1923,6 +1920,7 @@ export default function LiftLogApp({
   }
 
   function leaveDetail(returnView: ViewName) {
+    programHistoryRequestRef.current += 1;
     setDetail(null);
     setActiveWorkoutVisible(false);
     if (!leaveAppDetailHistory()) {
@@ -2341,6 +2339,7 @@ export default function LiftLogApp({
   }
 
   async function finishWorkout() {
+    if (activeSession && !activeWorkoutPersistence.editable) return;
     if (workoutActionRef.current) return;
     workoutActionRef.current = "finishing";
     setWorkoutAction("finishing");
@@ -2394,7 +2393,7 @@ export default function LiftLogApp({
 
         await clearConfirmedActiveSession(activeSession, "completed");
         completionTokenRef.current = null;
-        setCompletedHistoryLoaded(false);
+        invalidateCompletedHistory();
         const visibleRange = lastCalendarRangeRef.current;
         await Promise.allSettled([
           refreshProgramRunSummaries(),
@@ -2976,17 +2975,19 @@ export default function LiftLogApp({
       return;
     }
     if (programAction) return;
+    const requestId = ++programHistoryRequestRef.current;
     setProgramAction({ id: targetProgram.id, kind: "edit" });
     try {
       requireCapability(capabilitiesForProgram(targetProgram), "edit");
-      selectProgram(
-        await repository.loadEditableProgram(
-          targetProgram.athleteId,
-          targetProgram.id,
-        ),
+      const editableProgram = await repository.loadEditableProgram(
+        targetProgram.athleteId,
+        targetProgram.id,
       );
+      if (programHistoryRequestRef.current !== requestId) return;
+      selectProgram(editableProgram);
       setActiveView("program");
     } catch (error) {
+      if (programHistoryRequestRef.current !== requestId) return;
       notify(
         error instanceof Error
           ? error.message
@@ -4019,6 +4020,7 @@ export default function LiftLogApp({
     scheduleId: string,
     status: "planned" | "skipped",
   ) {
+    if (activeSession?.scheduledWorkoutId === scheduleId && !activeWorkoutPersistence.editable) return;
     if (scheduleStatusAction) return;
     setScheduleStatusAction({ id: scheduleId, status });
     try {
@@ -4133,9 +4135,9 @@ export default function LiftLogApp({
     programVersionId?: string,
   ) {
     if (openingCoachProgramId) return;
+    const requestId = ++programHistoryRequestRef.current;
     setOpeningCoachProgramId(assignedProgram.id);
     try {
-      setProgramOwnerId(athlete.id);
       if (!repository) {
         navigate("program");
         return;
@@ -4170,6 +4172,8 @@ export default function LiftLogApp({
                 ),
             null,
           ];
+      if (programHistoryRequestRef.current !== requestId) return;
+      setProgramOwnerId(athlete.id);
       if (nextProgram) {
         const targetWorkoutId =
           workoutId ??
@@ -4194,6 +4198,7 @@ export default function LiftLogApp({
       setActiveView("program");
       scrollToAppTop();
     } catch (error) {
+      if (programHistoryRequestRef.current !== requestId) return;
       notify(
         error instanceof Error
           ? error.message
@@ -4209,6 +4214,7 @@ export default function LiftLogApp({
     returnView: "today" | "program" = "today",
   ) {
     if (openingCoachProgramId) return;
+    const requestId = ++programHistoryRequestRef.current;
     setOpeningCoachProgramId(run.id);
     try {
       const [nextProgram, runDetail] = await Promise.all([
@@ -4220,6 +4226,7 @@ export default function LiftLogApp({
             ),
         loadProgramRunDetail(run.id),
       ]);
+      if (programHistoryRequestRef.current !== requestId) return;
       if (!nextProgram) throw new Error("This program revision is no longer available.");
       const workoutId =
         (runDetail && nextIncompleteRunWorkoutId(runDetail.workouts)) ??
@@ -4235,6 +4242,7 @@ export default function LiftLogApp({
       updateAppViewUrl("program");
       scrollToAppTop();
     } catch (error) {
+      if (programHistoryRequestRef.current !== requestId) return;
       notify(
         error instanceof Error
           ? error.message
@@ -4434,6 +4442,9 @@ export default function LiftLogApp({
             sessionRpe={sessionRpe}
             sessionNote={sessionNote}
             sessionSaveStatus={sessionSaveStatus}
+            editable={activeWorkoutPersistence.editable}
+            editingBlockedReason={activeWorkoutPersistence.editingBlockedReason}
+            onRetryEditing={activeWorkoutPersistence.retryEditing}
             localRecoveryAvailable={localRecoveryAvailable}
             online={isOnline}
             onStart={() =>
@@ -4532,11 +4543,14 @@ export default function LiftLogApp({
           !completedWorkoutView &&
           (!activeSession || !activeWorkoutVisible) &&
           !workoutPreviewSchedule && (
+          <Suspense fallback={<div className="feature-load-status" role="status">Loading workouts…</div>}>
           <NextWorkoutsView
             schedules={upcomingWorkouts}
             completedSessions={completedHistory}
             completedLoading={completedHistoryLoading}
             completedError={completedHistoryError}
+            completedHasMore={Boolean(completedHistoryCursor)}
+            onLoadMoreCompleted={() => void loadCompletedHistory(true)}
             hasMore={Boolean(upcomingCursor)}
             loading={upcomingLoading}
             error={upcomingLoadError}
@@ -4600,6 +4614,7 @@ export default function LiftLogApp({
             }}
             statusAction={scheduleStatusAction}
           />
+          </Suspense>
         )}
         {activeView === "program" && program && currentWeek && (
           <Suspense
@@ -5411,278 +5426,6 @@ function Sidebar({
   );
 }
 
-function NextWorkoutsView({
-  schedules,
-  completedSessions,
-  hasProgram,
-  hasPublishedProgram,
-  startingScheduleId,
-  activeScheduleId,
-  onNavigate,
-  onSchedule,
-  onStart,
-  onOpen,
-  onSetStatus,
-  statusAction,
-  hasMore = false,
-  loading = false,
-  error = null,
-  onLoadMore,
-  completedLoading = false,
-  completedError = null,
-  onLoadCompleted,
-  onOpenCompleted,
-}: {
-  schedules: ScheduledWorkout[];
-  completedSessions: CompletedSession[];
-  hasProgram: boolean;
-  hasPublishedProgram: boolean;
-  startingScheduleId: string | null;
-  activeScheduleId: string | null;
-  onNavigate: (view: ViewName) => void;
-  onSchedule: () => void;
-  onStart: (schedule: ScheduledWorkout) => void;
-  onOpen: (schedule: ScheduledWorkout) => void;
-  onSetStatus: (scheduleId: string, status: "planned" | "skipped") => void;
-  statusAction: { id: string; status: "planned" | "skipped" } | null;
-  hasMore?: boolean;
-  loading?: boolean;
-  error?: string | null;
-  onLoadMore?: () => void;
-  completedLoading?: boolean;
-  completedError?: string | null;
-  onLoadCompleted?: () => void;
-  onOpenCompleted: (session: CompletedSession) => void;
-}) {
-  const [showCompleted, setShowCompleted] = useState(false);
-  const completedHistory = [...completedSessions].sort((left, right) =>
-    right.date.localeCompare(left.date),
-  );
-  const toggleCompletedHistory = () => {
-    const nextVisible = !showCompleted;
-    setShowCompleted(nextVisible);
-    if (nextVisible) onLoadCompleted?.();
-  };
-  const completedControl = (
-    <button
-      type="button"
-      className="button secondary"
-      aria-pressed={showCompleted}
-      onClick={toggleCompletedHistory}
-    >
-      <Check size={15} />
-      {showCompleted ? "Hide completed" : "Show completed"}
-    </button>
-  );
-  const completedSection = showCompleted ? (
-    <section className="next-workouts-list" aria-label="Completed workouts">
-      <div className="section-heading">
-        <span>Completed workouts</span>
-        <small>{completedHistory.length === 1 ? "1 workout" : `${completedHistory.length} workouts`}</small>
-      </div>
-      {completedLoading ? (
-        <div className="feature-load-status" role="status">
-          <LoaderCircle size={16} className="spin" />
-          Loading completed workouts…
-        </div>
-      ) : completedError ? (
-        <div className="feature-load-status error" role="alert">
-          <span>{completedError}</span>
-          <button className="text-button" onClick={onLoadCompleted}>Try again</button>
-        </div>
-      ) : completedHistory.length ? completedHistory.map((session) => {
-        const date = new Date(`${session.date}T12:00:00`);
-        const dateLabel = date.toLocaleDateString("en", {
-          weekday: "long",
-          day: "numeric",
-          month: "long",
-        });
-        return (
-          <article className="panel next-workout-card" key={session.id}>
-            <div className="next-workout-date">
-              <Check size={17} />
-              <div>
-                <small>Completed</small>
-                <strong>{dateLabel}</strong>
-              </div>
-            </div>
-            <button
-              className="next-workout-summary"
-              onClick={() => onOpenCompleted(session)}
-            >
-              <p>Workout results</p>
-              <h2>{session.workoutTitle}</h2>
-              <small>
-                {session.durationMinutes ? formatDuration(session.durationMinutes) : "Completed"}
-                {session.rpe ? ` · RPE ${session.rpe}` : ""}
-              </small>
-            </button>
-            <StatusBadge status="completed" compact />
-          </article>
-        );
-      }) : (
-        <p className="calendar-day-agenda-empty">No completed workouts yet.</p>
-      )}
-    </section>
-  ) : null;
-  const loadMoreControl = error ? (
-    <div className="feature-load-status error" role="alert">
-      <span>{error}</span>
-      {onLoadMore && (
-        <button className="text-button" onClick={onLoadMore}>
-          Try again
-        </button>
-      )}
-    </div>
-  ) : hasMore || loading ? (
-    <AsyncButton
-      className="button secondary library-load-more"
-      loading={loading}
-      loadingLabel="Loading workouts…"
-      disabled={!onLoadMore}
-      onClick={onLoadMore}
-    >
-      Load more workouts
-    </AsyncButton>
-  ) : null;
-
-  if (schedules.length) {
-    return (
-      <>
-        <PageHeader
-          eyebrow="Your schedule"
-          title="Next workouts"
-          description="Every workout scheduled from today onward. Start any one whenever you are ready."
-        >
-          {completedControl}
-        </PageHeader>
-        <section className="next-workouts-list" aria-label="Scheduled workouts">
-          {schedules.map((schedule) => {
-            const date = new Date(`${schedule.plannedDate}T12:00:00`);
-            const dateLabel = date.toLocaleDateString("en", {
-              weekday: "long",
-              day: "numeric",
-              month: "long",
-            });
-            return (
-              <article className="panel next-workout-card" key={schedule.id}>
-                <div className="next-workout-date">
-                  <CalendarDays size={17} />
-                  <div>
-                    <small>{dateLabel}</small>
-                    <strong>{schedule.plannedDate}</strong>
-                  </div>
-                </div>
-                <button
-                  className="next-workout-summary"
-                  onClick={() => onOpen(schedule)}
-                >
-                  <SourceTag source={sourceFromScheduledWorkout(schedule)} compact />
-                  <p>{schedule.programTitle}</p>
-                  <h2>{schedule.workoutTitle}</h2>
-                  <small>
-                    {schedule.workout.dayLabel}
-                    {schedule.workout.durationMinutes > 0
-                      ? ` · ${formatDuration(schedule.workout.durationMinutes)}`
-                      : ""}
-                  </small>
-                </button>
-                {schedule.status === "skipped" ? (
-                  <AsyncButton
-                    className="button secondary"
-                    loading={statusAction?.id === schedule.id}
-                    loadingLabel="Restoring…"
-                    onClick={() => onSetStatus(schedule.id, "planned")}
-                  >
-                    Set back to planned
-                  </AsyncButton>
-                ) : (
-                  <AsyncButton
-                    className="button primary"
-                    loading={startingScheduleId === schedule.id}
-                    loadingLabel="Starting…"
-                    icon={Activity}
-                    onClick={() => onStart(schedule)}
-                  >
-                    {activeScheduleId === schedule.id
-                      ? "Resume workout"
-                      : "Start workout"}
-                  </AsyncButton>
-                )}
-              </article>
-            );
-          })}
-        </section>
-        {loadMoreControl}
-        {completedSection}
-      </>
-    );
-  }
-
-  if (loading || error || hasMore) {
-    return (
-      <>
-        <PageHeader
-          eyebrow="Your schedule"
-          title="Next workouts"
-          description="Scheduled workouts will appear here as they load."
-        >
-          {completedControl}
-        </PageHeader>
-        {loadMoreControl}
-        {completedSection}
-      </>
-    );
-  }
-
-  return (
-    <>
-      <PageHeader
-        eyebrow="Next workouts"
-        title="No future workouts scheduled"
-        description={
-          hasProgram
-            ? "Start a program to schedule the full workout sequence, or keep its dates flexible."
-            : "Start only when you choose a program or create one of your own."
-        }
-      >
-        {completedControl}
-      </PageHeader>
-      <div className="panel empty-state today-empty">
-        <CalendarDays size={28} />
-        <h3>
-          {hasProgram
-            ? "Choose a training plan"
-            : "No training has been added"}
-        </h3>
-        <p>
-          {hasProgram
-            ? hasPublishedProgram
-              ? "You can set every workout date in one step and adjust them later."
-              : "Open an editable program and add at least one workout."
-            : "Browse the collapsed program library or build a plan from scratch."}
-        </p>
-        <div className="empty-actions">
-          {hasPublishedProgram && (
-            <button className="button primary" onClick={onSchedule}>
-              <Activity size={15} />
-              Start training
-            </button>
-          )}
-          <button
-            className="button secondary"
-            onClick={() => onNavigate("program")}
-          >
-            <Dumbbell size={15} />
-            {hasProgram ? "Open program" : "Choose a program"}
-          </button>
-        </div>
-      </div>
-      {completedSection}
-    </>
-  );
-}
-
 function TodayView({
   program,
   viewerId,
@@ -5699,6 +5442,9 @@ function TodayView({
   sessionRpe,
   sessionNote,
   sessionSaveStatus,
+  editable,
+  editingBlockedReason,
+  onRetryEditing,
   localRecoveryAvailable,
   online,
   onStart,
@@ -5736,6 +5482,9 @@ function TodayView({
   sessionRpe: string;
   sessionNote: string;
   sessionSaveStatus: SessionDraftSaveStatus;
+  editable: boolean;
+  editingBlockedReason: string | null;
+  onRetryEditing: () => void;
   localRecoveryAvailable: boolean;
   online: boolean;
   onStart: () => void;
@@ -5865,7 +5614,7 @@ function TodayView({
           <>
             <button
               className="button secondary workout-back-action"
-              disabled={statusAction !== null}
+              disabled={statusAction !== null || !editable}
               onClick={onSetPlanned}
               aria-label="Set back to planned"
             >
@@ -5884,7 +5633,7 @@ function TodayView({
             </button>
             <button
               className="button danger"
-              disabled={statusAction !== null}
+              disabled={statusAction !== null || !editable}
               onClick={onSkip}
             >
               {statusAction === "skipped" ? (
@@ -5916,6 +5665,12 @@ function TodayView({
         )}
         </div>
       </PageHeader>
+      {workoutStarted && !editable && (
+        <div className="feature-load-status" role="status">
+          <span>{editingBlockedReason ?? "Preparing your saved workout…"}</span>
+          {editingBlockedReason && <button type="button" className="text-button" onClick={onRetryEditing}>Try again</button>}
+        </div>
+      )}
       {workoutComplete && (
         <div className="success-banner">
           <span>
@@ -5933,7 +5688,7 @@ function TodayView({
         </div>
       )}
       <div className="today-layout">
-        <article className="workout-card">
+        <fieldset className="workout-card" aria-label="Workout log" disabled={workoutStarted && !editable}>
           <div className="workout-heading">
             <div>
               {!isQuickWorkout && (
@@ -6023,7 +5778,7 @@ function TodayView({
               </AsyncButton>
             </div>
           )}
-        </article>
+        </fieldset>
       </div>
     </>
   );
@@ -7184,10 +6939,16 @@ function ProgramsHome({
             <div className="empty-state compact">
               <Search size={24} />
               <h3>No matching training content</h3>
-              <p>Adjust the search or filters to see more programs and workouts.</p>
+              <p>{hasMore ? "No matches in the programs loaded so far. Search older programs or adjust your filters." : "Adjust the search or filters to see more programs and workouts."}</p>
               <button className="button secondary small" onClick={resetProgramFilters}>
                 Clear filters
               </button>
+              {loadError && <InlineError>{loadError}</InlineError>}
+              {hasMore && (
+                <AsyncButton className="button secondary small library-load-more" loading={loadingMore} loadingLabel="Loading…" onClick={onLoadMore}>
+                  Search older programs
+                </AsyncButton>
+              )}
             </div>
           ) : (
             <div className="empty-state compact">

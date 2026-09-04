@@ -12,6 +12,13 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("app view routing", () => {
+  it("top-level navigation clears detail state even when the hash is unchanged", () => {
+    window.history.replaceState({}, "", "/#/program");
+    pushAppDetailHistory("program", "program");
+    updateAppViewUrl("program");
+    expect(appDetailFromHistory()).toBeNull();
+    expect(window.location.hash).toBe("#/program");
+  });
   it("parses supported hash routes and defaults safely", () => {
     expect(parseAppView("#/calendar")).toBe("calendar");
     expect(parseAppView("#program")).toBe("program");

@@ -30,6 +30,7 @@ import {
 } from "../../../lib/domain";
 import type { TrainingContentCapabilities } from "../../../lib/capabilities";
 import { cn } from "../../../lib/presentation";
+import { formatDateOnly } from "../../../lib/date-only";
 import { programRunLifecycleLabel } from "../../../lib/program-progress";
 import { presentProgramProvenance } from "../../../lib/provenance";
 import { ExerciseCategoryMark } from "../../exercise-category-icons";
@@ -77,39 +78,6 @@ export interface ProgramViewProps {
   workoutActivity?: CoachAgendaEntry[];
   onOpenActivity?: (entry: CoachAgendaEntry) => void;
 }
-
-const programMobileExercisePickerCss = `
-.exercise-picker-modal{max-height:min(78dvh,680px);display:grid;grid-template-rows:auto auto minmax(0,1fr);overflow:hidden}
-.exercise-picker-modal .modal-heading{margin-bottom:10px}
-.exercise-picker-modal .search-field{margin-bottom:10px}
-.exercise-picker-modal .picker-results{min-height:0;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
-.exercise-picker-modal .picker-results::-webkit-scrollbar{display:none}
-.exercise-picker-modal .picker-result-row{grid-template-columns:minmax(0,1fr) 30px;border:1px solid var(--line);border-radius:9px}
-.exercise-picker-modal .picker-result-main{padding:9px 10px;grid-template-columns:34px minmax(0,1fr) 20px}
-.exercise-picker-modal .picker-results strong{font-size:10px}
-.exercise-picker-modal .picker-results small{font-size:8px}
-.exercise-reorder-row{min-height:28px;display:flex;justify-content:flex-end;align-items:center}
-.workout-reorder-toggle{width:auto!important;margin:0!important}
-.program-reorder-controls{display:flex;gap:2px;margin-left:3px}
-.program-reorder-controls .drag-handle{cursor:pointer;touch-action:manipulation}
-.builder-exercise-preview.drag-enabled{padding-left:70px}
-.builder-exercise-preview>.program-reorder-controls{position:absolute;top:8px;left:3px;margin:0}
-.workout-activity{margin:0 0 18px;padding:12px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.015)}
-.workout-activity-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.workout-activity-heading strong{font-size:12px}.workout-activity-heading span{font-size:10px;color:var(--muted)}
-.workout-activity-list{display:grid;gap:6px}.workout-activity-list button{display:flex;align-items:center;justify-content:space-between;width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-soft);color:var(--text);text-align:left}.workout-activity-list button>span:first-child{display:grid;gap:2px}.workout-activity-list small{color:var(--muted)}
-.workout-activity-rpe{padding:4px 7px;border-radius:999px;font-size:10px}.workout-activity-rpe.low{color:#75bfff;background:rgba(63,159,255,.12)}.workout-activity-rpe.balanced{color:var(--lime);background:rgba(187,255,77,.1)}.workout-activity-rpe.high{color:#ffad58;background:rgba(255,158,64,.12)}
-.run-workout-status{font-weight:750}.run-workout-status.scheduled{color:#75bfff}.run-workout-status.in_progress{color:#ffad58}.run-workout-status.completed{color:var(--lime)}.run-workout-status.skipped,.run-workout-status.cancelled,.run-workout-status.unscheduled{color:var(--muted)}
-.workout-activity-list button:disabled{cursor:default;opacity:1}
-@media(max-width:700px){
-  .modal-backdrop:has(.exercise-picker-modal){padding:10px;place-items:end center}
-  .exercise-picker-modal .picker-results{min-height:0;grid-template-columns:1fr;grid-auto-rows:minmax(56px,auto);gap:5px;align-content:start;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
-  .exercise-picker-modal .picker-result-main{padding:8px 10px;grid-template-columns:34px minmax(0,1fr) 20px}
-  .exercise-picker-modal .picker-results strong{font-size:12px}
-  .exercise-picker-modal .picker-results small{font-size:10px}
-  .exercise-picker-modal .picker-help{display:none}
-  .exercise-reorder-row{min-height:34px}
-  .builder-exercise-preview.drag-enabled{padding-left:100px}
-}`;
 
 export default function ProgramView({
   program,
@@ -210,6 +178,7 @@ export default function ProgramView({
           : { status: "locked" as const, label: "Ended" }
     : null;
   useEffect(() => {
+    if (!editable || !pickerOpen) return;
     let active = true;
     const timer = window.setTimeout(() => {
       setPickerLoading(true);
@@ -234,7 +203,7 @@ export default function ProgramView({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [onSearchExercises, pickerQuery]);
+  }, [editable, onSearchExercises, pickerOpen, pickerQuery]);
   const workoutItems = selectedWorkout?.sections.flatMap((section) => section.items) ?? [];
   const selectedWorkoutIndex = workouts.findIndex(
     (workout) => workout.id === selectedWorkout?.id,
@@ -242,6 +211,9 @@ export default function ProgramView({
 
   function openExercisePicker() {
     setPickerQuery("");
+    setPickerResults([]);
+    setPickerError("");
+    setPickerLoading(true);
     setPickerOpen(true);
   }
 
@@ -274,7 +246,12 @@ export default function ProgramView({
         <input
           aria-label="Search exercises"
           value={pickerQuery}
-          onChange={(event) => setPickerQuery(event.target.value)}
+          onChange={(event) => {
+            setPickerQuery(event.target.value);
+            setPickerLoading(true);
+            setPickerResults([]);
+            setPickerError("");
+          }}
           placeholder="Search exercises"
         />
       </label>
@@ -330,7 +307,6 @@ export default function ProgramView({
   ) : undefined;
   return (
     <>
-      <style>{programMobileExercisePickerCss}</style>
       <DetailNavigation
         backLabel={backLabel}
         title={isQuickWorkout ? "Workout" : "Program"}
@@ -728,11 +704,11 @@ export default function ProgramView({
 }
 
 function coachActivityDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
+  return formatDateOnly(value, {
     weekday: "short",
     month: "short",
     day: "numeric",
-  }).format(new Date(`${value}T12:00:00`));
+  });
 }
 
 function runWorkoutStatusLabel(status: ProgramRunWorkout["status"]) {

@@ -22,6 +22,17 @@ export function dateOnlyDayNumber(value: string) {
   return Math.floor(instant.getTime() / DAY_MS);
 }
 
+/** Format a calendar date without letting the device timezone shift its day. */
+export function formatDateOnly(
+  value: string,
+  options: Omit<Intl.DateTimeFormatOptions, "timeZone">,
+  locales?: Intl.LocalesArgument,
+) {
+  return new Intl.DateTimeFormat(locales, { ...options, timeZone: "UTC" }).format(
+    new Date(dateOnlyDayNumber(value) * DAY_MS),
+  );
+}
+
 export function differenceInCalendarDays(later: string, earlier: string) {
   return dateOnlyDayNumber(later) - dateOnlyDayNumber(earlier);
 }

@@ -89,6 +89,12 @@ function renderWorkout(
   );
 }
 
+async function waitForWorkoutEditing() {
+  await waitFor(() =>
+    expect(screen.getByPlaceholderText("What felt good? Anything to adjust next time?")).toBeEnabled(),
+  );
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   Object.defineProperty(navigator, "onLine", {
@@ -107,6 +113,33 @@ afterEach(() => {
 });
 
 describe("active workout reload recovery", () => {
+  it("opens an editable cached workspace offline and restores its unconfirmed entries", async () => {
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    const { activeSession, workspace } = activeWorkoutFixture();
+    const firstRepository = repositoryFor(activeSession);
+    const firstRender = renderWorkout(workspace, firstRepository.repository);
+    await waitForWorkoutEditing();
+    fireEvent.change(screen.getByRole("textbox", { name: "Session notes optional" }), {
+      target: { value: "Entries saved while offline" },
+    });
+    window.dispatchEvent(new Event("pagehide"));
+    firstRender.unmount();
+
+    const cachedWorkspace = await loadCachedActiveWorkoutWorkspace(demoViewer);
+    expect(cachedWorkspace).not.toBeNull();
+    expect(cachedWorkspace?.activeSession?.draftRevision).toBe(activeSession.draftRevision);
+    expect(cachedWorkspace?.activeSession?.sessionNote).toBe(activeSession.sessionNote);
+    const secondRepository = repositoryFor(activeSession);
+    renderWorkout(cachedWorkspace!, secondRepository.repository);
+
+    await waitForWorkoutEditing();
+    expect(screen.getByRole("textbox", { name: "Session notes optional" })).toHaveValue("Entries saved while offline");
+    expect(screen.getByText("Saved on this device · reconnect to sync", { exact: true })).toBeVisible();
+    expect(secondRepository.repository.reloadActiveSession).not.toHaveBeenCalled();
+    expect(firstRepository.saveSessionDraft).not.toHaveBeenCalled();
+    expect(secondRepository.saveSessionDraft).not.toHaveBeenCalled();
+  });
+
   it("restores a newer local snapshot even when the server revision advanced", async () => {
     const { activeSession, item, workspace } = activeWorkoutFixture();
     const store = new ActiveWorkoutDraftStore({ storage: window.localStorage });
@@ -224,6 +257,7 @@ describe("active workout reload recovery", () => {
     } as unknown as LiftLogRepository;
 
     renderWorkout(workspace, repository);
+    await waitForWorkoutEditing();
     fireEvent.change(
       screen.getByLabelText(`${item.title}, set 1, load in kg`),
       { target: { value: "72" } },
@@ -320,6 +354,7 @@ describe("active workout reload recovery", () => {
     } as unknown as LiftLogRepository;
 
     renderWorkout(workspace, repository);
+    await waitForWorkoutEditing();
     fireEvent.change(
       screen.getByLabelText(`${item.title}, set 1, load in kg`),
       { target: { value: "72" } },
@@ -354,6 +389,7 @@ describe("active workout reload recovery", () => {
     } as unknown as LiftLogRepository;
 
     renderWorkout(workspace, repository);
+    await waitForWorkoutEditing();
     fireEvent.click(
       screen.getByRole("button", { name: "Finish and save session" }),
     );
@@ -407,6 +443,7 @@ describe("active workout reload recovery", () => {
       setScheduledWorkoutStatus: vi.fn().mockResolvedValue(undefined),
     } as unknown as LiftLogRepository;
     renderWorkout(workspace, repository);
+    await waitForWorkoutEditing();
     fireEvent.click(
       screen.getByRole("button", { name: "Set back to planned" }),
     );

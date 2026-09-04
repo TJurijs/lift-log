@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { ActiveWorkoutDraftStore } from "../../lib/active-workout-draft-storage";
@@ -10,13 +10,16 @@ const authHarness = vi.hoisted(() => ({
   dispose: vi.fn(),
   getSession: vi.fn(),
   loadBootstrap: vi.fn(),
+  signInWithOAuth: vi.fn(),
+  signOut: vi.fn(),
   repositoryConstructions: 0,
+  repositoryFailures: 0,
 }));
 
 vi.mock("../../app/TestPersonaSwitcher", () => ({ default: () => null }));
 vi.mock("../../app/LiftLogApp", () => ({
-  default: ({ viewer }: { viewer: { id: string } }) => (
-    <div data-testid="lift-log-app">{viewer.id}</div>
+  default: ({ viewer, onSignOut }: { viewer: { id: string }; onSignOut: () => void }) => (
+    <div data-testid="lift-log-app">{viewer.id}<button onClick={onSignOut}>Sign out</button></div>
   ),
 }));
 vi.mock("../../lib/auth", () => ({
@@ -24,6 +27,8 @@ vi.mock("../../lib/auth", () => ({
   getSupabaseBrowserClient: () => ({
     auth: {
       getSession: authHarness.getSession,
+      signInWithOAuth: authHarness.signInWithOAuth,
+      signOut: authHarness.signOut,
       onAuthStateChange: (
         callback: (event: AuthChangeEvent, session: Session | null) => void,
       ) => {
@@ -43,6 +48,10 @@ vi.mock("../../lib/repository", () => ({
   LiftLogRepository: class {
     constructor() {
       authHarness.repositoryConstructions += 1;
+      if (authHarness.repositoryFailures > 0) {
+        authHarness.repositoryFailures -= 1;
+        throw new Error("Data layer unavailable");
+      }
     }
 
     dispose() {
@@ -76,7 +85,11 @@ describe("auth session lifecycle", () => {
     authHarness.dispose.mockReset();
     authHarness.getSession.mockReset();
     authHarness.loadBootstrap.mockReset();
+    authHarness.signInWithOAuth.mockReset();
+    authHarness.signOut.mockReset();
     authHarness.repositoryConstructions = 0;
+    authHarness.repositoryFailures = 0;
+    window.history.replaceState({}, "", "/");
   });
 
   it("applies the first resolved session, including an anonymous session", () => {
@@ -180,6 +193,86 @@ describe("auth session lifecycle", () => {
 
     expect(screen.getByTestId("lift-log-app")).toHaveTextContent("user-2");
     expect(authHarness.repositoryConstructions).toBe(1);
+    expect(authHarness.loadBootstrap).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["reject", "returned-error"])("leaves the opening screen when session restoration fails (%s)", async (failure) => {
+    const error = new Error("Storage unavailable");
+    if (failure === "reject") authHarness.getSession.mockRejectedValue(error);
+    else authHarness.getSession.mockResolvedValue({ data: { session: null }, error });
+
+    render(<AppEntry />);
+
+    expect(await screen.findByText("Your sign-in session could not be restored. Please sign in again.")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Continue with Google/ })).toBeEnabled();
+  });
+
+  it("recovers from a rejected OAuth request and keeps the coach invitation in the return URL", async () => {
+    authHarness.getSession.mockResolvedValue({ data: { session: null } });
+    authHarness.signInWithOAuth.mockRejectedValue(new TypeError("Failed to fetch"));
+    window.history.replaceState({}, "", "/?coach_invite=invitation-token");
+    render(<AppEntry />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Continue with Google/ }));
+
+    expect(await screen.findByText("Sign-in didn’t complete. Please try again.")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Continue with Google/ })).toBeEnabled();
+    expect(authHarness.signInWithOAuth).toHaveBeenCalledWith({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/?coach_invite=invitation-token` },
+    });
+  });
+
+  it.each(["reject", "returned-error"])("keeps a usable workspace when sign-out fails before removing the session (%s)", async (failure) => {
+    authHarness.getSession.mockResolvedValue({ data: { session: session("user-1") } });
+    authHarness.loadBootstrap.mockResolvedValue({});
+    const error = new Error("Storage unavailable");
+    if (failure === "reject") authHarness.signOut.mockRejectedValue(error);
+    else authHarness.signOut.mockResolvedValue({ error });
+    render(<AppEntry />);
+    await screen.findByTestId("lift-log-app");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(await screen.findByText("Sign-out didn’t complete. Please try again.")).toBeVisible();
+    expect(screen.getByTestId("lift-log-app")).toHaveTextContent("user-1");
+    expect(authHarness.dispose).not.toHaveBeenCalled();
+  });
+
+  it.each(["user-1", "user-2"])("does not let an earlier sign-out response remove a new sign-in for %s", async (nextUserId) => {
+    const signOut = controlledPromise<{ error: null }>();
+    authHarness.getSession.mockResolvedValue({ data: { session: session("user-1") } });
+    authHarness.loadBootstrap.mockResolvedValue({});
+    authHarness.signOut.mockReturnValue(signOut.promise);
+    render(<AppEntry />);
+    await screen.findByTestId("lift-log-app");
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    act(() => {
+      authHarness.callback?.("SIGNED_OUT", null);
+      authHarness.callback?.("SIGNED_IN", session(nextUserId));
+    });
+    await waitFor(() => expect(screen.getByTestId("lift-log-app")).toHaveTextContent(nextUserId));
+
+    await act(async () => { signOut.resolve({ error: null }); });
+
+    expect(screen.getByTestId("lift-log-app")).toHaveTextContent(nextUserId);
+    expect(authHarness.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed data-layer initialization and keeps retry available after another failure", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    authHarness.getSession.mockResolvedValue({ data: { session: session("user-1") } });
+    authHarness.loadBootstrap.mockResolvedValue({});
+    authHarness.repositoryFailures = 2;
+    render(<AppEntry />);
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+
+    expect(await screen.findByTestId("lift-log-app")).toHaveTextContent("user-1");
+    expect(authHarness.repositoryConstructions).toBe(3);
     expect(authHarness.loadBootstrap).toHaveBeenCalledTimes(1);
   });
 

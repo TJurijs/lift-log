@@ -49,8 +49,13 @@ The report covers:
 Wall-clock times are recorded for observation, not used as pass/fail gates. The
 assertions target stable architecture contracts instead: result caps, one shared
 assignment per athlete, zero cloned content rows, exactly one occurrence, zero
-eager session rows, idempotent retries, read-only WAL, and conservative mutation
+eager session rows, idempotent retries, database-enforced read-only queries, and conservative mutation
 WAL amplification ceilings.
+
+Read benchmarks set `transaction_read_only=on` after fixture setup. Cold read
+WAL is recorded rather than assumed to be zero: PostgreSQL can write page images
+when a SELECT updates visibility hint bits. This does not permit data mutations;
+the database rejects writes during each measured read.
 
 ## Running it
 

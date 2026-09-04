@@ -116,4 +116,34 @@ describe("active workout retry policy", () => {
     expect(operation).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
   });
+
+  it("releases each retry delay listener after the timer completes", async () => {
+    const abort = new AbortController();
+    const addListener = vi.spyOn(abort.signal, "addEventListener");
+    const removeListener = vi.spyOn(abort.signal, "removeEventListener");
+    const operation = vi.fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValue("saved");
+
+    await expect(runWithActiveWorkoutRetry(operation, {
+      signal: abort.signal,
+      baseDelayMs: 1,
+      jitterRatio: 0,
+    })).resolves.toBe("saved");
+
+    expect(addListener).toHaveBeenCalledOnce();
+    expect(removeListener).toHaveBeenCalledWith("abort", addListener.mock.calls[0][1]);
+  });
+
+  it("cancels the retry delay without sending another mutation", async () => {
+    const abort = new AbortController();
+    const operation = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    const result = runWithActiveWorkoutRetry(operation, {
+      signal: abort.signal,
+      onRetry: () => abort.abort(),
+    });
+
+    await expect(result).rejects.toMatchObject({ name: "AbortError" });
+    expect(operation).toHaveBeenCalledOnce();
+  });
 });

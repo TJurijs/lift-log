@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import manifest from "./test-population/manifest.json" with { type: "json" };
+import { createOfflineAppShell } from "./scripts/lib/offline-app-shell.mjs";
 
 const testPersonasModule = "virtual:liftlog-test-personas";
 const resolvedTestPersonasModule = `\0${testPersonasModule}`;
@@ -24,22 +25,10 @@ function offlineAppShell(releaseSha: string): Plugin {
     name: "liftlog-offline-app-shell",
     apply: "build",
     generateBundle(_options, bundle) {
-      const precache = [
-        "/",
-        ...Object.keys(bundle)
-          .filter((fileName) => !fileName.endsWith(".map") && fileName !== "sw.js")
-          .map((fileName) => `/${fileName}`),
-      ];
-      const cacheName = `liftlog-shell-${releaseSha}`;
       this.emitFile({
         type: "asset",
         fileName: "sw.js",
-        source: `const CACHE_NAME=${JSON.stringify(cacheName)};
-const PRECACHE=${JSON.stringify(precache)};
-self.addEventListener("install",event=>{event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(PRECACHE)).then(()=>self.skipWaiting()));});
-self.addEventListener("activate",event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith("liftlog-shell-")&&key!==CACHE_NAME).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));});
-self.addEventListener("fetch",event=>{const request=event.request;if(request.method!=="GET")return;const url=new URL(request.url);if(url.origin!==self.location.origin)return;if(request.mode==="navigate"){event.respondWith(fetch(request).then(response=>{const copy=response.clone();void caches.open(CACHE_NAME).then(cache=>cache.put("/",copy));return response;}).catch(()=>caches.match("/").then(response=>response||Response.error())));return;}event.respondWith(caches.match(request).then(cached=>cached||fetch(request).then(response=>{if(response.ok){const copy=response.clone();void caches.open(CACHE_NAME).then(cache=>cache.put(request,copy));}return response;})));});
-`,
+        source: createOfflineAppShell(releaseSha, Object.keys(bundle)),
       });
     },
   };

@@ -29,8 +29,8 @@ test("Programs expose reusable-content filters without run-status filtering", as
   assert.match(app, /No matching training content/);
   assert.match(styles, /\.program-filter-panel\s*\{[^}]*grid-template-columns: repeat\(2/);
   assert.match(styles, /\.program-filter-type[\s\S]*color: var\(--accent\)/);
-  assert.match(styles, /\.program-card-meta > span\s*\{[^}]*height: 24px[^}]*font-size: 7\.5px/);
-  assert.match(styles, /\.program-card-footer > \.status-badge\s*\{[^}]*height: 24px[^}]*font-size: 7\.5px/);
+  assert.match(styles, /\.program-card-meta > span\s*\{[^}]*height: 24px[^}]*font-size: var\(--font-caption\)/);
+  assert.match(styles, /\.program-card-footer > \.status-badge\s*\{[^}]*height: 24px[^}]*font-size: var\(--font-caption\)/);
 });
 
 test("mobile program cards keep descriptions inside the detail view and inset actions", async () => {

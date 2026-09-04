@@ -117,10 +117,11 @@ test("draft, copy, fork, and template creation converge on normalized helpers", 
 });
 
 test("new content uses the implicit sequence and one exercise list", async () => {
-  const [migration, repository, workoutMigration] = await Promise.all([
+  const [migration, repository, workoutMigration, authoringMigration] = await Promise.all([
     readFile(migrationUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
     readFile(new URL("../supabase/migrations/202608290004_flat_workout_exercises.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/202609040001_atomic_authoring_appends.sql", import.meta.url), "utf8"),
   ]);
   const blankProgram = sourceBetween(
     migration,
@@ -136,8 +137,9 @@ test("new content uses the implicit sequence and one exercise list", async () =>
   assert.match(blankProgram, /values \(version_id, phase_id, 1, 'Program'\)/i);
   assert.match(quickWorkout, /values \(version_id, phase_id, 1, 'Workout'\)/i);
   assert.match(workoutMigration, /create or replace function public\.create_blank_quick_workout[\s\S]*'Exercises', 'main', 0/i);
-  assert.match(repository, /title: "Exercises"[\s\S]*section_kind: "main"/i);
-  assert.match(repository, /sectionResult\.data\.length !== 1/i);
+  assert.match(authoringMigration, /insert into public\.workout_sections[\s\S]*'Exercises', 'main', 0/i);
+  assert.match(repository, /rpc\("append_program_workout"/);
+  assert.match(repository, /workout\.sections\.length !== 1/i);
   assert.match(
     repository,
     /async addWorkout\(\s*program: Program,\s*title: string,[\s\S]*implicitProgramWeek\(program\)/i,

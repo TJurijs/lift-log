@@ -16,7 +16,7 @@ test("public sign-in shell has no serious accessibility violations", async ({ pa
   expect(seriousViolations).toEqual([]);
 });
 
-test("fictional athlete can read the core hosted-development views", async ({ page }, testInfo) => {
+test("fictional athlete can read the core training views", async ({ page }, testInfo) => {
   test.skip(
     !testInfo.project.name.startsWith("desktop-"),
     "The authenticated core-view journey runs once per desktop engine",

@@ -179,6 +179,69 @@ describe("shared labels and async actions", () => {
 });
 
 describe("ModalShell", () => {
+  it("preserves editing focus across parent renders and respects the latest dismissal state", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    function FormDialog() {
+      const [name, setName] = useState("");
+      const [description, setDescription] = useState("");
+      const [saving, setSaving] = useState(false);
+      return (
+        <ModalShell title="Edit plan" description="Plan details" dismissible={!saving} onClose={() => onClose(description)}>
+          <label>Name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label>Description<input value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+          <button type="button" onClick={() => setSaving((current) => !current)}>Toggle saving</button>
+        </ModalShell>
+      );
+    }
+    render(<FormDialog />);
+    const description = screen.getByRole("textbox", { name: "Description" });
+    await user.type(description, "Updated plan");
+    expect(description).toHaveValue("Updated plan");
+    expect(description).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Toggle saving" }));
+    await user.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Toggle saving" }));
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledWith("Updated plan");
+  });
+
+  it("contains forward and backward focus from the dialog and includes links", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModalShell title="Confirm action" description="Review first" onClose={vi.fn()}>
+        <input type="hidden" />
+        <button type="button" hidden>Hidden action</button>
+        <div style={{ display: "none" }}><input aria-label="Hidden responsive field" /></div>
+        <a href="#help">Help</a>
+      </ModalShell>,
+    );
+    const dialog = screen.getByRole("dialog");
+    const close = screen.getByRole("button", { name: "Close" });
+    const help = screen.getByRole("link", { name: "Help" });
+    expect(dialog).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(help).toHaveFocus();
+    await user.tab();
+    expect(close).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(help).toHaveFocus();
+  });
+
+  it("only dismisses the topmost dialog on Escape", async () => {
+    const user = userEvent.setup();
+    const closeOuter = vi.fn();
+    const closeInner = vi.fn();
+    render(<>
+      <ModalShell title="Outer" description="First dialog" onClose={closeOuter}>First</ModalShell>
+      <ModalShell title="Inner" description="Second dialog" onClose={closeInner}>Second</ModalShell>
+    </>);
+    await user.keyboard("{Escape}");
+    expect(closeInner).toHaveBeenCalledTimes(1);
+    expect(closeOuter).not.toHaveBeenCalled();
+  });
+
   it("labels the dialog, focuses the first field, closes on Escape, and restores focus", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

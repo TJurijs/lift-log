@@ -71,6 +71,26 @@ afterEach(() => {
 });
 
 describe("mobile and accessible interactions", () => {
+  it("keeps in-progress workouts visible without exposing direct calendar removal", async () => {
+    const user = userEvent.setup();
+    const date = localDateOnly();
+    const { schedule } = calendarFixtures(date);
+    schedule.status = "in_progress";
+    const onOpenPlan = vi.fn();
+    const { container } = render(
+      <CalendarView sessions={[]} schedules={[schedule]} weekStartsOnSunday={false} canSchedule
+        onNavigate={vi.fn()} onSchedule={vi.fn()} onScheduleDay={vi.fn()}
+        onMoveSchedule={vi.fn()} onRemoveSchedule={vi.fn()} onOpenPlan={onOpenPlan} onOpenResults={vi.fn()} />,
+    );
+    const calendarEvent = screen.getByRole("button", { name: `Fixture workout, in progress on ${date}` });
+    expect(calendarEvent).toHaveAttribute("draggable", "false");
+    expect(screen.queryByRole("button", { name: "Remove Fixture workout from the calendar" })).not.toBeInTheDocument();
+    const agenda = container.querySelector(".calendar-day-agenda") as HTMLElement;
+    await user.click(within(agenda).getByRole("button", { name: /Fixture workout/ }));
+    expect(onOpenPlan).toHaveBeenCalledWith(schedule);
+    expect(within(agenda).getByText(/In progress/)).toBeVisible();
+  });
+
   it("honors reduced-motion preference when scrolling after navigation", () => {
     const scrollTo = vi.fn();
     vi.stubGlobal("scrollTo", scrollTo);

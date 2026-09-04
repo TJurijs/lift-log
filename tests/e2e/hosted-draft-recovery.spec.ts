@@ -10,7 +10,8 @@ test("an active workout draft survives reload and an offline background cycle", 
   page,
 }, testInfo) => {
   test.skip(
-    process.env.LIFTLOG_HOSTED_DRAFT_TEST !== mutationConfirmation,
+    process.env.PLAYWRIGHT_DATA_ENVIRONMENT !== "hosted-dev" ||
+      process.env.LIFTLOG_HOSTED_DRAFT_TEST !== mutationConfirmation,
     "Requires explicit permission to update and restore the hosted-development test persona draft.",
   );
   test.skip(

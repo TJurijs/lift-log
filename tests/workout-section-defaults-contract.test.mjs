@@ -13,13 +13,15 @@ const migrationUrl = new URL(
 );
 
 test("workouts use one internal exercise list with no user-facing groups", async () => {
-  const [programView, repository, migration] = await Promise.all([
+  const [programView, repository, migration, authoringMigration] = await Promise.all([
     readFile(programViewUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
+    readFile(new URL("../supabase/migrations/202609040001_atomic_authoring_appends.sql", import.meta.url), "utf8"),
   ]);
 
-  assert.match(repository, /title: "Exercises"[\s\S]*?section_kind: "main"/);
+  assert.match(repository, /rpc\("append_program_workout"/);
+  assert.match(authoringMigration, /insert into public\.workout_sections[\s\S]*'Exercises', 'main', 0/);
   assert.match(migration, /idx_workout_sections_one_per_workout/);
   assert.match(migration, /set source_exercise_id = exercise\.id/);
   assert.match(migration, /'exerciseCategory', exercise\.category/);

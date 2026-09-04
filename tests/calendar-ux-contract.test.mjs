@@ -152,7 +152,7 @@ test("calendar always shows completed history without a visibility control", asy
 });
 
 test("Next workouts keeps completed history optional and opens results back to Next workouts", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const app = `${await readFile(appUrl, "utf8")}\n${await readFile(new URL("../app/features/next-workouts/NextWorkoutsView.tsx", import.meta.url), "utf8")}`;
 
   assert.match(
     app,
@@ -303,7 +303,7 @@ test("Programs have no template route and reusable content can be duplicated", a
   assert.match(app, /copyProgramToOwn/);
   assert.match(
     styles,
-    /\.program-card-description\s*\{[^}]*color: var\(--text-soft\)[^}]*font-size: 10px[^}]*white-space: normal/,
+    /\.program-card-description\s*\{[^}]*color: var\(--text-soft\)[^}]*font-size: var\(--font-caption\)[^}]*white-space: normal/,
     "program descriptions must remain visible rather than truncate to a faint single line",
   );
 });

@@ -9,14 +9,15 @@ import {
   Dumbbell,
   TrendingUp,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   CompletedSession,
   ScheduledWorkout,
   ViewName,
 } from "../../../lib/domain";
-import { localDateOnly } from "../../../lib/date-only";
+import { formatDateOnly, localDateOnly } from "../../../lib/date-only";
 import { cn } from "../../../lib/presentation";
+import { PageHeader } from "../../ui-primitives";
 
 export interface CalendarViewProps {
   sessions: CompletedSession[];
@@ -35,26 +36,6 @@ export interface CalendarViewProps {
 
 function dateOnly(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
-function PageHeader({
-  children,
-}: {
-  children: ReactNode;
-}) {
-  return (
-    <header className="page-header">
-      <div>
-        <p className="eyebrow">Your schedule</p>
-        <div className="page-title-row"><h1>Calendar</h1></div>
-        <p>
-          You decide when program workouts happen. Coaches can see this calendar
-          but cannot change it.
-        </p>
-      </div>
-      <div className="page-actions">{children}</div>
-    </header>
-  );
 }
 
 export default function CalendarView({
@@ -108,7 +89,7 @@ export default function CalendarView({
   const schedulesByDate = useMemo(() => {
     const result = new Map<string, ScheduledWorkout[]>();
     for (const schedule of schedules) {
-      if (!schedule.plannedDate || schedule.status !== "planned") continue;
+      if (!schedule.plannedDate || (schedule.status !== "planned" && schedule.status !== "in_progress")) continue;
       const group = result.get(schedule.plannedDate) ?? [];
       group.push(schedule);
       result.set(schedule.plannedDate, group);
@@ -135,14 +116,12 @@ export default function CalendarView({
   );
   const selectedSessions = sessionsByDate.get(selectedDate) ?? [];
   const selectedSchedules = schedulesByDate.get(selectedDate) ?? [];
-  const selectedDateLabel = new Date(
-    `${selectedDate}T12:00:00`,
-  ).toLocaleDateString("en", {
+  const selectedDateLabel = formatDateOnly(selectedDate, {
     weekday: "long",
     day: "numeric",
     month: "long",
     year: "numeric",
-  });
+  }, "en");
 
   function changeMonth(offset: number) {
     const nextOffset = monthOffset + offset;
@@ -157,7 +136,11 @@ export default function CalendarView({
 
   return (
     <>
-      <PageHeader>
+      <PageHeader
+        eyebrow="Your schedule"
+        title="Calendar"
+        description="Plan your workout dates and review completed training."
+      >
         {canSchedule ? (
           <button className="button primary" onClick={onSchedule}>
             <CalendarPlus size={15} />
@@ -174,7 +157,7 @@ export default function CalendarView({
         <div className="panel">
           <span><CalendarPlus size={18} /></span>
           <div><small>Planned this month</small><strong>{monthSchedules.length}</strong></div>
-          <em>Dates chosen by you</em>
+          <em>Upcoming and overdue</em>
         </div>
         <div className="panel">
           <span><TrendingUp size={18} /></span>
@@ -193,7 +176,7 @@ export default function CalendarView({
             <button className="icon-button" aria-label="Previous month" onClick={() => changeMonth(-1)}>
               <ArrowLeft size={16} />
             </button>
-            <h2>{monthName}</h2>
+            <h2 aria-live="polite" aria-atomic="true">{monthName}</h2>
             <button className="icon-button" aria-label="Next month" onClick={() => changeMonth(1)}>
               <ArrowRight size={16} />
             </button>
@@ -220,7 +203,7 @@ export default function CalendarView({
                   onDragOver={(event) => { if (draggingScheduleId) event.preventDefault(); }}
                   onDrop={(event) => {
                     event.preventDefault();
-                    const scheduleId = draggingScheduleId ?? event.dataTransfer.getData("text/plain");
+                    const scheduleId = draggingScheduleId;
                     setDraggingScheduleId(null);
                     if (scheduleId) {
                       setSelectedDate(date);
@@ -255,24 +238,25 @@ export default function CalendarView({
                     {daySchedules.map((schedule) => (
                       <div className="calendar-planned-event" key={schedule.id}>
                         <button
-                          className="planned"
-                          draggable
-                          aria-label={`${schedule.workoutTitle}, scheduled on ${date}`}
+                          className={cn("planned", schedule.status === "in_progress" && "in-progress")}
+                          draggable={schedule.status === "planned"}
+                          aria-label={`${schedule.workoutTitle}, ${schedule.status === "in_progress" ? "in progress" : "scheduled"} on ${date}`}
                           onClick={(event) => { event.stopPropagation(); setSelectedDate(date); onOpenPlan(schedule); }}
                           onDragStart={(event) => {
+                            if (schedule.status !== "planned") { event.preventDefault(); return; }
                             event.dataTransfer.effectAllowed = "move";
                             event.dataTransfer.setData("text/plain", schedule.id);
                             setSelectedDate(date);
                             setDraggingScheduleId(schedule.id);
                           }}
                           onDragEnd={() => setDraggingScheduleId(null)}
-                        ><CalendarPlus size={12} /><span>{schedule.workoutTitle}</span></button>
-                        <button
+                        >{schedule.status === "in_progress" ? <Activity size={12} /> : <CalendarPlus size={12} />}<span>{schedule.workoutTitle}</span></button>
+                        {schedule.status === "planned" && <button
                           className="calendar-event-remove"
                           aria-label={`Remove ${schedule.workoutTitle} from the calendar`}
                           title="Remove from calendar"
                           onClick={(event) => { event.stopPropagation(); setSelectedDate(date); onRemoveSchedule(schedule.id); }}
-                        ><CalendarMinus size={11} /></button>
+                        ><CalendarMinus size={11} /></button>}
                       </div>
                     ))}
                   </div>
@@ -294,14 +278,14 @@ export default function CalendarView({
               <div className="calendar-day-agenda-list">
                 {selectedSchedules.map((schedule) => (
                   <div className="calendar-day-agenda-row" key={schedule.id}>
-                    <button type="button" className="calendar-day-agenda-main planned" onClick={() => onOpenPlan(schedule)}>
-                      <CalendarPlus size={16} />
-                      <span><strong>{schedule.workoutTitle}</strong><small>{schedule.programTitle} · Planned</small></span>
+                    <button type="button" className={cn("calendar-day-agenda-main planned", schedule.status === "in_progress" && "in-progress")} onClick={() => onOpenPlan(schedule)}>
+                      {schedule.status === "in_progress" ? <Activity size={16} /> : <CalendarPlus size={16} />}
+                      <span><strong>{schedule.workoutTitle}</strong><small>{schedule.programTitle} · {schedule.status === "in_progress" ? "In progress" : "Planned"}</small></span>
                       <ChevronRight size={16} />
                     </button>
-                    <button type="button" className="icon-button" aria-label={`Remove ${schedule.workoutTitle} from the calendar`} title="Remove from calendar" onClick={() => onRemoveSchedule(schedule.id)}>
+                    {schedule.status === "planned" && <button type="button" className="icon-button" aria-label={`Remove ${schedule.workoutTitle} from the calendar`} title="Remove from calendar" onClick={() => onRemoveSchedule(schedule.id)}>
                       <CalendarMinus size={16} />
-                    </button>
+                    </button>}
                   </div>
                 ))}
                 {selectedSessions.map((session) => (
@@ -322,7 +306,8 @@ export default function CalendarView({
             ) : <p className="calendar-day-agenda-empty">No workouts on this day.</p>}
           </section>
           <div className="calendar-legend">
-            <span><i className="planned-dot" />Scheduled by you</span>
+            <span><i className="planned-dot" />Scheduled</span>
+            <span><i className="in-progress-dot" />In progress</span>
             <span><i className="completed-dot" />Completed</span>
             <span><i className="today-dot" />Today</span>
           </div>

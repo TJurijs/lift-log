@@ -10,6 +10,7 @@
   --muted: #849199;
   --muted-dark: #5e6b72;
   --accent: #c5f36b;
+  --accent-soft: rgba(197, 243, 107, 0.1);
   --accent-dark: #9fcf47;
   --accent-ink: #162008;
   --blue: #73b8ff;
@@ -25,6 +26,9 @@
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-pill: 999px;
+  --font-caption: 12px;
+  --font-control: 13px;
+  --font-body: 14px;
   --control-sm: 36px;
   --control-md: 44px;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
@@ -118,6 +122,8 @@ table {
   display: none !important;
 }
 button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
@@ -125,7 +131,9 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 button:disabled,
-input:disabled {
+input:disabled,
+select:disabled,
+textarea:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -417,7 +425,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 .auth-card > p:not(.eyebrow, .auth-error, .auth-demo-note) {
   margin: 13px 0 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-caption);
   line-height: 1.6;
 }
 .auth-provider-button {
@@ -504,33 +512,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   justify-content: center;
   gap: 9px;
   flex-wrap: wrap;
-}
-.test-data-banner {
-  margin: -22px 0 26px;
-  min-height: 38px;
-  padding: 8px 11px;
-  border: 1px solid rgba(197, 243, 107, 0.18);
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  background: rgba(197, 243, 107, 0.055);
-  font-size: 8.5px;
-}
-.test-data-banner svg,
-.test-data-banner strong {
-  color: var(--accent);
-}
-.test-data-banner button {
-  margin-left: auto;
-  padding: 6px 8px;
-  border: 0;
-  color: var(--accent);
-  background: transparent;
-  font-size: 8px;
-  font-weight: 800;
-  cursor: pointer;
 }
 
 /* Sidebar */
@@ -625,7 +606,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   border-radius: 999px;
   color: var(--accent-ink);
   background: var(--accent);
-  font-size: 9px;
+  font-size: var(--font-caption);
   font-style: normal;
   font-weight: 800;
   text-align: center;
@@ -767,7 +748,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 .eyebrow {
   margin: 0 0 8px;
   color: var(--accent);
-  font-size: 9px;
+  font-size: var(--font-caption);
   line-height: 1;
   font-weight: 780;
   letter-spacing: 0.145em;
@@ -879,7 +860,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   justify-content: center;
   gap: 7px;
   border: 1px solid transparent;
-  font-size: 11px;
+  font-size: var(--font-control);
   font-weight: 700;
   cursor: pointer;
   transition:
@@ -959,7 +940,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   gap: 6px;
   color: var(--muted);
   background: transparent;
-  font-size: 10px;
+  font-size: var(--font-caption);
   cursor: pointer;
 }
 .text-button:hover {
@@ -974,7 +955,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   border-radius: 999px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.015);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 .status-badge i {
   width: 6px;
@@ -1006,7 +987,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   min-height: 17px;
   padding: 3px 6px;
   gap: 4px;
-  font-size: 7px;
+  font-size: var(--font-caption);
 }
 .toast {
   position: fixed;
@@ -1167,13 +1148,13 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   color: var(--muted);
 }
 .section-heading span {
-  font-size: 9px;
+  font-size: var(--font-caption);
   font-weight: 800;
   letter-spacing: 0.13em;
   text-transform: uppercase;
 }
 .section-heading small {
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 .instruction-item {
   padding: 8px 0;
@@ -1271,7 +1252,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   border-color: rgba(190, 246, 88, 0.2);
   color: var(--accent);
   background: rgba(190, 246, 88, 0.06);
-  outline: none;
 }
 .exercise-video-backdrop {
   position: fixed;
@@ -2002,7 +1982,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   border-radius: 999px;
   color: var(--blue);
   background: rgba(115, 184, 255, 0.09);
-  font-size: 8px;
+  font-size: var(--font-caption);
   font-weight: 750;
   line-height: 1;
   white-space: nowrap;
@@ -2025,7 +2005,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   min-height: 17px;
   padding: 3px 6px;
   gap: 4px;
-  font-size: 7px;
+  font-size: var(--font-caption);
 }
 .next-workout-summary .source-tag {
   margin-bottom: 1px;
@@ -2588,7 +2568,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 .program-create-menu > div > button:hover,
 .program-create-menu > div > button:focus-visible {
   background: var(--panel-soft);
-  outline: none;
 }
 .program-create-menu > div > button > svg {
   color: var(--accent);
@@ -2599,11 +2578,11 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   gap: 3px;
 }
 .program-create-menu > div strong {
-  font-size: 11px;
+  font-size: var(--font-caption);
 }
 .program-create-menu > div small {
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 .program-card-ready {
   min-height: 24px;
@@ -2614,7 +2593,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   align-items: center;
   color: var(--muted);
   background: var(--panel-soft);
-  font-size: 7.5px;
+  font-size: var(--font-caption);
   line-height: 1;
 }
 .program-card-active-run {
@@ -2628,7 +2607,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, var(--panel-soft));
   font: inherit;
-  font-size: 8px;
+  font-size: var(--font-caption);
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
@@ -2694,11 +2673,11 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--font-body);
 }
 .program-card-heading small {
   color: var(--muted-dark);
-  font-size: 7px;
+  font-size: var(--font-caption);
 }
 .program-card-heading > svg {
   color: var(--muted);
@@ -2709,7 +2688,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   padding-left: 40px;
   min-width: 0;
   color: var(--text-soft);
-  font-size: 10px;
+  font-size: var(--font-caption);
   font-weight: 500;
   line-height: 1.25;
   white-space: normal;
@@ -2724,7 +2703,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   flex-wrap: wrap;
   gap: 5px;
   color: var(--muted-dark);
-  font-size: 7px;
+  font-size: var(--font-caption);
   white-space: nowrap;
 }
 .program-card-meta > span {
@@ -2737,7 +2716,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   align-items: center;
   color: var(--blue);
   background: var(--panel-soft);
-  font-size: 7.5px;
+  font-size: var(--font-caption);
   line-height: 1;
 }
 .program-card-footer {
@@ -2752,15 +2731,15 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   gap: 6px;
 }
 .program-card-footer > .status-badge {
-  height: 24px;
+  height: auto;
   min-height: 24px;
   width: auto;
   min-width: 88px;
-  padding: 0 8px;
+  padding: 3px 8px;
   gap: 5px;
   justify-content: center;
   background: var(--panel-soft);
-  font-size: 7.5px;
+  font-size: var(--font-caption);
   line-height: 1;
 }
 .program-card-footer > .status-badge i {
@@ -2839,7 +2818,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   color: var(--accent);
 }
 .program-content-heading strong {
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .program-content-heading small {
   min-width: 22px;
@@ -2852,7 +2831,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   justify-content: center;
   color: var(--muted);
   background: var(--panel-soft);
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 .program-content-cards {
   display: grid;
@@ -3026,6 +3005,10 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 .calendar-events button.planned[draggable="true"] {
   cursor: grab;
 }
+.calendar-events button.in-progress,
+.calendar-day-agenda-main.in-progress > svg:first-child {
+  color: var(--orange);
+}
 .calendar-events button.planned[draggable="true"]:active {
   cursor: grabbing;
 }
@@ -3190,6 +3173,9 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 .planned-dot {
   background: var(--blue);
 }
+.in-progress-dot {
+  background: var(--orange);
+}
 .today-dot {
   border: 1px solid var(--text-soft);
 }
@@ -3257,14 +3243,14 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   gap: 6px;
   background: transparent;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
   cursor: pointer;
 }
 .segmented-control button span {
   padding: 2px 5px;
   border-radius: 99px;
   background: var(--panel-soft);
-  font-size: 7px;
+  font-size: var(--font-caption);
 }
 .segmented-control button .request-count-badge {
   min-width: 17px;
@@ -3302,7 +3288,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   outline: 0;
   background: transparent;
   color: var(--text);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 .library-search {
   width: min(340px, 100%);
@@ -3516,14 +3502,14 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 }
 .permission-list h3 {
   margin: 0 0 2px;
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .permission-list span {
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--text-soft);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 .permission-list span svg {
   color: var(--accent);
@@ -3587,11 +3573,11 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   gap: 4px;
 }
 .coach-connection-row strong {
-  font-size: 11px;
+  font-size: var(--font-caption);
 }
 .coach-connection-row small {
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 .invite-empty {
   min-height: 340px;
@@ -3732,7 +3718,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 }
 .form-field > span {
   color: var(--text-soft);
-  font-size: 8.5px;
+  font-size: var(--font-caption);
   font-weight: 650;
 }
 .format-tracking-field {
@@ -3919,7 +3905,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   border-radius: 9px;
   background: var(--panel-soft);
   color: var(--text);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 .prescription-modal .form-field .per-entry-toggle > input {
   position: absolute;
@@ -3944,7 +3930,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 }
 .form-field > small {
   color: var(--muted-dark);
-  font-size: 7.5px;
+  font-size: var(--font-caption);
   line-height: 1.45;
 }
 .account-settings {
@@ -4325,7 +4311,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
     gap: 3px;
     justify-content: center;
     text-align: center;
-    font-size: 10px;
+    font-size: var(--font-caption);
   }
   .nav-item em {
     position: absolute;
@@ -4335,7 +4321,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
     padding: 2px 4px;
     display: grid;
     place-items: center;
-    font-size: 8px;
+    font-size: var(--font-caption);
   }
   .nav-label-desktop {
     display: none;
@@ -4558,9 +4544,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
     min-height: 52px;
     font-size: 13px;
   }
-  .test-data-banner {
-    margin: -8px 0 20px;
-  }
   .button,
   .button.small {
     min-height: 44px;
@@ -4593,7 +4576,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   }
   .segmented-control button {
     min-height: 44px;
-    font-size: 10px;
+    font-size: var(--font-caption);
   }
   .search-field {
     height: 48px;
@@ -4867,7 +4850,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
     padding: 8px 7px;
     gap: 5px;
     justify-content: center;
-    font-size: 10px;
+    font-size: var(--font-caption);
     white-space: nowrap;
   }
   .workout-preview-actions .workout-back-action svg {
@@ -5216,7 +5199,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   }
   .prescription-modal .form-field > span,
   .prescription-modal .prescription-field-label > b {
-    font-size: 11px;
+    font-size: var(--font-caption);
   }
   .prescription-modal .prescription-field-label > em,
   .prescription-modal .per-entry-toggle small {
@@ -5313,7 +5296,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   .button,
   .button.small,
   .text-button,
-  .test-data-banner button,
   .segmented-control button,
   .add-row,
   .rpe-selector button {
@@ -5519,7 +5501,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 .coach-athlete-list > button:focus-visible {
   border-color: var(--line-light);
   background: var(--panel-soft);
-  outline: none;
 }
 .coach-athlete-list > button > svg {
   justify-self: end;
@@ -5621,22 +5602,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   display: grid;
   gap: 9px;
 }
-.coach-run-card {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  background: var(--panel-soft);
-}
-.coach-run-heading {
-  min-width: 0;
-  padding: 13px;
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-}
-.coach-run-icon,
 .coach-history-icon {
   width: 38px;
   height: 38px;
@@ -5645,172 +5610,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   place-items: center;
   color: var(--accent);
   background: rgba(197, 243, 107, 0.08);
-}
-.coach-run-heading > div {
-  min-width: 0;
-}
-.coach-run-heading h3 {
-  overflow: hidden;
-  margin: 0;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.coach-run-heading p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 8px;
-}
-.coach-run-progress {
-  padding: 0 13px 12px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 8px;
-}
-.coach-run-progress strong {
-  color: var(--text-soft);
-}
-.coach-run-progress > div {
-  height: 4px;
-  overflow: hidden;
-  grid-column: 1 / -1;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.055);
-}
-.coach-run-progress > div > i {
-  height: 100%;
-  display: block;
-  border-radius: inherit;
-  background: var(--accent);
-}
-.coach-run-timeline {
-  padding: 2px 13px 11px;
-  display: grid;
-}
-.coach-timeline-row {
-  min-width: 0;
-  min-height: 50px;
-  padding: 8px 0;
-  border: 0;
-  border-top: 1px solid var(--line);
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto 16px;
-  gap: 9px;
-  align-items: center;
-  color: var(--text-soft);
-  background: transparent;
-  text-align: left;
-}
-button.coach-timeline-row {
-  cursor: pointer;
-}
-button.coach-timeline-row:hover,
-button.coach-timeline-row:focus-visible {
-  color: var(--text);
-  outline: none;
-}
-.coach-timeline-marker {
-  width: 17px;
-  height: 17px;
-  border: 1px solid var(--line-light);
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: var(--accent-ink);
-}
-.coach-timeline-row.completed .coach-timeline-marker {
-  border-color: var(--green);
-  background: var(--green);
-}
-.coach-timeline-row.in_progress .coach-timeline-marker {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 4px var(--panel-soft);
-  background: var(--accent);
-}
-.coach-timeline-row.overdue .coach-timeline-marker {
-  border-color: var(--orange);
-  box-shadow: inset 0 0 0 4px var(--panel-soft);
-  background: var(--orange);
-}
-.coach-timeline-row:not(.completed):not(.unscheduled):not(.in_progress):not(.overdue) .coach-timeline-marker {
-  border-color: var(--blue);
-  box-shadow: inset 0 0 0 4px var(--panel-soft);
-  background: var(--blue);
-}
-.coach-timeline-row.unscheduled {
-  grid-template-columns: 22px minmax(0, 1fr);
-}
-.coach-timeline-row.unscheduled .coach-timeline-marker {
-  border-style: dashed;
-}
-.coach-timeline-row > span:not(.coach-timeline-marker):not(.coach-timeline-meta) {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-.coach-timeline-row strong {
-  overflow: hidden;
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.coach-timeline-row small {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 7.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.coach-timeline-meta {
-  display: grid;
-  gap: 3px;
-  text-align: right;
-}
-.coach-timeline-meta strong {
-  color: var(--muted);
-}
-.coach-timeline-row.completed .coach-timeline-meta strong {
-  color: var(--green);
-}
-.coach-timeline-row.overdue .coach-timeline-meta strong {
-  color: var(--orange);
-}
-.coach-run-no-sessions {
-  margin: 0;
-  padding: 12px 0 4px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 8px;
-}
-.coach-run-history-link {
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 0 2px 31px;
-  border: 0;
-  border-top: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--accent);
-  background: transparent;
-  font: inherit;
-  font-size: 9px;
-  font-weight: 700;
-  text-align: left;
-  cursor: pointer;
-}
-.coach-run-actions {
-  padding: 10px 13px;
-  border-top: 1px solid var(--line);
-  display: flex;
-  gap: 7px;
-  background: rgba(7, 12, 14, 0.22);
-}
-.coach-run-actions .coach-end-program {
-  margin-left: auto;
 }
 .coach-plan-empty {
   min-height: 290px;
@@ -5914,7 +5713,6 @@ button.coach-timeline-row:focus-visible {
 .coach-history-list > button:hover:not(:disabled),
 .coach-history-list > button:focus-visible:not(:disabled) {
   border-color: var(--line-light);
-  outline: none;
 }
 .coach-history-list > button:disabled {
   cursor: default;
@@ -6031,32 +5829,6 @@ button.coach-timeline-row:focus-visible {
   .coach-section-heading > .button {
     min-height: 44px;
   }
-  .coach-run-heading {
-    grid-template-columns: 38px minmax(0, 1fr);
-  }
-  .coach-run-heading .status-badge {
-    grid-column: 2;
-    justify-self: start;
-  }
-  .coach-timeline-row {
-    min-height: 58px;
-    grid-template-columns: 22px minmax(0, 1fr) auto 16px;
-  }
-  .coach-timeline-row.unscheduled {
-    grid-template-columns: 22px minmax(0, 1fr);
-  }
-  .coach-run-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-  .coach-run-actions .button {
-    width: 100%;
-    min-height: 44px;
-  }
-  .coach-run-actions .coach-end-program {
-    margin-left: 0;
-    grid-column: 1 / -1;
-  }
   .coach-history-list > button {
     min-height: 68px;
     grid-template-columns: 38px minmax(0, 1fr) 17px;
@@ -6093,15 +5865,6 @@ button.coach-timeline-row:focus-visible {
   .coach-section-heading > .button {
     width: 100%;
   }
-  .coach-timeline-meta {
-    min-width: 52px;
-  }
-  .coach-run-actions {
-    grid-template-columns: 1fr;
-  }
-  .coach-run-actions .coach-end-program {
-    grid-column: auto;
-  }
   .coach-finished-run-actions {
     grid-template-columns: 1fr;
   }
@@ -6123,6 +5886,8 @@ button.coach-timeline-row:focus-visible {
   *::after {
     scroll-behavior: auto !important;
     transition: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 .program-run-context {
@@ -6164,8 +5929,8 @@ button.coach-timeline-row:focus-visible {
   flex: 0 0 34px;
   place-items: center;
   border-radius: 10px;
-  color: var(--lime);
-  background: var(--lime-soft);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .program-run-context-progress-copy {
@@ -6183,7 +5948,7 @@ button.coach-timeline-row:focus-visible {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--lime);
+  background: var(--accent);
 }
 
 .program-run-context-scheduled {

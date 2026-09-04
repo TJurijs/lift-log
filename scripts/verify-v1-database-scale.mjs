@@ -505,6 +505,11 @@ async function benchmarkRead(
   parameters,
   rowLimit,
 ) {
+  // A SELECT can emit maintenance WAL (for example heap pruning or hint-bit
+  // full-page images). Enforce the application read contract in PostgreSQL
+  // itself, while retaining the actual cold-read WAL measurements in reports.
+  // The mutation/fixture phase finishes before benchmarkRead is first called.
+  await transaction.unsafe("set local transaction_read_only = on");
   const measured = await explain(transaction, sqlText, parameters);
   const rows = await transaction.unsafe(sqlText, parameters);
   assert.ok(rows.length <= rowLimit, `${name} exceeded its ${rowLimit}-row contract`);
@@ -513,9 +518,13 @@ async function benchmarkRead(
     rows.length,
     `${name} EXPLAIN row count differs from execution`,
   );
-  assert.equal(measured.metrics.walRecords, 0, `${name} unexpectedly wrote WAL`);
   reports.plans[name] = measured.document;
-  reports.queries[name] = { ...measured.metrics, returnedRows: rows.length, rowLimit };
+  reports.queries[name] = {
+    ...measured.metrics,
+    returnedRows: rows.length,
+    rowLimit,
+    readOnlyEnforced: true,
+  };
   return rows;
 }
 
