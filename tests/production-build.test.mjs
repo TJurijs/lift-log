@@ -34,6 +34,7 @@ test("builds a static Hetzner-ready application shell", async () => {
     javascript,
     /presidents\.liftlog\.test|janis-cakste|Enter once, then choose an account/i,
   );
+  assert.doesNotMatch(javascript, /Lift Log mobile preview/u, "production must not include the development preview UI");
   await access(new URL("../dist/og.png", import.meta.url));
 });
 

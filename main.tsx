@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client";
 import "@fontsource-variable/geist";
 import AppEntry from "./app/AppEntry";
 import AppErrorBoundary from "./app/AppErrorBoundary";
-import { DevMobilePreview, shouldRenderDevMobilePreview } from "./app/DevMobilePreview";
+import { DevMobilePreview } from "./app/DevMobilePreview";
+import { devMobilePreviewEnabled, getDevMobilePreviewState } from "./lib/dev-mobile-preview";
 import "./app/globals.css";
 
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
@@ -20,9 +21,11 @@ if (!root) {
   throw new Error("Lift Log could not find its application root.");
 }
 
-const isDevelopmentPreviewFrame = import.meta.env.DEV
-  && new URLSearchParams(window.location.search).get("preview_frame") === "1";
-document.documentElement.classList.toggle("dev-mobile-preview-frame", isDevelopmentPreviewFrame);
+const mobilePreview = devMobilePreviewEnabled && getDevMobilePreviewState(
+  { DEV: import.meta.env.DEV, MODE: import.meta.env.MODE },
+  window.location.search,
+);
+document.documentElement.classList.toggle("dev-mobile-preview-frame", Boolean(mobilePreview && mobilePreview.isFrame));
 
 const app = (
   <StrictMode>
@@ -33,7 +36,7 @@ const app = (
 );
 
 createRoot(root).render(
-  shouldRenderDevMobilePreview(import.meta.env.DEV, window.location.search)
+  devMobilePreviewEnabled && mobilePreview && mobilePreview.isPreview
     ? <DevMobilePreview />
     : app,
 );

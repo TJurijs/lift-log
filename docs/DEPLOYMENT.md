@@ -77,6 +77,21 @@ The checked-in server configuration is `deploy/nginx-liftlog.conf`; the producti
 
 ## Nonprod release procedure
 
+### Mobile preview
+
+Open [the development mobile preview](https://dev.liftlog.cc/?preview=mobile)
+to use the iPhone 15 or Samsung Galaxy A54 viewport in a desktop browser.
+The preview also accepts the shortened `preview=mobil` link. It uses the current
+development login and supports switching viewport sizes without restarting the
+framed app. Local development and compiled `localdev` builds support the same
+query parameter; production builds do not enable the preview.
+
+The development server must send `X-Frame-Options: SAMEORIGIN` so the app can
+embed itself. Production retains `DENY`. Verify the compiled build and deployed
+header together when changing this feature.
+
+### Release steps
+
 1. Run `npm run build:nonprod` immediately before upload.
 2. Verify `dist/assets/*` contains the nonprod ref `ofyeejyfroblunbspgve` and not the production ref.
 3. Upload only `dist/` into a new `/srv/liftlog/nonprod/releases/<UTC-release-id>/` directory.

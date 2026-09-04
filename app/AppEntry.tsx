@@ -10,6 +10,7 @@ import {
   viewerFromSupabaseUser,
 } from "../lib/auth";
 import type { WorkspaceData } from "../lib/domain";
+import { startGoogleSignIn } from "../lib/google-sign-in";
 import { recordClientPerformance } from "../lib/performance";
 import {
   createBrowserTelemetrySink,
@@ -345,14 +346,7 @@ export default function AppEntry() {
     setConnecting(true);
     setError("");
     try {
-      const redirectTo = new URL(window.location.origin);
-      const invitationToken = new URLSearchParams(window.location.search).get("coach_invite");
-      if (invitationToken) redirectTo.searchParams.set("coach_invite", invitationToken);
-      const { error: signInError } = await client.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: redirectTo.href },
-      });
-      if (signInError) throw signInError;
+      await startGoogleSignIn(client.auth);
     } catch {
       setConnecting(false);
       setError("Sign-in didn’t complete. Please try again.");
