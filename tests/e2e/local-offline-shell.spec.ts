@@ -3,7 +3,7 @@ import { signInAsTestPersona } from "./helpers";
 
 test("the built local app reloads a saved workout with no network", async ({ page, context, browserName }) => {
   test.skip(process.env.PLAYWRIGHT_BUILT_UI !== "1" || (process.env.PLAYWRIGHT_DATA_ENVIRONMENT ?? "local") !== "local", "Requires the built local preview and Docker Supabase");
-  test.skip(browserName === "webkit" && process.platform === "win32", "Bundled Windows WebKit fails offline navigation with an internal engine error; verify on supported devices");
+  test.skip(browserName === "webkit", "Playwright WebKit fails full offline navigation inside the engine; verify this path on supported Apple devices");
   await signInAsTestPersona(page, "Jānis Čakste");
   const note = page.getByRole("textbox", { name: "Session notes optional" });
   await expect(note).toBeEnabled();

@@ -98,7 +98,7 @@ jobs:
             fi
             sleep 1
           done
-          PLAYWRIGHT_BUILT_UI=1 npx playwright test tests/e2e/local-offline-shell.spec.ts --project=desktop-chromium --project=mobile-webkit --output=artifacts/performance/offline-browser-results
+          PLAYWRIGHT_BUILT_UI=1 npx playwright test tests/e2e/local-offline-shell.spec.ts --project=desktop-chromium --output=artifacts/performance/offline-browser-results
           npm run perf:measure:local
           npm run perf:runtime:check
       - uses: actions/upload-artifact@v4

@@ -20,9 +20,10 @@ journal at a time. Other tabs show a read-only logger with a retry action;
 closing the editing tab allows another tab to restore and continue the draft.
 
 For the compiled app-shell check, run `tests/e2e/local-offline-shell.spec.ts`
-against a running local build preview with `PLAYWRIGHT_BUILT_UI=1`. The Windows
-bundled WebKit engine currently raises an internal engine error on full offline
-navigation, so that exact combination is skipped. Offline editing/reconnect is
-still exercised there; real iOS offline reload remains a device release check.
+against a running local build preview with `PLAYWRIGHT_BUILT_UI=1`. Playwright's
+WebKit engine currently raises an internal engine error on full offline navigation
+on both local Windows and Linux CI, so that engine combination is skipped. Offline
+editing/reconnect is still exercised in mobile WebKit; real iOS offline reload
+remains a device release check.
 
 Internet Explorer, legacy EdgeHTML, Android WebView shells that do not meet the Chrome floor, and embedded in-app browsers are not supported. Unsupported browsers should still receive the sign-in page where possible, but critical training/session behavior is not guaranteed.

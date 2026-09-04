@@ -70,11 +70,11 @@ They do not delete existing workout history or published content.
   programs left by earlier failed attempts were soft-archived using the normal
   owner-authorized database function.
 
-The Windows bundled WebKit engine failed full offline navigation with an internal
-engine error before the page could reload. That specific test is explicitly
-skipped on Windows WebKit; WebKit offline editing, reconnect, regular reload, and
-two-tab takeover passed. The compiled offline test is included for Chromium and
-WebKit in Linux CI. Real iPhone/iPad offline navigation, assistive technology,
+Playwright's WebKit engine failed full offline navigation with an internal engine
+error before the page could reload on Windows and Linux CI. That engine combination
+is explicitly skipped; WebKit offline editing, reconnect, regular reload, and
+two-tab takeover passed. The compiled offline test runs in Chromium CI. Real
+iPhone/iPad offline navigation, assistive technology,
 soft-keyboard behavior, and minimum browser versions still need device validation
 as described in [browser support](../BROWSER_SUPPORT.md).
 
