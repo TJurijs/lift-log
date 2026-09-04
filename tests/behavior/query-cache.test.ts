@@ -2,6 +2,34 @@ import { describe, expect, it, vi } from "vitest";
 import { BoundedQueryCache } from "../../lib/query-cache";
 
 describe("BoundedQueryCache", () => {
+  it.each(["resolve", "reject"])(
+    "ends a disposed account scope without retrying its pending %s",
+    async (settlement) => {
+      const cache = new BoundedQueryCache();
+      let resolve!: (value: string) => void;
+      let reject!: (reason: Error) => void;
+      const loader = vi.fn(() => new Promise<string>((next, fail) => {
+        resolve = next;
+        reject = fail;
+      }));
+      const first = cache.getOrLoad("account-data", loader);
+      const follower = cache.getOrLoad("account-data", loader);
+      const settled = Promise.allSettled([first, follower]);
+
+      cache.dispose();
+      if (settlement === "resolve") resolve("old account data");
+      else reject(new Error("old request failed"));
+
+      expect(await settled).toEqual([
+        { status: "rejected", reason: expect.objectContaining({ message: "This data workspace is no longer active" }) },
+        { status: "rejected", reason: expect.objectContaining({ message: "This data workspace is no longer active" }) },
+      ]);
+      await expect(cache.getOrLoad("account-data", loader)).rejects.toThrow("no longer active");
+      expect(loader).toHaveBeenCalledOnce();
+      expect(cache.size).toBe(0);
+    },
+  );
+
   it("coalesces identical in-flight reads", async () => {
     const cache = new BoundedQueryCache();
     let resolve!: (value: string) => void;

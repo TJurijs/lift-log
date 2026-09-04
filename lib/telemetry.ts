@@ -58,14 +58,21 @@ export interface TelemetryCollector {
 export const browserTelemetryStorageKey = "liftlog:telemetry:v1";
 const browserTelemetryCapacity = 100;
 
+function browserSessionStorage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.sessionStorage;
+  } catch {
+    // Browser policies can reject access to the storage getter itself.
+    return null;
+  }
+}
+
 /**
  * Keeps a small privacy-safe diagnostic trail in this browser session and
  * exposes the same envelope to an optional, separately reviewed adapter.
  */
 export function createBrowserTelemetrySink(
-  storage: Storage | null = typeof window === "undefined"
-    ? null
-    : window.sessionStorage,
+  storage: Storage | null = browserSessionStorage(),
 ): TelemetrySink {
   return {
     capture(envelope) {

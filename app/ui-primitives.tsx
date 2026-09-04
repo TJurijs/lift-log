@@ -226,6 +226,8 @@ export function SegmentedTabs<T extends string>({
   selectionMode?: "tabs" | "buttons";
 }) {
   const tabRefs = useRef(new Map<T, HTMLButtonElement>());
+  const focusableValue = tabs.find((tab) => tab.value === value && !tab.disabled)?.value
+    ?? tabs.find((tab) => !tab.disabled)?.value;
 
   function moveFocus(
     event: ReactKeyboardEvent<HTMLButtonElement>,
@@ -286,7 +288,7 @@ export function SegmentedTabs<T extends string>({
             }}
             tabIndex={
               selectionMode === "tabs"
-                ? value === tab.value
+                ? focusableValue === tab.value
                   ? 0
                   : -1
                 : undefined

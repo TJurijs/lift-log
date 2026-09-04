@@ -12,12 +12,15 @@ const categoryIconsPath = new URL(
   import.meta.url,
 );
 async function readAppSource() {
-  const [app, programView, categoryIcons] = await Promise.all([
+  const [app, programView, categoryIcons, exercises, exerciseModel, exerciseSearch] = await Promise.all([
     readFile(appPath, "utf8"),
     readFile(programViewPath, "utf8"),
     readFile(categoryIconsPath, "utf8"),
+    readFile(new URL("../app/features/exercises/ExercisesHome.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/features/exercises/exercise-library.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/features/exercises/useExerciseSearch.ts", import.meta.url), "utf8"),
   ]);
-  return `${app}\n${programView}\n${categoryIcons}`;
+  return `${app}\n${programView}\n${categoryIcons}\n${exercises}\n${exerciseModel}\n${exerciseSearch}`;
 }
 const repositoryPath = new URL("../lib/repository.ts", import.meta.url);
 const migrationPath = new URL(
@@ -39,22 +42,22 @@ test("exercise browsing uses three primary disciplines with compact rows and tag
   assert.match(app, /Weightlifting[\s\S]*Gym[\s\S]*Functional/);
   assert.match(app, /className="exercise-list panel"/);
   assert.match(app, /className="exercise-list-row"/);
-  assert.match(app, /label="Exercise sources"[\s\S]*label: `Library \(\$\{global\.length\}/);
-  assert.match(app, /label: `My exercises \(\$\{personal\.length\}/);
+  assert.match(app, /label="Exercise sources"[\s\S]*label: "Library"/);
+  assert.match(app, /label: "My exercises"/);
   assert.match(app, /hasMore \? "\+" : ""/);
   assert.match(app, /repository[\s\S]*\.searchExercises\(\{/);
   assert.equal(
-    app.match(/disciplines: exerciseFilters\.disciplines/g)?.length,
+    app.match(/disciplines: filters\.disciplines/g)?.length,
     2,
     "initial search and Load more must use the same server-side disciplines",
   );
-  assert.equal(app.match(/categories: exerciseFilters\.categories/g)?.length, 2);
+  assert.equal(app.match(/categories: filters\.categories/g)?.length, 2);
   assert.equal(
-    app.match(/modes: entryModesForFormats\(exerciseFilters\.formats\)/g)?.length,
+    app.match(/modes: entryModesForFormats\(filters\.formats\)/g)?.length,
     2,
   );
   assert.equal(
-    app.match(/tracking: trackingFiltersForExerciseSearch\(exerciseFilters\)/g)
+    app.match(/tracking: trackingFiltersForExerciseSearch\(filters\)/g)
       ?.length,
     2,
   );

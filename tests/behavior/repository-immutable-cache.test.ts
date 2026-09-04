@@ -104,8 +104,9 @@ describe("immutable repository caches", () => {
 
     await repository.loadCompletedSessionDetail("session-1");
     repository.dispose();
-    await repository.loadCompletedSessionDetail("session-1");
+    await expect(repository.loadCompletedSessionDetail("session-1"))
+      .rejects.toThrow("no longer active");
 
-    expect(load).toHaveBeenCalledTimes(2);
+    expect(load).toHaveBeenCalledOnce();
   });
 });

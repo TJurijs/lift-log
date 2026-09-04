@@ -26,8 +26,7 @@ test("bootstrap loads are bounded, deduplicated, and observable", async () => {
     /const LiftLogApp = lazy\(\(\) =>[\s\S]*import\("\.\/LiftLogApp"\)\.then\(\(\{ default: component \}\)/,
   );
   assert.doesNotMatch(appEntry, /import LiftLogApp from "\.\/LiftLogApp"/);
-  assert.match(repository, /private bootstrapLoadPromise: Promise<WorkspaceData> \| null = null/);
-  assert.match(repository, /if \(this\.bootstrapLoadPromise\) return this\.bootstrapLoadPromise/);
+  assert.match(repository, /getOrLoad\("bootstrap"/);
   assert.match(repository, /rpc\("get_workspace_bootstrap"\)/);
   assert.match(
     repository,

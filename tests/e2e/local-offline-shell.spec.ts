@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { signInAsTestPersona } from "./helpers";
+import { fillWorkoutNoteAndWaitForSave, signInAsTestPersona, waitForWorkoutNoteSave } from "./helpers";
 
 test("the built local app reloads a saved workout with no network", async ({ page, context, browserName }) => {
   test.skip(process.env.PLAYWRIGHT_BUILT_UI !== "1" || (process.env.PLAYWRIGHT_DATA_ENVIRONMENT ?? "local") !== "local", "Requires the built local preview and Docker Supabase");
@@ -19,12 +19,12 @@ test("the built local app reloads a saved workout with no network", async ({ pag
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(note).toBeEnabled();
     await expect(note).toHaveValue(marker);
-    await context.setOffline(false);
-    await page.evaluate(() => window.dispatchEvent(new Event("online")));
-    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15000 });
-    await note.fill(original);
-    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15000 });
+    await waitForWorkoutNoteSave(page, marker, async () => {
+      await context.setOffline(false);
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    });
   } finally {
     await context.setOffline(false);
+    if (!page.isClosed()) await fillWorkoutNoteAndWaitForSave(page, original);
   }
 });

@@ -70,4 +70,19 @@ describe("privacy-safe telemetry", () => {
     });
     expect(received).toHaveBeenCalledOnce();
   });
+
+  it("still emits diagnostics when the browser rejects the sessionStorage getter", () => {
+    vi.spyOn(window, "sessionStorage", "get").mockImplementation(() => {
+      throw new DOMException("Storage access denied", "SecurityError");
+    });
+    const received = vi.fn();
+    window.addEventListener("liftlog:telemetry", received, { once: true });
+
+    expect(() => {
+      const collector = createTelemetryCollector({ sink: createBrowserTelemetrySink() });
+      collector.performance({ name: "bootstrap", durationMs: 25 });
+    }).not.toThrow();
+
+    expect(received).toHaveBeenCalledOnce();
+  });
 });

@@ -51,3 +51,38 @@ export async function signInAsTestPersona(page: Page, personaName: string) {
     page.getByRole("button", { name: "Next workouts", exact: true }),
   ).toBeVisible();
 }
+
+/** The previous Saved indicator can remain visible during the autosave delay. */
+export async function waitForWorkoutNoteSave(
+  page: Page,
+  expectedNote: string,
+  action: () => Promise<void>,
+) {
+  const acknowledged = page.waitForResponse((response) => {
+    if (
+      new URL(response.url()).pathname !== "/rest/v1/rpc/save_workout_session_draft" ||
+      response.request().method() !== "POST" ||
+      !response.ok()
+    ) return false;
+    const payload = response.request().postDataJSON();
+    return payload?.draft_payload?.sessionNote === expectedNote;
+  }, { timeout: 15_000 });
+  // Arm the listener before typing/reconnecting; an already-pending autosave
+  // may be acknowledged immediately after the browser comes back online.
+  const [, response] = await Promise.all([action(), acknowledged]);
+  const payload = response.request().postDataJSON();
+  const result = await response.json();
+  expect(result.revision, "The server must acknowledge this exact workout draft").toBe(payload.expected_revision + 1);
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15_000 });
+}
+
+export async function fillWorkoutNoteAndWaitForSave(page: Page, value: string) {
+  const note = page.getByRole("textbox", { name: "Session notes optional" });
+  await expect(note).toBeEnabled();
+  if (await note.inputValue() === value) {
+    // Cleanup may run before the test made an edit; a no-op emits no save RPC.
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15_000 });
+    return;
+  }
+  await waitForWorkoutNoteSave(page, value, () => note.fill(value));
+}

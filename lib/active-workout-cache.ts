@@ -330,8 +330,8 @@ export class IndexedDbActiveWorkoutCache implements ActiveWorkoutCache {
     const [sessionRow, patchRows] = await Promise.all([
       requestResult(sessionRequest),
       requestResult(patchesRequest),
+      completed,
     ]);
-    await completed;
     if (
       !sessionRow ||
       !isActiveWorkoutLocalRecord(sessionRow.record) ||
@@ -396,21 +396,23 @@ export class IndexedDbActiveWorkoutCache implements ActiveWorkoutCache {
       record,
     } satisfies IndexedSessionRow);
     const patchStore = transaction.objectStore(PATCH_STORE);
-    await deleteIndexMatches(
-      patchStore,
-      "scopeKey",
-      scopeKey,
-      () =>
-        journal.forEach((patch) =>
-          patchStore.put({
-            patchKey: `${scopeKey}:${patch.sequence}`,
-            scopeKey,
-            userId: record.userId,
-            patch,
-          } satisfies IndexedPatchRow),
-        ),
-    );
-    await completed;
+    await Promise.all([
+      deleteIndexMatches(
+        patchStore,
+        "scopeKey",
+        scopeKey,
+        () =>
+          journal.forEach((patch) =>
+            patchStore.put({
+              patchKey: `${scopeKey}:${patch.sequence}`,
+              scopeKey,
+              userId: record.userId,
+              patch,
+            } satisfies IndexedPatchRow),
+          ),
+      ),
+      completed,
+    ]);
   }
 
   async deleteSession(userId: string, sessionId: string) {
@@ -422,12 +424,14 @@ export class IndexedDbActiveWorkoutCache implements ActiveWorkoutCache {
     );
     const completed = transactionComplete(transaction);
     transaction.objectStore(SESSION_STORE).delete(scopeKey);
-    await deleteIndexMatches(
-      transaction.objectStore(PATCH_STORE),
-      "scopeKey",
-      scopeKey,
-    );
-    await completed;
+    await Promise.all([
+      deleteIndexMatches(
+        transaction.objectStore(PATCH_STORE),
+        "scopeKey",
+        scopeKey,
+      ),
+      completed,
+    ]);
   }
 
   async deleteUser(userId: string) {
@@ -441,8 +445,8 @@ export class IndexedDbActiveWorkoutCache implements ActiveWorkoutCache {
     await Promise.all([
       deleteIndexMatches(transaction.objectStore(SESSION_STORE), "userId", userId),
       deleteIndexMatches(transaction.objectStore(PATCH_STORE), "userId", userId),
+      completed,
     ]);
-    await completed;
   }
 
   async dispose() {

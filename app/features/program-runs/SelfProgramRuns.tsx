@@ -1,12 +1,13 @@
 import {
   Check,
+  ChevronDown,
   Dumbbell,
-  LoaderCircle,
   RefreshCw,
   Users,
 } from "lucide-react";
 import type { ProgramRunSummary } from "../../../lib/domain";
 import { programRunLifecycleLabel } from "../../../lib/program-progress";
+import { AsyncButton } from "../../ui-primitives";
 import { ProgramRunCompactCard } from "./ProgramRunCompactCard";
 
 export interface SelfProgramRunsProps {
@@ -85,7 +86,8 @@ function ProgramRunSections({
   const finished = runs.filter(
     (run) => run.status === "completed" || run.status === "ended",
   );
-  if (!runs.length && !showEmpty) return null;
+  const hasPendingResults = hasMore || loadingMore || Boolean(loadError);
+  if (!runs.length && !showEmpty && !hasPendingResults) return null;
 
   return (
     <section className="self-runs" aria-label={ariaLabel}>
@@ -117,6 +119,7 @@ function ProgramRunSections({
           <summary>
             <span><Check size={15} />Recent training</span>
             <small>{finished.length}</small>
+            <ChevronDown className="self-finished-chevron" size={16} aria-hidden="true" />
           </summary>
           <div>
             {finished.map((run) => (
@@ -126,10 +129,10 @@ function ProgramRunSections({
                   <strong>{run.title}</strong>
                   <small>{programRunLifecycleLabel(run)} · {createdLabel(run.finishedAt ?? run.endedAt ?? run.createdAt)}</small>
                 </div>
-                <button type="button" className="button secondary small" onClick={() => onOpen(run)}>
+                <button type="button" className="button secondary small" aria-label={`View ${run.title}`} onClick={() => onOpen(run)}>
                   View
                 </button>
-                <button type="button" className="button secondary small" onClick={() => onRepeat(run)}>
+                <button type="button" className="button secondary small" aria-label={`Repeat ${run.title}`} onClick={() => onRepeat(run)}>
                   <RefreshCw size={13} />Repeat
                 </button>
               </article>
@@ -137,7 +140,7 @@ function ProgramRunSections({
           </div>
         </details>
       )}
-      {!runs.length && (
+      {!runs.length && showEmpty && !hasPendingResults && (
         <div className="self-runs-empty">
           <Users size={24} />
           <h3>No coach training</h3>
@@ -148,22 +151,22 @@ function ProgramRunSections({
         <div className="self-runs-load-error" role="alert">
           <span>{loadError}</span>
           {onLoadMore && (
-            <button type="button" className="text-button" onClick={onLoadMore}>
+            <button type="button" className="text-button" disabled={loadingMore} onClick={onLoadMore}>
               Try again
             </button>
           )}
         </div>
       )}
       {!loadError && (hasMore || loadingMore) && (
-        <button
-          type="button"
+        <AsyncButton
           className="button secondary self-runs-load-more"
-          disabled={loadingMore || !onLoadMore}
+          disabled={!onLoadMore}
+          loading={loadingMore}
+          loadingLabel="Loading training…"
           onClick={onLoadMore}
         >
-          {loadingMore && <LoaderCircle className="button-spinner" size={15} />}
-          {loadingMore ? "Loading training…" : "Load more training"}
-        </button>
+          Load more training
+        </AsyncButton>
       )}
     </section>
   );

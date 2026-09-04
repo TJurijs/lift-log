@@ -1521,9 +1521,7 @@ export function buildSessionDraftPayload(
 }
 
 export class LiftLogRepository {
-  private bootstrapLoadPromise: Promise<WorkspaceData> | null = null;
-  private coachingWorkspaceLoadPromise: Promise<CoachingWorkspaceData> | null =
-    null;
+  private disposed = false;
   private readonly queryCache = new BoundedQueryCache(96, 30_000, Date.now, {
     maximumWeight: REPOSITORY_QUERY_CACHE_MAX_SERIALIZED_BYTES,
   });
@@ -1539,29 +1537,30 @@ export class LiftLogRepository {
   ) {}
 
   dispose() {
-    this.bootstrapLoadPromise = null;
-    this.coachingWorkspaceLoadPromise = null;
+    this.disposed = true;
     this.programSelectors.clear();
-    this.queryCache.clear();
+    this.queryCache.dispose();
+  }
+
+  private assertActive() {
+    if (this.disposed) throw new Error("This data workspace is no longer active");
   }
 
   async loadBootstrap(): Promise<WorkspaceData> {
-    if (this.bootstrapLoadPromise) return this.bootstrapLoadPromise;
-    const startedAt = performance.now();
-    const pending = this.loadBootstrapData();
-    this.bootstrapLoadPromise = pending;
-    try {
-      return await pending;
-    } finally {
-      recordClientPerformance("bootstrap", startedAt, {
-        phase: "repository",
-      });
-      if (this.bootstrapLoadPromise === pending) this.bootstrapLoadPromise = null;
-    }
+    return this.queryCache.getOrLoad("bootstrap", async () => {
+      const startedAt = performance.now();
+      try {
+        return await this.loadBootstrapData();
+      } finally {
+        recordClientPerformance("bootstrap", startedAt, { phase: "repository" });
+      }
+    }, { shouldCache: () => false });
   }
 
   private async loadBootstrapData(): Promise<WorkspaceData> {
+    this.assertActive();
     const result = await this.client.rpc("get_workspace_bootstrap");
+    this.assertActive();
     if (result.error) fail("Could not load your training workspace", result.error);
     const payload = firstJsonRecord(result.data);
     const profileRow = payload
@@ -1615,6 +1614,7 @@ export class LiftLogRepository {
     await this.syncTimezoneIfChanged(
       jsonNullableString(profileRow, "timezone"),
     );
+    this.assertActive();
     const activeSession = parseActiveSessionPayload(
       jsonField(payload, "activeSession", "active_session"),
     );
@@ -2454,15 +2454,17 @@ export class LiftLogRepository {
       this.queryCache.invalidate("program-detail:");
       this.programSelectors.clear();
     }
-    this.bootstrapLoadPromise = null;
+    this.queryCache.delete("bootstrap");
   }
 
   private invalidateCalendarMutation(scheduleId?: string) {
     this.queryCache.invalidate("feature:calendar:");
     this.queryCache.invalidate("upcoming-schedule-page:");
     this.queryCache.invalidate("schedulable-page:");
-    if (scheduleId) this.queryCache.invalidate(`schedule-detail:${scheduleId}`);
-    this.bootstrapLoadPromise = null;
+    this.queryCache.invalidate(
+      scheduleId ? `schedule-detail:${scheduleId}` : "schedule-detail:",
+    );
+    this.queryCache.delete("bootstrap");
   }
 
   private invalidateProgramRunProgress(runId?: string) {
@@ -2477,7 +2479,21 @@ export class LiftLogRepository {
 
   private invalidateProgramRunMutation(runId?: string) {
     this.invalidateProgramRunProgress(runId);
+    this.queryCache.invalidate(
+      runId ? `program-run-content:${runId}` : "program-run-content:",
+    );
     this.invalidatePrograms();
+  }
+
+  private invalidateCoachingMutation(accessChanged = false) {
+    if (accessChanged) {
+      // Cached immutable content still depends on a mutable access grant.
+      this.programSelectors.clear();
+      this.queryCache.clear();
+      return;
+    }
+    this.queryCache.invalidate("feature:coaching:");
+    this.queryCache.delete("bootstrap");
   }
 
   async loadCalendarWorkspace(): Promise<CalendarWorkspaceData> {
@@ -2509,29 +2525,24 @@ export class LiftLogRepository {
   }
 
   async loadCoachingWorkspace(): Promise<CoachingWorkspaceData> {
-    if (this.coachingWorkspaceLoadPromise)
-      return this.coachingWorkspaceLoadPromise;
-    const startedAt = performance.now();
-    const pending = Promise.all([
-      this.loadCoachingAccessSummary(),
-      this.listCoachAthletes({ limit: 25 }),
-    ]).then(([access, athletePage]) => ({
-      ...access,
-      coachedAthletes: athletePage.items,
-      ...(athletePage.nextCursor
-        ? { coachAthleteCursor: athletePage.nextCursor }
-        : {}),
-    }));
-    this.coachingWorkspaceLoadPromise = pending;
-    try {
-      return await pending;
-    } finally {
-      recordClientPerformance("navigation", startedAt, {
-        phase: "repository",
-      });
-      if (this.coachingWorkspaceLoadPromise === pending)
-        this.coachingWorkspaceLoadPromise = null;
-    }
+    return this.queryCache.getOrLoad("feature:coaching:workspace", async () => {
+      const startedAt = performance.now();
+      try {
+        const [access, athletePage] = await Promise.all([
+          this.loadCoachingAccessSummary(),
+          this.listCoachAthletes({ limit: 25 }),
+        ]);
+        return {
+          ...access,
+          coachedAthletes: athletePage.items,
+          ...(athletePage.nextCursor
+            ? { coachAthleteCursor: athletePage.nextCursor }
+            : {}),
+        };
+      } finally {
+        recordClientPerformance("navigation", startedAt, { phase: "repository" });
+      }
+    }, { shouldCache: () => false });
   }
 
   async loadProgramDetail(
@@ -2582,7 +2593,9 @@ export class LiftLogRepository {
         );
       },
       {
-        ttlMs: Infinity,
+        // A selected/current version is a mutable pointer; only an explicit
+        // version ID identifies an immutable snapshot.
+        ttlMs: selector.versionId ? Infinity : 30_000,
         shouldCache: (value) => value !== null && value.versionStatus !== "draft",
       },
     );
@@ -2754,6 +2767,7 @@ export class LiftLogRepository {
     });
     if (result.error || !result.data)
       fail("Could not update your account", result.error);
+    this.queryCache.delete("bootstrap");
     return result.data as OwnProfile;
   }
 
@@ -2764,6 +2778,7 @@ export class LiftLogRepository {
     });
     if (result.error || !result.data)
       fail("Could not create the program", result.error);
+    this.invalidatePrograms();
     return String(result.data);
   }
 
@@ -2773,6 +2788,7 @@ export class LiftLogRepository {
     });
     if (result.error || !result.data)
       fail("Could not create the workout", result.error);
+    this.invalidatePrograms();
     return String(result.data);
   }
 
@@ -2780,17 +2796,24 @@ export class LiftLogRepository {
     const result = await this.client
       .from("programs")
       .update({ description })
-      .eq("id", programId);
-    if (result.error)
+      .eq("id", programId)
+      .select("id")
+      .single();
+    if (result.error || !result.data)
       fail("Could not save the program description", result.error);
+    this.invalidatePrograms(programId);
   }
 
   async updateProgramTitle(programId: string, title: string) {
     const result = await this.client
       .from("programs")
       .update({ title })
-      .eq("id", programId);
-    if (result.error) fail("Could not save the program name", result.error);
+      .eq("id", programId)
+      .select("id")
+      .single();
+    if (result.error || !result.data)
+      fail("Could not save the program name", result.error);
+    this.invalidatePrograms(programId);
   }
 
   async createProgramFromTemplate(templateId: string) {
@@ -2799,6 +2822,7 @@ export class LiftLogRepository {
     });
     if (result.error || !result.data)
       fail("Could not start the library program", result.error);
+    this.invalidateProgramRunMutation();
     return String(result.data);
   }
 
@@ -2807,6 +2831,7 @@ export class LiftLogRepository {
       target_program_id: programId,
     });
     if (result.error) fail("Could not delete the program", result.error);
+    this.invalidateProgramRunMutation();
   }
 
   async copyProgramToOwn(programId: string) {
@@ -2815,6 +2840,7 @@ export class LiftLogRepository {
     });
     if (result.error || !result.data)
       fail("Could not duplicate the content", result.error);
+    this.invalidatePrograms();
     return String(result.data);
   }
 
@@ -2989,6 +3015,7 @@ export class LiftLogRepository {
       target_workout_id: workoutId,
     });
     if (result.error) fail("Could not delete the workout", result.error);
+    this.invalidatePrograms();
   }
 
   async reorderWorkouts(program: Program, workoutIds: string[]) {
@@ -3000,6 +3027,7 @@ export class LiftLogRepository {
       ordered_ids: workoutIds,
     });
     if (result.error) fail("Could not reorder workouts", result.error);
+    this.invalidatePrograms(program.id);
   }
 
   async reorderWorkoutItems(workoutId: string, itemIds: string[]) {
@@ -3008,6 +3036,7 @@ export class LiftLogRepository {
       ordered_ids: itemIds,
     });
     if (result.error) fail("Could not reorder exercises", result.error);
+    this.invalidatePrograms();
   }
 
   async scheduleWorkout(
@@ -3033,7 +3062,7 @@ export class LiftLogRepository {
     this.queryCache.invalidate("program-page:");
     this.queryCache.invalidate(`program-detail:assignment:${assignmentId}:`);
     this.invalidateCalendarMutation();
-    this.bootstrapLoadPromise = null;
+    this.queryCache.delete("bootstrap");
   }
 
   async setScheduledWorkoutStatus(
@@ -3056,6 +3085,7 @@ export class LiftLogRepository {
     });
     if (result.error)
       fail("Could not deactivate the current program", result.error);
+    this.invalidateProgramRunMutation();
   }
 
   async createPersonalExercise(input: CreateExerciseInput) {
@@ -3083,6 +3113,7 @@ export class LiftLogRepository {
       .single();
     if (result.error || !result.data)
       fail("Could not save the exercise", result.error);
+    this.queryCache.delete("feature:exercises");
     return mapExercise(result.data as ExerciseRow, this.viewerName);
   }
 
@@ -3115,6 +3146,7 @@ export class LiftLogRepository {
       .maybeSingle();
     if (result.error || !result.data)
       fail("Could not update the exercise", result.error);
+    this.queryCache.delete("feature:exercises");
     return mapExercise(result.data as ExerciseRow, this.viewerName);
   }
 
@@ -3132,6 +3164,7 @@ export class LiftLogRepository {
         null,
       );
     }
+    this.queryCache.delete("feature:exercises");
   }
 
   async addWorkout(
@@ -3169,6 +3202,7 @@ export class LiftLogRepository {
       .single();
     if (result.error || !result.data)
       fail("Could not update the workout", result.error);
+    this.invalidatePrograms();
   }
 
   async addWorkoutItem(
@@ -3192,6 +3226,7 @@ export class LiftLogRepository {
       target_item_id: itemId,
     });
     if (result.error) fail("Could not remove the workout item", result.error);
+    this.invalidatePrograms();
   }
 
   async updateWorkoutItemPrescription(item: WorkoutItem) {
@@ -3238,6 +3273,7 @@ export class LiftLogRepository {
     });
     if (result.error)
       fail("Could not save the exercise prescription", result.error);
+    this.invalidatePrograms();
   }
 
   async startOrResumeSession(scheduledWorkoutId: string) {
@@ -3250,7 +3286,7 @@ export class LiftLogRepository {
     const sessionId = String(result.data);
     this.invalidateProgramRunProgress();
     this.queryCache.invalidate(`schedule-detail:${scheduledWorkoutId}`);
-    this.bootstrapLoadPromise = null;
+    this.queryCache.delete("bootstrap");
     const activeSession = (await this.loadBootstrapData()).activeSession;
     if (!activeSession || activeSession.id !== sessionId)
       fail("Could not restore the active workout", null);
@@ -3746,6 +3782,7 @@ export class LiftLogRepository {
     });
     if (result.error || !result.data)
       fail("Could not create the coach invitation", result.error);
+    this.invalidateCoachingMutation();
     return result.data as CoachInviteReceipt;
   }
 
@@ -3755,6 +3792,7 @@ export class LiftLogRepository {
     });
     if (result.error)
       fail("Could not cancel the coaching request", result.error);
+    this.invalidateCoachingMutation();
   }
 
   async respondToCoachInvite(
@@ -3767,6 +3805,7 @@ export class LiftLogRepository {
     });
     if (result.error || !result.data)
       fail("Could not respond to the coaching invitation", result.error);
+    this.invalidateCoachingMutation(response === "accepted");
     const payload = result.data as { relationshipId: string | null };
     return payload.relationshipId;
   }
@@ -3778,6 +3817,7 @@ export class LiftLogRepository {
     });
     if (result.error)
       fail("Could not accept the coach invitation", result.error);
+    this.invalidateCoachingMutation(true);
   }
 
   async endCoachRelationship(relationshipId: string) {
@@ -3789,5 +3829,6 @@ export class LiftLogRepository {
       .select("id");
     if (result.error || result.data?.length !== 1)
       fail("Could not remove coach access", result.error);
+    this.invalidateCoachingMutation(true);
   }
 }

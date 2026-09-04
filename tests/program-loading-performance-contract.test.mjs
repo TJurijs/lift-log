@@ -91,7 +91,7 @@ test("opening a selected program fetches, caches, and lazy-loads one immutable t
   assert.match(detail, /rpc\("get_program_version_detail"/);
   assert.match(detail, /target_program_id:[\s\S]*target_assignment_id:[\s\S]*target_version_id:/);
   assert.match(detail, /parseProgramDetailPayload/);
-  assert.match(detail, /ttlMs: Infinity/);
+  assert.match(detail, /ttlMs: selector\.versionId \? Infinity : 30_000/);
   assert.match(detail, /value\.versionStatus !== "draft"/);
   assert.doesNotMatch(detail, /\.from\(/);
   assert.match(

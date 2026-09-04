@@ -128,8 +128,8 @@ describe("CoachProgramRuns", () => {
 
     await user.click(screen.getByText("Recent training"));
     expect(screen.getByText("Ended", { exact: false })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "View" }));
-    await user.click(screen.getByRole("button", { name: "Repeat" }));
+    await user.click(screen.getByRole("button", { name: "View Ten-week plan" }));
+    await user.click(screen.getByRole("button", { name: "Repeat Ten-week plan" }));
 
     expect(callbacks.onOpen).toHaveBeenCalledWith(endedRun);
     expect(callbacks.onRepeat).toHaveBeenCalledWith(endedRun);
@@ -158,7 +158,7 @@ describe("CoachProgramRuns", () => {
     );
 
     await user.click(screen.getByText("Recent training"));
-    expect(screen.getAllByRole("button", { name: "View" })).toHaveLength(12);
+    expect(screen.getAllByRole("button", { name: /^View Finished plan/ })).toHaveLength(12);
     await user.click(screen.getByRole("button", { name: "Load more training" }));
     expect(onLoadMore).toHaveBeenCalledOnce();
   });
@@ -166,5 +166,40 @@ describe("CoachProgramRuns", () => {
   it("adds no empty panel when the user has never started a run", () => {
     const { container } = renderRuns([]);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("keeps errors and a retry action visible before the first run has loaded", async () => {
+    const user = userEvent.setup();
+    const onLoadMore = vi.fn();
+    render(
+      <SelfProgramRuns runs={[]} loadError="Training could not be loaded" onLoadMore={onLoadMore}
+        onOpen={vi.fn()} onSchedule={vi.fn()} onEnd={vi.fn()} onRepeat={vi.fn()} />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Training could not be loaded");
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onLoadMore).toHaveBeenCalledOnce();
+  });
+
+  it("can load another page when the current page has no personal runs", async () => {
+    const user = userEvent.setup();
+    const onLoadMore = vi.fn();
+    render(
+      <SelfProgramRuns runs={[]} hasMore onLoadMore={onLoadMore}
+        onOpen={vi.fn()} onSchedule={vi.fn()} onEnd={vi.fn()} onRepeat={vi.fn()} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Load more training" }));
+    expect(onLoadMore).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the coach empty state hidden until loading has finished", () => {
+    const callbacks = { onOpen: vi.fn(), onSchedule: vi.fn(), onEnd: vi.fn(), onRepeat: vi.fn() };
+    const { rerender } = render(<CoachProgramRuns viewerId="viewer-1" runs={[]} loadingMore {...callbacks} />);
+
+    expect(screen.queryByRole("heading", { name: "No coach training" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Loading training…" })).toBeDisabled();
+    rerender(<CoachProgramRuns viewerId="viewer-1" runs={[]} {...callbacks} />);
+    expect(screen.getByRole("heading", { name: "No coach training" })).toBeVisible();
   });
 });

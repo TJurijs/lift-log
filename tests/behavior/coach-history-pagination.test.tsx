@@ -100,6 +100,10 @@ describe("coach history pagination flow", () => {
     await waitFor(() => expect(loadCoachingWorkspace).toHaveBeenCalledOnce());
     await user.click(screen.getByRole("tab", { name: "My athletes" }));
     await user.click(await screen.findByRole("tab", { name: "History" }));
+    const coachTab = screen.getByRole("tab", { name: "My athletes" });
+    const coachPanel = screen.getByRole("tabpanel", { name: "My athletes" });
+    expect(coachTab).toHaveAttribute("aria-controls", coachPanel.id);
+    expect(coachPanel).toHaveAttribute("aria-labelledby", coachTab.id);
     await user.click(screen.getByRole("button", { name: "Load more results" }));
 
     await waitFor(() =>

@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { signInAsTestPersona } from "./helpers";
+import { fillWorkoutNoteAndWaitForSave, signInAsTestPersona, waitForWorkoutNoteSave } from "./helpers";
 
 test.skip((process.env.PLAYWRIGHT_DATA_ENVIRONMENT ?? "local") !== "local", "Disposable local Docker data only");
 
@@ -42,8 +42,7 @@ test("local workout edits survive reload, offline editing and reconnect", async 
   const original = await note.inputValue();
   const marker = `Local stability ${testInfo.project.name} ${Date.now()}`;
   try {
-    await note.fill(marker);
-    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15000 });
+    await fillWorkoutNoteAndWaitForSave(page, marker);
     await page.reload();
     await expect(note).toHaveValue(marker);
     await page.context().setOffline(true);
@@ -51,17 +50,17 @@ test("local workout edits survive reload, offline editing and reconnect", async 
     await note.fill(`${marker} offline`);
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })));
     await expect(page.getByText("Saved on this device · reconnect to sync", { exact: true })).toBeVisible();
-    await page.context().setOffline(false);
-    await page.evaluate(() => window.dispatchEvent(new Event("online")));
-    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15000 });
+    await waitForWorkoutNoteSave(page, `${marker} offline`, async () => {
+      await page.context().setOffline(false);
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    });
     await page.reload();
     await expect(note).toHaveValue(`${marker} offline`);
     await page.screenshot({ path: testInfo.outputPath("workout-recovered.png"), fullPage: true });
   } finally {
     await page.context().setOffline(false);
     if (!page.isClosed()) {
-      await note.fill(original);
-      await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15000 });
+      await fillWorkoutNoteAndWaitForSave(page, original);
       if (startedHere) await page.getByRole("button", { name: "Set back to planned", exact: true }).click();
     }
   }
@@ -69,7 +68,7 @@ test("local workout edits survive reload, offline editing and reconnect", async 
 
 test("a program can be authored, saved, reopened and removed through the local UI", async ({ page }, testInfo) => {
   test.skip(!["desktop-chromium", "mobile-webkit"].includes(testInfo.project.name), "One desktop and one mobile authoring journey");
-  const name = `Review program ${testInfo.project.name} ${Date.now()}`;
+  let name = `Review program ${testInfo.project.name} ${Date.now()}`;
   await signInAsTestPersona(page, "Gustavs Zemgals");
   await page.getByRole("button", { name: "Programs", exact: true }).click();
   await page.locator(".program-create-menu summary").click();
@@ -86,10 +85,14 @@ test("a program can be authored, saved, reopened and removed through the local U
   await page.getByRole("dialog", { name: "Prescribe Back squat" }).getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Edit Back squat", exact: true })).toBeVisible();
+  name += " revised";
+  await page.getByRole("textbox", { name: "Program name", exact: true }).fill(name);
+  await page.getByRole("textbox", { name: "Description optional", exact: true }).fill("Local review: reusable strength training.");
   await page.getByRole("navigation", { name: "Program navigation" }).getByRole("button", { name: "Save", exact: true }).click();
   await page.getByRole("button", { name: "Programs", exact: true }).click();
   await page.getByRole("button", { name: `Edit ${name} program`, exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Program name", exact: true })).toHaveValue(name);
+  await expect(page.getByRole("textbox", { name: "Description optional", exact: true })).toHaveValue("Local review: reusable strength training.");
   await expect(page.getByRole("button", { name: "Edit Back squat", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("program-authored.png"), fullPage: true });
   await page.getByRole("button", { name: "Programs", exact: true }).click();
@@ -113,15 +116,21 @@ test("only one tab edits a workout and takeover restores the latest save", async
     await expect(secondNote).toBeDisabled();
     await expect(second.getByRole("button", { name: "Finish and save session", exact: true })).toBeDisabled();
     await expect(second.getByRole("button", { name: "Set back to planned", exact: true })).toBeDisabled();
-    await note.fill(marker);
-    await expect(page.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15000 });
+    await fillWorkoutNoteAndWaitForSave(page, marker);
     await page.close();
     await second.getByRole("button", { name: "Try again", exact: true }).click();
     await expect(secondNote).toBeEnabled();
     await expect(secondNote).toHaveValue(marker);
-    await secondNote.fill(original);
-    await expect(second.getByText("Saved", { exact: true })).toBeVisible({ timeout: 15000 });
   } finally {
-    await second.close();
+    try {
+      const editor = page.isClosed() ? second : page;
+      if (!editor.isClosed()) {
+        const retry = editor.getByRole("button", { name: "Try again", exact: true });
+        if (await retry.isVisible()) await retry.click();
+        await fillWorkoutNoteAndWaitForSave(editor, original);
+      }
+    } finally {
+      await second.close();
+    }
   }
 });

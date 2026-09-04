@@ -108,7 +108,10 @@ setting `PLAYWRIGHT_DATA_ENVIRONMENT=hosted-dev`; the separate hosted draft test
 also retains its explicit mutation opt-in.
 
 The September 4 cleanup findings, verified scope, and remaining architecture
-work are recorded in [the technical review](docs/review/TECHNICAL_REVIEW_2026_09_04.md).
+work are recorded in [the technical review](docs/review/TECHNICAL_REVIEW_2026_09_04.md)
+and [the follow-up review](docs/review/TECHNICAL_REVIEW_FOLLOWUP_2026_09_04.md),
+which covers additional persistence/cache fixes, the extracted exercise feature,
+coaching usability, and local browser/database verification.
 
 The integration test creates three temporary, namespaced test users and proves athlete isolation, active and revoked coach access, publishing, schedule creation, and immutable completed history. `npm run test:integration` remains loopback-only. Hosted development is a separate, fail-closed path:
 

@@ -1,7 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import LiftLogApp, { ExercisesView } from "../../app/LiftLogApp";
+import LiftLogApp from "../../app/LiftLogApp";
+import { ExercisesView } from "../../app/features/exercises/ExercisesHome";
 import { demoViewer } from "../../lib/auth";
 import { demoWorkspace } from "../../lib/demo-data";
 import type { Exercise } from "../../lib/domain";

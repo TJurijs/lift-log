@@ -534,14 +534,28 @@ export function useActiveWorkoutPersistence(
         stagedSessionId &&
         !persistenceInvalidated(stagedFor.userId, stagedSessionId)
       ) {
+        // React's session metadata may lag the controller's latest save, or
+        // carry only its new revision. Recovery needs the exact confirmed pair.
+        const confirmed = controllerRef.current!.getSnapshot()!;
         const mirrored = synchronousDraftStoreRef.current.save(
           stagedFor.userId,
           stagedSessionId,
-          stagedFor.session.draftRevision,
+          confirmed.confirmedRevision,
           next,
-          activeSnapshot(stagedFor.session),
+          confirmed.confirmedSnapshot,
         );
         if (mirrored) setLocalRecoveryAvailable(true);
+        if (
+          stagedFor.repository &&
+          !activeWorkoutSnapshotsEqual(confirmed.snapshot, next)
+        ) {
+          // The server has not acknowledged this edit yet, including while
+          // the local journal and the autosave debounce are still pending.
+          setStatus(confirmed.revisionConflict ? "error"
+            : typeof navigator !== "undefined" && !navigator.onLine
+              ? "unsaved-offline"
+              : "saving");
+        }
       }
       const operation = stageTailRef.current.then(async () => {
         if (scopeRef.current !== scope || scope.abortController.signal.aborted) return;
@@ -555,13 +569,19 @@ export function useActiveWorkoutPersistence(
         }
         const current = controller.getSnapshot()?.snapshot;
         if (!current) return;
-        if (activeWorkoutSnapshotsEqual(current, next)) {
-          if (cache().kind !== "memory") {
+        const clearDurableMirror = () => {
+          // A later keystroke can replace the synchronous mirror while this
+          // journal write is awaiting IndexedDB. Only remove the copy once its
+          // own snapshot is durable, including the already-persisted case.
+          if (cache().kind !== "memory" && activeWorkoutSnapshotsEqual(scope.snapshot, next)) {
             synchronousDraftStoreRef.current.clearAfterCompletion(
               currentOptions.userId,
               sessionId,
             );
           }
+        };
+        if (activeWorkoutSnapshotsEqual(current, next)) {
+          clearDurableMirror();
           return;
         }
         for (const change of diffActiveWorkoutSnapshots(current, next)) {
@@ -569,12 +589,7 @@ export function useActiveWorkoutPersistence(
           await controller.applyPatch(change);
         }
         assertScope(scope);
-        if (cache().kind !== "memory") {
-          synchronousDraftStoreRef.current.clearAfterCompletion(
-            currentOptions.userId,
-            sessionId,
-          );
-        }
+        clearDurableMirror();
         setLocalRecoveryAvailable(cache().kind !== "memory");
         if (typeof navigator !== "undefined" && !navigator.onLine) {
           setStatus("unsaved-offline");
@@ -1026,44 +1041,50 @@ export function useActiveWorkoutPersistence(
     [assertScope, scheduleSync],
   );
 
-  const clearAfterCompletion = useCallback(async (sessionId: string) => {
+  const clearAfterCompletion = useCallback((sessionId: string) => {
     const scope = scopeRef.current;
-    await initializationPromiseRef.current;
-    assertScope(scope);
-    if (scope?.sessionId !== sessionId) throw new Error("The active workout changed");
-    clearSyncTimer();
-    clearedSessionIdsRef.current.add(sessionId);
-    const userId = optionsRef.current.userId;
-    clearPointer(userId, sessionId);
-    new ActiveWorkoutDraftStore().clearAfterCompletion(
-      userId,
-      sessionId,
-    );
-    await syncPromiseRef.current?.catch(() => undefined);
-    await stageTailRef.current.catch(() => undefined);
-    const controller = controllerRef.current;
-    try {
-      if (controller && readySessionIdRef.current === sessionId) {
-        await controller.clearAfterCompletion();
-      } else {
+    const initialization = initializationPromiseRef.current;
+    const operation = (async () => {
+      await initialization;
+      assertScope(scope);
+      if (scope?.sessionId !== sessionId) throw new Error("The active workout changed");
+      clearSyncTimer();
+      clearedSessionIdsRef.current.add(sessionId);
+      const userId = scope.userId;
+      const controller = controllerRef.current;
+      const pendingSync = syncPromiseRef.current;
+      const pendingStages = stageTailRef.current;
+      clearPointer(userId, sessionId);
+      synchronousDraftStoreRef.current.clearAfterCompletion(userId, sessionId);
+      await pendingSync?.catch(() => undefined);
+      await pendingStages.catch(() => undefined);
+      try {
+        // The old controller may have been disposed by navigation while its
+        // writes settled. Delete the captured session directly after that work.
         await cache().deleteSession(userId, sessionId);
+      } catch (error) {
+        if (scopeRef.current === scope) {
+          setLocalRecoveryAvailable(false);
+          optionsRef.current.onSyncError?.(error);
+        }
+      } finally {
+        controller?.dispose();
+        if (scopeRef.current === scope && controllerRef.current === controller) {
+          controllerRef.current = null;
+          readySessionIdRef.current = null;
+        }
       }
-    } catch (error) {
-      setLocalRecoveryAvailable(false);
-      optionsRef.current.onSyncError?.(error);
-    } finally {
-      if (controller && readySessionIdRef.current === sessionId) {
-        controller.dispose();
-        controllerRef.current = null;
-        readySessionIdRef.current = null;
+      if (scopeRef.current === scope) {
+        setConflict(null);
+        setStatus("saved");
+        setWriterState(null);
       }
-    }
-    setConflict(null);
-    setStatus("saved");
-    setWriterState(null);
-    const lease = scope.lease;
-    scope.lease = null;
-    await lease?.release();
+      const lease = scope.lease;
+      scope.lease = null;
+      await lease?.release();
+    })();
+    if (scope) trackSessionWork(scope.userId, scope.sessionId, operation);
+    return operation;
   }, [assertScope, clearSyncTimer]);
 
   return {

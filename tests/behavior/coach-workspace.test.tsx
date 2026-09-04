@@ -7,6 +7,7 @@ import {
   CoachWorkspace,
   coachWorkspaceViewModel,
   type CoachWorkspaceProps,
+  type CoachWorkspaceRun,
 } from "../../app/features/coaching/CoachWorkspace";
 import type {
   AthleteSummary,
@@ -116,10 +117,66 @@ function renderWorkspace(overrides: Partial<CoachWorkspaceProps> = {}) {
     ...overrides,
   };
   const rendered = render(<CoachWorkspace {...props} />);
-  return { ...rendered, callbacks };
+  return { ...rendered, callbacks, props };
 }
 
 describe("CoachWorkspace", () => {
+  it("keeps an active athlete search editable after the directory shrinks", async () => {
+    const user = userEvent.setup();
+    const athletes = Array.from({ length: 6 }, (_, index) => ({ ...athlete, id: `athlete-${index}`, name: `Athlete ${index}` }));
+    const { rerender, props } = renderWorkspace({ athletes, selectedAthlete: athletes[0] });
+    await user.type(screen.getByRole("textbox", { name: "Search athletes" }), "Nobody");
+    expect(screen.getByText("No matching athletes")).toBeVisible();
+
+    rerender(<CoachWorkspace {...props} athletes={[athletes[0]]} />);
+    const search = screen.getByRole("textbox", { name: "Search athletes" });
+    expect(search).toHaveValue("Nobody");
+    await user.clear(search);
+    expect(screen.getByRole("button", { name: "Open Athlete 0, 1 active training plan" })).toBeVisible();
+  });
+
+  it("opens the exact legacy assignment when repeated plans share a program version", async () => {
+    const user = userEvent.setup();
+    const runs: CoachWorkspaceRun[] = [
+      { ...program, id: "run-older", assignmentId: "assignment-older" },
+      { ...program, id: "run-current", assignmentId: "assignment-current" },
+    ];
+    const entry = { ...completedEntry, programRunId: undefined, assignmentId: "assignment-current" };
+    const historyAthlete = { ...athlete, programRuns: runs, agenda: [entry] };
+    const { callbacks } = renderWorkspace({ athletes: [historyAthlete], selectedAthlete: historyAthlete, onOpenAgendaEntry: undefined });
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: /Squat and press/ }));
+    expect(callbacks.onOpenAssignedProgram).toHaveBeenCalledWith(historyAthlete, runs[1], entry.workoutId);
+  });
+
+  it("does not open an arbitrary repeated plan for a history row without provenance", async () => {
+    const user = userEvent.setup();
+    const historyAthlete = {
+      ...athlete,
+      programRuns: [{ ...program, id: "run-older" }, { ...program, id: "run-current" }],
+      agenda: [{ ...completedEntry, programRunId: undefined, assignmentId: undefined }],
+    };
+    const { callbacks } = renderWorkspace({ athletes: [historyAthlete], selectedAthlete: historyAthlete, onOpenAgendaEntry: undefined });
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    const result = screen.getByRole("button", { name: /Squat and press/ });
+    expect(result).toBeDisabled();
+    await user.click(result);
+    expect(callbacks.onOpenAssignedProgram).not.toHaveBeenCalled();
+  });
+
+  it("can open workout results directly before their program run is loaded", async () => {
+    const user = userEvent.setup();
+    const historyAthlete = { ...athlete, programRuns: [], agenda: [completedEntry] };
+    const { callbacks } = renderWorkspace({ athletes: [historyAthlete], selectedAthlete: historyAthlete });
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: /Squat and press/ }));
+    expect(callbacks.onOpenAgendaEntry).toHaveBeenCalledWith(historyAthlete, completedEntry);
+    expect(callbacks.onOpenAssignedProgram).not.toHaveBeenCalled();
+  });
+
   it("opens an athlete as a mobile drill-down instead of stacking navigation", async () => {
     const user = userEvent.setup();
     const { container, callbacks } = renderWorkspace();

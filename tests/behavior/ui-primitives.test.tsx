@@ -42,6 +42,29 @@ function InteractiveTabs() {
 }
 
 describe("SegmentedTabs", () => {
+  it.each(["disabled", "removed"])("keeps an enabled tab reachable when the selection is %s", async (selectionState) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <SegmentedTabs
+        label="Program sources"
+        tabs={[
+          ...(selectionState === "disabled" ? [{ value: "own", label: "Own", disabled: true }] : []),
+          { value: "library", label: "Library" },
+          { value: "coach", label: "Coach" },
+        ]}
+        value="own"
+        onChange={onChange}
+      />,
+    );
+
+    await user.tab();
+    expect(screen.getByRole("tab", { name: "Library" })).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Coach" })).toHaveFocus();
+    expect(onChange).toHaveBeenCalledWith("coach");
+  });
+
   it("uses one tab stop and changes selection with arrow, Home, and End keys", async () => {
     const user = userEvent.setup();
     render(<InteractiveTabs />);

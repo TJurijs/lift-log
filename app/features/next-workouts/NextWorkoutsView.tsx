@@ -200,6 +200,7 @@ export default function NextWorkoutsView({
                 ) : (
                   <AsyncButton
                     className="button primary"
+                    disabled={Boolean(startingScheduleId)}
                     loading={startingScheduleId === schedule.id}
                     loadingLabel="Starting…"
                     icon={Activity}

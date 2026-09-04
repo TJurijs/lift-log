@@ -173,7 +173,7 @@ test("completed workout logs mirror the active logging grid and RPE palette", as
   const completedView = sourceBetween(
     app,
     "function CompletedWorkoutView",
-    "function inferredExerciseDiscipline",
+    "function FormatTrackingFields",
   );
 
   assert.match(completedView, /completed-log-header/);

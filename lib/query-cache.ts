@@ -50,6 +50,7 @@ export class BoundedQueryCache {
   private readonly maximumWeight: number;
   private readonly measureWeight: (value: unknown, key: string) => number;
   private currentWeight = 0;
+  private disposed = false;
 
   constructor(
     private readonly maximumEntries = 64,
@@ -84,6 +85,7 @@ export class BoundedQueryCache {
     load: () => Promise<Value>,
     options: QueryCacheOptions<Value> = {},
   ): Promise<Value> {
+    this.assertActive();
     const currentTime = this.now();
     const cached = this.values.get(key) as QueryCacheEntry<Value> | undefined;
     if (cached) {
@@ -121,11 +123,13 @@ export class BoundedQueryCache {
       try {
         value = await loading;
       } catch (error) {
+        this.assertActive();
         if (!pending.valid || this.pending.get(key) !== pending) {
           return this.getOrLoad(key, load, options);
         }
         throw error;
       }
+      this.assertActive();
       // Invalidation means the response is stale for both the cache and every
       // caller awaiting it. Re-enter through getOrLoad so callers join a newer
       // in-flight refresh (when one exists) or transparently start one.
@@ -159,6 +163,7 @@ export class BoundedQueryCache {
     value: Value,
     options: QueryCacheOptions<Value> = {},
   ) {
+    this.assertActive();
     if (options.shouldCache?.(value) === false) return;
     this.invalidatePending(key);
     const ttlMs = options.ttlMs ?? this.defaultTtlMs;
@@ -184,6 +189,16 @@ export class BoundedQueryCache {
     for (const pending of this.pending.values()) pending.valid = false;
     this.pending.clear();
     this.currentWeight = 0;
+  }
+
+  /** End an account scope without restarting its invalidated requests. */
+  dispose() {
+    this.disposed = true;
+    this.clear();
+  }
+
+  private assertActive() {
+    if (this.disposed) throw new Error("This data workspace is no longer active");
   }
 
   private evictOverflow() {

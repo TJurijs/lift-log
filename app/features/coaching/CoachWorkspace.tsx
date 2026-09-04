@@ -29,6 +29,7 @@ import {
   pushAppDetailHistory,
 } from "../../../lib/app-route";
 import {
+  AsyncButton,
   InlineError,
   PersonAvatar,
   SegmentedTabs,
@@ -46,6 +47,7 @@ export type CoachWorkspaceProgram =
   | CoachAssignedProgramSummary;
 
 export interface CoachWorkspaceProps {
+  panelId?: string;
   athletes: AthleteSummary[];
   pendingInvites: PendingCoachInvite[];
   selectedAthlete: AthleteSummary | null;
@@ -192,6 +194,7 @@ function completedHistory(athlete: AthleteSummary) {
 }
 
 export function CoachWorkspace({
+  panelId,
   athletes,
   pendingInvites,
   selectedAthlete,
@@ -288,6 +291,9 @@ export function CoachWorkspace({
 
   return (
     <section
+      id={panelId}
+      role={panelId ? "tabpanel" : undefined}
+      aria-labelledby={panelId ? `${panelId}-coach-tab` : undefined}
       className={`coach-workspace${mobileAthlete ? " mobile-detail-open" : ""}`}
       aria-label="Coach workspace"
     >
@@ -330,9 +336,9 @@ export function CoachWorkspace({
             onUnassign={(program) =>
               onUnassignAthlete(detailAthlete, program)
             }
-            onRepeat={(program) =>
-              onRepeatAthlete?.(detailAthlete, program)
-            }
+            onRepeat={onRepeatAthlete
+              ? (program) => onRepeatAthlete(detailAthlete, program)
+              : undefined}
             onLoadMoreHistory={() => onLoadMoreHistory?.(detailAthlete)}
             onLoadMoreProgramRuns={() =>
               onLoadMoreProgramRuns?.(detailAthlete)
@@ -398,7 +404,7 @@ function AthleteDirectory({
         <div>
           <p className="eyebrow">Your athletes</p>
           <h2>
-            {athletes.length} active {athletes.length === 1 ? "athlete" : "athletes"}
+            {athletes.length}{hasMoreAthletes ? "+" : ""} active {athletes.length === 1 && !hasMoreAthletes ? "athlete" : "athletes"}
           </h2>
         </div>
         <button
@@ -415,7 +421,7 @@ function AthleteDirectory({
         </button>
       </div>
 
-      {athletes.length > 4 && (
+      {(athletes.length > 4 || query.length > 0) && (
         <label className="search-field coach-athlete-search">
           <Search size={16} />
           <input
@@ -515,7 +521,7 @@ function AthleteDirectory({
       {normalizedQuery && !visibleAthletes.length && (
         <div className="coach-directory-no-match">
           <strong>No matching athletes</strong>
-          <small>Try another name.</small>
+          <small>{hasMoreAthletes ? "Try another name or load more athletes to search." : "Try another name."}</small>
         </div>
       )}
 
@@ -576,7 +582,7 @@ function AthleteWorkspace({
   onAssign: () => void;
   onSchedule: (program?: CoachWorkspaceRun) => void;
   onUnassign: (program: CoachWorkspaceRun) => void;
-  onRepeat: (program: CoachWorkspaceRun) => void;
+  onRepeat?: (program: CoachWorkspaceRun) => void;
   onLoadMoreHistory: () => void;
   onLoadMoreProgramRuns: () => void;
   onOpenProgram: (
@@ -812,15 +818,35 @@ function AthleteHistory({
     program: CoachWorkspaceRun,
     workoutId?: string,
   ) => void;
-  onRepeat: (program: CoachWorkspaceRun) => void;
+  onRepeat?: (program: CoachWorkspaceRun) => void;
   loadingMore: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
   onOpenAgendaEntry?: (entry: CoachAgendaEntry) => void;
 }) {
-  const finishedRuns = runsForAthlete(athlete).filter(
-    (run) => run.status === "completed" || run.status === "ended",
-  );
+  const { finishedRuns, programForEntry } = useMemo(() => {
+    const runs = runsForAthlete(athlete);
+    const byId = new Map(runs.map((run) => [run.id, run]));
+    const byAssignment = new Map<string, CoachWorkspaceRun>();
+    const byVersion = new Map<string, CoachWorkspaceRun | null>();
+    const versionKey = (value: { programId: string; programVersionId: string }) =>
+      `${value.programId}:${value.programVersionId}`;
+    for (const run of runs) {
+      if (run.assignmentId) byAssignment.set(run.assignmentId, run);
+      const key = versionKey(run);
+      // Repeated runs share a version. A legacy result without a run or
+      // assignment ID must never open an arbitrary repetition of that plan.
+      byVersion.set(key, byVersion.has(key) ? null : run);
+    }
+    return {
+      finishedRuns: runs.filter((run) => run.status === "completed" || run.status === "ended"),
+      programForEntry: (entry: CoachAgendaEntry) => entry.programRunId
+        ? byId.get(entry.programRunId)
+        : entry.assignmentId
+          ? byAssignment.get(entry.assignmentId)
+          : byVersion.get(versionKey(entry)),
+    };
+  }, [athlete]);
   return (
     <section className="panel coach-history-panel">
       <div className="coach-section-heading">
@@ -843,17 +869,21 @@ function AthleteHistory({
                 </small>
               </div>
               <div className="coach-finished-run-actions">
-                <button
-                  type="button"
+                <AsyncButton
                   className="button secondary small"
+                  aria-label={`View ${run.title}`}
+                  loading={openingProgramId === run.id}
+                  loadingLabel="Opening…"
+                  disabled={Boolean(openingProgramId)}
                   onClick={() => onOpenProgram(run)}
                 >
                   View
-                </button>
-                {!run.legacy && (
+                </AsyncButton>
+                {!run.legacy && onRepeat && (
                   <button
                     type="button"
                     className="button secondary small"
+                    aria-label={`Repeat ${run.title}`}
                     onClick={() => onRepeat(run)}
                   >
                     <RefreshCw size={14} />
@@ -869,18 +899,14 @@ function AthleteHistory({
       {entries.length > 0 ? (
         <div className="coach-history-list">
           {entries.map((entry) => {
-            const program = runsForAthlete(athlete).find((candidate) =>
-              entry.programRunId
-                ? candidate.id === entry.programRunId
-                : (entry.assignmentId && candidate.assignmentId === entry.assignmentId) ||
-                  (candidate.programId === entry.programId &&
-                    candidate.programVersionId === entry.programVersionId),
-            );
+            const program = programForEntry(entry);
+            const canOpen = Boolean(onOpenAgendaEntry || program);
             return (
               <button
                 type="button"
                 key={entry.id}
-                disabled={Boolean(openingProgramId)}
+                disabled={Boolean(openingProgramId) || !canOpen}
+                title={!canOpen ? "Training details unavailable" : undefined}
                 onClick={() => {
                   if (onOpenAgendaEntry) onOpenAgendaEntry(entry);
                   else if (program) onOpenProgram(program, entry.workoutId);

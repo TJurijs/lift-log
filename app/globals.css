@@ -1759,7 +1759,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 }
 .session-save-status.unsaved-offline,
 .session-save-status.error {
-  color: var(--danger);
+  color: var(--red);
 }
 .rpe-selector {
   display: grid;
@@ -2369,18 +2369,20 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   max-width: calc(100% - 2rem);
   margin: 0 auto 0.75rem;
   padding: 0.55rem 0.8rem;
-  border: 1px solid var(--border, #263740);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface, #101a1f) 92%, transparent);
-  color: var(--text-muted, #9aabb3);
-  font-size: 0.78rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--muted);
+  font-size: var(--font-caption);
+  flex-wrap: wrap;
+  text-align: center;
   box-shadow: 0 0.35rem 1.25rem rgb(0 0 0 / 18%);
   backdrop-filter: blur(10px);
 }
 
 .feature-load-status.error {
-  border-color: color-mix(in srgb, #ff6b72 45%, transparent);
-  color: #ff9ca1;
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
+  color: var(--red);
 }
 
 .feature-load-status .text-button {
@@ -2393,8 +2395,8 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   justify-content: center;
   gap: 0.75rem;
   padding: 0.85rem 0 0;
-  color: var(--text-muted, #9aabb3);
-  font-size: 0.78rem;
+  color: var(--muted);
+  font-size: var(--font-caption);
 }
 
 .library-load-more,
@@ -5431,7 +5433,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 .coach-athlete-list strong {
   overflow: hidden;
   color: var(--text-soft);
-  font-size: 10px;
+  font-size: var(--font-control);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5439,7 +5441,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 .coach-athlete-list small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5470,10 +5472,10 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 }
 .coach-directory-no-match strong {
   color: var(--text-soft);
-  font-size: 11px;
+  font-size: var(--font-control);
 }
 .coach-directory-no-match small {
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 .coach-athlete-list > button {
   width: 100%;
@@ -5536,7 +5538,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   max-width: 360px;
   margin: 6px 0 0;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
   line-height: 1.55;
 }
 .coach-load-more {
@@ -5584,7 +5586,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   overflow: hidden;
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5642,7 +5644,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   place-items: center;
   color: var(--muted);
   background: var(--panel-soft);
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 .coach-finished-runs {
   margin-top: 13px;
@@ -5688,11 +5690,11 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   white-space: nowrap;
 }
 .coach-finished-runs article strong {
-  font-size: 10px;
+  font-size: var(--font-control);
 }
 .coach-finished-runs article small {
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 .coach-history-list > button {
   width: 100%;
@@ -5724,14 +5726,14 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 }
 .coach-history-list strong {
   overflow: hidden;
-  font-size: 10px;
+  font-size: var(--font-control);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .coach-history-list small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5742,13 +5744,13 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 }
 .coach-history-result > strong {
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 .coach-history-result > i {
   padding: 3px 6px;
   border: 1px solid currentColor;
   border-radius: 999px;
-  font-size: 7px;
+  font-size: var(--font-caption);
   font-style: normal;
   font-weight: 750;
 }
