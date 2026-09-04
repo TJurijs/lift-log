@@ -56,24 +56,11 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   assert.match(app, /activeSession\s*\?\s*\(\) => leaveDetail\("today"\)/);
   assert.match(app, /view === "today" && activeSession && activeWorkoutVisible[\s\S]*?setActiveWorkoutVisible\(false\)/);
   assert.match(app, /activeScheduleId === schedule\.id[\s\S]*?"Resume workout"/);
-  assert.match(app, /viewScheduledPlan\(workoutPreviewSchedule\)/);
-  assert.match(app, /loadOwnScheduledProgramVersionById/);
-  assert.match(app, /previewProgram\?\.contentType !== "quick_workout"/);
-  assert.match(app, /viewMode && onViewProgram/);
-  assert.match(app, /className="icon-button"[\s\S]*aria-label="View program"/);
+  assert.doesNotMatch(app, /aria-label="View program"|onViewProgram|viewScheduledPlan|programWorkoutPreviewOriginRef/);
   assert.match(
     app,
-    /aria-label="View program"[\s\S]*aria-label="Remove workout from calendar"[\s\S]*statusAction === "skipped"/,
-    "preview actions should be ordered as program, unschedule, then skip",
-  );
-  assert.match(
-    app,
-    /programWorkoutPreviewOriginRef\.current = \{[\s\S]*schedule,[\s\S]*returnView: workoutPreviewReturnView/,
-  );
-  assert.match(
-    app,
-    /const workoutPreviewOrigin = programWorkoutPreviewOriginRef\.current[\s\S]*openWorkoutPreview\([\s\S]*workoutPreviewOrigin\.schedule,[\s\S]*workoutPreviewOrigin\.returnView,[\s\S]*false/,
-    "program Back should restore the workout preview that opened it",
+    /aria-label="Remove workout from calendar"[\s\S]*statusAction === "skipped"/,
+    "preview actions should keep unschedule before skip",
   );
   assert.doesNotMatch(app, />\s*Edit plan\s*</);
   assert.match(app, /Every workout scheduled from today onward/);

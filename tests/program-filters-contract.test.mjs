@@ -39,7 +39,7 @@ test("mobile program cards keep descriptions inside the detail view and inset ac
   assert.match(styles, /\.program-card-description\s*\{\s*display:\s*none;/);
   assert.match(
     styles,
-    /\.program-card-footer\s*\{[^}]*padding:\s*6px 16px 6px 0;/s,
+    /\.program-card-footer\s*\{[^}]*padding:\s*0 12px 10px;[^}]*flex-wrap: wrap;/s,
   );
 });
 

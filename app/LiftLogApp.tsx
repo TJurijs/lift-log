@@ -446,10 +446,6 @@ export default function LiftLogApp({
     useState<ProgramRunDetail | null>(null);
   const [programReturnView, setProgramReturnView] =
     useState<ViewName>("program");
-  const programWorkoutPreviewOriginRef = useRef<{
-    schedule: ScheduledWorkout;
-    returnView: "today" | "calendar";
-  } | null>(null);
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [selectedWorkoutId, setSelectedWorkoutId] = useState("");
   const [selectedSectionId, setSelectedSectionId] = useState("");
@@ -1643,54 +1639,6 @@ export default function LiftLogApp({
       );
     } finally {
       setProgramAction(null);
-    }
-  }
-
-  async function viewScheduledPlan(schedule: ScheduledWorkout) {
-    const requestId = ++programHistoryRequestRef.current;
-    try {
-      const matchingProgram = programCatalog.find(
-        (candidate) => candidate.id === schedule.programId,
-      );
-      const [nextProgram, runDetail] = repository && schedule.programRunId
-        ? await Promise.all([
-            repository.loadProgramForRun(schedule.programRunId),
-            repository.loadProgramRunDetail(schedule.programRunId),
-          ])
-        : [
-            repository
-              ? await repository.loadOwnScheduledProgramVersionById(
-                  schedule.programId,
-                  schedule.programVersionId,
-                  schedule.assignmentId,
-                )
-              : matchingProgram,
-            null,
-          ];
-      if (programHistoryRequestRef.current !== requestId) return;
-      if (!nextProgram) throw new Error("This plan version is no longer available.");
-      programWorkoutPreviewOriginRef.current = {
-        schedule,
-        returnView: workoutPreviewReturnView,
-      };
-      const workoutWeek = nextProgram.weeks.find((week) =>
-        week.workouts.some((workout) => workout.id === schedule.workoutId),
-      );
-      selectProgram(nextProgram, {
-        weekIndex: workoutWeek?.index,
-        workoutId: schedule.workoutId,
-        programRunId: schedule.programRunId,
-        programRunDetail: runDetail,
-        returnView: workoutPreviewReturnView,
-      });
-      setDetail(null);
-      setActiveView("program");
-      scrollToAppTop();
-    } catch (error) {
-      if (programHistoryRequestRef.current !== requestId) return;
-      notify(
-        error instanceof Error ? error.message : "The plan could not be opened",
-      );
     }
   }
 
@@ -4430,13 +4378,6 @@ export default function LiftLogApp({
                   }
                 : undefined
             }
-            onViewProgram={
-              showingWorkoutPreview &&
-              workoutPreviewSchedule &&
-              previewProgram?.contentType !== "quick_workout"
-                ? () => void viewScheduledPlan(workoutPreviewSchedule)
-                : undefined
-            }
           />
         )}
         {activeView === "today" &&
@@ -4582,26 +4523,13 @@ export default function LiftLogApp({
             }
             onBack={() => {
               const returnView = programReturnView;
-              const workoutPreviewOrigin = programWorkoutPreviewOriginRef.current;
-              programWorkoutPreviewOriginRef.current = null;
               setProgram(null);
               setViewingProgramRunId(null);
               setViewingProgramRunDetail(null);
               if (program.athleteId !== viewer.id) {
                 setCoachMode("coach");
               }
-              if (workoutPreviewOrigin) {
-                setActiveView("today");
-                updateAppViewUrl("today", "replace");
-                void openWorkoutPreview(
-                  workoutPreviewOrigin.schedule,
-                  workoutPreviewOrigin.returnView,
-                  false,
-                );
-                scrollToAppTop();
-              } else {
-                leaveDetail(returnView);
-              }
+              leaveDetail(returnView);
             }}
             onAssignProgram={
               !viewingProgramRunId && capabilitiesForProgram(program).assign
@@ -5365,7 +5293,6 @@ function TodayView({
   backLabel = "Next workouts",
   onReschedule,
   onRemoveFromCalendar,
-  onViewProgram,
 }: {
   program?: Program;
   viewerId: string;
@@ -5410,7 +5337,6 @@ function TodayView({
   backLabel?: string;
   onReschedule?: () => void;
   onRemoveFromCalendar?: () => void;
-  onViewProgram?: () => void;
 }) {
   const workoutDate = plannedDate
     ? new Date(`${plannedDate}T12:00:00`)
@@ -5488,16 +5414,6 @@ function TodayView({
             title="Reschedule"
           >
             <CalendarPlus size={15} />
-          </button>
-        )}
-        {viewMode && onViewProgram && (
-          <button
-            className="icon-button"
-            onClick={onViewProgram}
-            aria-label="View program"
-            title="View program"
-          >
-            <BookOpen size={15} />
           </button>
         )}
         {viewMode && onRemoveFromCalendar && (
