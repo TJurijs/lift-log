@@ -170,6 +170,7 @@ textarea:disabled {
   font-size: 11px;
 }
 .dev-mobile-preview-toolbar select {
+  color-scheme: dark;
   min-height: 38px;
   padding: 0 10px;
   border: 1px solid var(--line-light);
