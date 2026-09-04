@@ -38,6 +38,49 @@ interface GoogleSignInWindow {
   top: { location: Pick<Location, "origin" | "assign"> } | null;
 }
 
+interface InviteUrlWindow {
+  location: Pick<Location, "origin" | "href">;
+  history: Pick<History, "state" | "replaceState">;
+  self: unknown;
+  parent: {
+    location: Pick<Location, "origin" | "href">;
+    history: Pick<History, "state" | "replaceState">;
+  } | null;
+}
+
+/** A consumed invite must not be copied back into a newly loaded preview. */
+export function clearAcceptedCoachInvite(
+  invitationToken: string,
+  browser: InviteUrlWindow = window,
+  environment: Pick<ImportMetaEnv, "DEV" | "MODE"> = {
+    DEV: import.meta.env.DEV,
+    MODE: import.meta.env.MODE,
+  },
+) {
+  const childUrl = new URL(browser.location.href);
+  if (childUrl.searchParams.get("coach_invite") === invitationToken) {
+    childUrl.searchParams.delete("coach_invite");
+    browser.history.replaceState(browser.history.state, "", childUrl);
+  }
+  if (
+    !devMobilePreviewEnabled ||
+    !getDevMobilePreviewState(environment, childUrl.search).isFrame ||
+    browser.self === browser.parent
+  ) return;
+
+  try {
+    const parent = browser.parent;
+    if (!parent || parent.location.origin !== browser.location.origin) return;
+    const parentUrl = new URL(parent.location.href);
+    if (parentUrl.searchParams.get("coach_invite") !== invitationToken) return;
+    parentUrl.searchParams.delete("coach_invite");
+    parent.history.replaceState(parent.history.state, "", parentUrl);
+  } catch {
+    // A parent can navigate while acceptance is pending. Its inaccessible URL
+    // must not turn an already accepted invitation into a workspace failure.
+  }
+}
+
 /** OAuth providers must open outside the development preview's iframe. */
 export async function startGoogleSignIn(
   auth: Pick<SupabaseClient["auth"], "signInWithOAuth">,

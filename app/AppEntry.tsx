@@ -10,7 +10,7 @@ import {
   viewerFromSupabaseUser,
 } from "../lib/auth";
 import type { WorkspaceData } from "../lib/domain";
-import { startGoogleSignIn } from "../lib/google-sign-in";
+import { clearAcceptedCoachInvite, startGoogleSignIn } from "../lib/google-sign-in";
 import { recordClientPerformance } from "../lib/performance";
 import {
   createBrowserTelemetrySink,
@@ -235,9 +235,7 @@ export default function AppEntry() {
         try {
           await activeRepository.acceptCoachInvite(invitationToken);
           if (!active) return null;
-          const cleanUrl = new URL(window.location.href);
-          cleanUrl.searchParams.delete("coach_invite");
-          window.history.replaceState({}, "", cleanUrl);
+          clearAcceptedCoachInvite(invitationToken);
         } catch (inviteError) {
           if (active) processedInvite.current = false;
           throw inviteError;

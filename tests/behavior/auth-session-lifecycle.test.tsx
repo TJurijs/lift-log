@@ -8,6 +8,7 @@ const authHarness = vi.hoisted(() => ({
     | ((event: AuthChangeEvent, session: Session | null) => void)
     | null,
   dispose: vi.fn(),
+  acceptCoachInvite: vi.fn(),
   getSession: vi.fn(),
   loadBootstrap: vi.fn(),
   signInWithOAuth: vi.fn(),
@@ -61,6 +62,10 @@ vi.mock("../../lib/repository", () => ({
     loadBootstrap() {
       return authHarness.loadBootstrap();
     }
+
+    acceptCoachInvite(token: string) {
+      return authHarness.acceptCoachInvite(token);
+    }
   },
 }));
 
@@ -83,6 +88,7 @@ describe("auth session lifecycle", () => {
     window.localStorage.clear();
     authHarness.callback = null;
     authHarness.dispose.mockReset();
+    authHarness.acceptCoachInvite.mockReset();
     authHarness.getSession.mockReset();
     authHarness.loadBootstrap.mockReset();
     authHarness.signInWithOAuth.mockReset();
@@ -171,6 +177,28 @@ describe("auth session lifecycle", () => {
       expect(authHarness.loadBootstrap).toHaveBeenCalledTimes(2);
       expect(authHarness.dispose).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("clears an invitation only after successful acceptance and does not replay it on reload", async () => {
+    const acceptance = controlledPromise<void>();
+    authHarness.acceptCoachInvite.mockReturnValue(acceptance.promise);
+    authHarness.getSession.mockResolvedValue({ data: { session: session("user-1") } });
+    authHarness.loadBootstrap.mockResolvedValue({});
+    window.history.replaceState({ navigation: "keep" }, "", "/?preview=mobile&coach_invite=accepted&filter=keep#/coaching");
+    const first = render(<AppEntry />);
+    await waitFor(() => expect(authHarness.acceptCoachInvite).toHaveBeenCalledWith("accepted"));
+    expect(new URLSearchParams(window.location.search).get("coach_invite")).toBe("accepted");
+    expect(authHarness.loadBootstrap).not.toHaveBeenCalled();
+
+    await act(async () => { acceptance.resolve(); });
+    await screen.findByTestId("lift-log-app");
+    expect(window.location.search).toBe("?preview=mobile&filter=keep");
+    expect(window.location.hash).toBe("#/coaching");
+    expect(window.history.state).toEqual({ navigation: "keep" });
+    first.unmount();
+    render(<AppEntry />);
+    await screen.findByTestId("lift-log-app");
+    expect(authHarness.acceptCoachInvite).toHaveBeenCalledOnce();
   });
 
   it("does not let a stale bootstrap result undo a real auth transition", async () => {
