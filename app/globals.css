@@ -2752,20 +2752,22 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   height: 5px;
 }
 .program-card-actions {
-  width: 106px;
+  width: 143px;
   display: grid;
-  grid-template-columns: repeat(3, 32px);
-  align-items: center;
+  grid-template-columns: repeat(4, 32px);
   gap: 5px;
 }
-.program-card-action-template {
+.program-card-action-edit {
   grid-column: 1;
 }
-.program-card-action-schedule {
+.program-card-action-copy {
   grid-column: 2;
 }
-.program-card-action-delete {
+.program-card-action-schedule {
   grid-column: 3;
+}
+.program-card-action-delete {
+  grid-column: 4;
 }
 .program-card-actions .icon-button {
   width: 32px;
@@ -4686,8 +4688,8 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
     line-height: 1;
   }
   .program-card-actions {
-    width: 142px;
-    grid-template-columns: repeat(3, 44px);
+    width: 191px;
+    grid-template-columns: repeat(4, 44px);
     justify-self: end;
   }
   .builder-layout {

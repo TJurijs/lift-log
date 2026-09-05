@@ -52,11 +52,11 @@ function expectNoContentCapabilities(
 describe("deriveTrainingContentCapabilities", () => {
   describe("library content", () => {
     it.each([
-      ["draft", false],
+      ["draft", true],
       ["published", true],
-      ["superseded", false],
+      ["superseded", true],
     ] as const)(
-      "keeps %s content readable but only allows published content to be copied",
+      "keeps readable %s content available to copy",
       (lifecycle, copyToOwn) => {
         const capabilities = deriveTrainingContentCapabilities(
           contentInput({
@@ -143,7 +143,7 @@ describe("deriveTrainingContentCapabilities", () => {
 
       expect(capabilities).toMatchObject({
         view: true,
-        copyToOwn: lifecycle === "published",
+        copyToOwn: true,
         deleteOwn: lifecycle === "draft",
         archiveInstance: false,
         ...expected,
@@ -206,9 +206,9 @@ describe("deriveTrainingContentCapabilities", () => {
 
   describe("coach-assigned athlete-owned content", () => {
     it.each([
-      ["draft", false],
+      ["draft", true],
       ["published", true],
-      ["superseded", false],
+      ["superseded", true],
     ] as const)(
       "applies %s lifecycle guards to the athlete-owned copy",
       (lifecycle, published) => {

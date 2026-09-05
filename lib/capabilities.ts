@@ -54,6 +54,7 @@ export function deriveTrainingContentCapabilities(
     (input.source === "library" || viewerIsOwner || coachCanView);
   const editable = input.lifecycle === "draft";
   const locked = input.lifecycle === "published";
+  const reusable = editable || locked || input.lifecycle === "superseded";
 
   const assign =
     view &&
@@ -68,7 +69,7 @@ export function deriveTrainingContentCapabilities(
     view,
     copyToOwn:
       view &&
-      locked &&
+      reusable &&
       (input.source === "library" ||
         (input.source === "coach" && viewerIsOwner) ||
         (input.source === "self" && viewerIsOwner && viewerIsAuthor)),

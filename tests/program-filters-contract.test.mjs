@@ -34,7 +34,10 @@ test("Programs expose reusable-content filters without run-status filtering", as
 });
 
 test("mobile program cards align status and actions in stable rows", async () => {
-  const styles = await readFile(stylesPath, "utf8");
+  const [app, styles] = await Promise.all([
+    readAppSource(),
+    readFile(stylesPath, "utf8"),
+  ]);
 
   assert.match(styles, /\.program-card-description\s*\{\s*display:\s*none;/);
   assert.match(
@@ -42,10 +45,15 @@ test("mobile program cards align status and actions in stable rows", async () =>
     /\.program-card-footer\s*\{[^}]*padding:\s*0 12px 10px;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
   );
   assert.match(styles, /\.program-card-status-row\s*\{[^}]*white-space:\s*nowrap;/s);
-  assert.match(styles, /\.program-card-actions\s*\{[^}]*grid-template-columns:\s*repeat\(3, 32px\);/s);
-  assert.match(styles, /\.program-card-action-template\s*\{[^}]*grid-column:\s*1;/s);
-  assert.match(styles, /\.program-card-action-schedule\s*\{[^}]*grid-column:\s*2;/s);
-  assert.match(styles, /\.program-card-action-delete\s*\{[^}]*grid-column:\s*3;/s);
+  assert.match(styles, /\.program-card-actions\s*\{[^}]*grid-template-columns:\s*repeat\(4, 32px\);/s);
+  assert.match(styles, /\.program-card-action-edit\s*\{[^}]*grid-column:\s*1;/s);
+  assert.match(styles, /\.program-card-action-copy\s*\{[^}]*grid-column:\s*2;/s);
+  assert.match(styles, /\.program-card-action-schedule\s*\{[^}]*grid-column:\s*3;/s);
+  assert.match(styles, /\.program-card-action-delete\s*\{[^}]*grid-column:\s*4;/s);
+  assert.match(app, /canEdit=\{!activeRun && capabilitiesForProgram\(item\)\.edit\}/);
+  assert.match(app, /canDelete=\{!activeRun && \(/);
+  assert.match(app, /className="icon-button program-card-action-copy"/);
+  assert.match(app, /className="icon-button program-card-action-schedule"/);
 });
 
 test("mobile program editing reserves aligned controls and one exercise list", async () => {

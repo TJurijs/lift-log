@@ -6329,7 +6329,7 @@ function ProgramRow({
         <div className="program-card-actions">
           {canEdit && (
             <button
-              className="icon-button program-card-action-template"
+              className="icon-button program-card-action-edit"
               disabled={Boolean(action)}
               onClick={onEdit}
               aria-label={`Edit ${program.title} ${objectLabel.toLowerCase()}`}
@@ -6344,7 +6344,7 @@ function ProgramRow({
           )}
           {canDuplicate && onDuplicate && (
             <button
-              className="icon-button program-card-action-template"
+              className="icon-button program-card-action-copy"
               disabled={Boolean(action)}
               onClick={onDuplicate}
               aria-label={`Duplicate ${program.title} ${objectLabel.toLowerCase()}`}
@@ -6533,12 +6533,12 @@ function ProgramsHome({
       program={item}
       activeRun={activeRun}
       viewerId={viewerId}
-      canEdit={capabilitiesForProgram(item).edit}
+      canEdit={!activeRun && capabilitiesForProgram(item).edit}
       canDuplicate={capabilitiesForProgram(item).copyToOwn}
-      canDelete={
+      canDelete={!activeRun && (
         capabilitiesForProgram(item).deleteOwn ||
         (item.sourceType === "coach" && Boolean(item.assignmentId))
-      }
+      )}
       action={action?.id === item.id ? action.kind : null}
       onOpen={() => onOpen(item)}
       onEdit={() => onEdit(item)}
