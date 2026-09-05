@@ -6311,7 +6311,7 @@ function ProgramRow({
             onClick={onOpenActiveRun}
             aria-label={`Open active ${program.title} training`}
           >
-            <Activity size={13} />
+            {isQuickWorkout ? <Activity size={13} /> : <CalendarPlus size={13} />}
             {isQuickWorkout
               ? "In use"
               : `In use · ${activeRun.completedWorkouts}/${activeRun.totalWorkouts} completed`}
@@ -6363,7 +6363,11 @@ function ProgramRow({
               aria-label={`${program.sourceType === "coach" ? "Schedule" : "Start"} ${program.title}`}
               title={program.sourceType === "coach" ? "Schedule workout" : `Start ${objectLabel.toLowerCase()}`}
             >
-              {program.sourceType === "coach" ? <CalendarPlus size={15} /> : <Activity size={15} />}
+              {program.sourceType === "coach" || !isQuickWorkout ? (
+                <CalendarPlus size={15} />
+              ) : (
+                <Activity size={15} />
+              )}
             </button>
           )}
           {canDelete && onDelete && (

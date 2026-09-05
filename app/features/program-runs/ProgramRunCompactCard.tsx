@@ -87,7 +87,7 @@ export function ProgramRunCompactCard({
           onClick={onOpen}
           aria-label={`Open active ${run.title} training`}
         >
-          <Activity size={13} />
+          {quickWorkout ? <Activity size={13} /> : <CalendarPlus size={13} />}
           {progress}
           <ChevronRight size={13} />
         </button>
