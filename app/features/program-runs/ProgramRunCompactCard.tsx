@@ -75,27 +75,29 @@ export function ProgramRunCompactCard({
             </span>
           )}
         </span>
-        <span className="program-card-meta">
-          <span>{quickWorkout ? "1 workout" : `${run.totalWorkouts} workouts`}</span>
-        </span>
       </button>
       <div className="program-card-footer">
-        <button
-          type="button"
-          className="program-card-active-run"
-          disabled={openingDisabled}
-          onClick={onOpen}
-          aria-label={`Open active ${run.title} training`}
-        >
-          {quickWorkout ? <Activity size={13} /> : <CalendarPlus size={13} />}
-          {progress}
-          <ChevronRight size={13} />
-        </button>
+        <div className="program-card-status-row">
+          <span className="program-card-meta">
+            <span>{quickWorkout ? "1 workout" : `${run.totalWorkouts} workouts`}</span>
+          </span>
+          <button
+            type="button"
+            className="program-card-active-run"
+            disabled={openingDisabled}
+            onClick={onOpen}
+            aria-label={`Open active ${run.title} training`}
+          >
+            {quickWorkout ? <Activity size={13} /> : <CalendarPlus size={13} />}
+            {progress}
+            <ChevronRight size={13} />
+          </button>
+        </div>
         <div className="program-card-actions">
           {unscheduled > 0 && onSchedule && (
             <button
               type="button"
-              className="icon-button"
+              className="icon-button program-card-action-schedule"
               onClick={onSchedule}
               aria-label={`Schedule ${run.title}`}
               title={quickWorkout ? "Schedule workout" : "Schedule program"}
@@ -105,7 +107,7 @@ export function ProgramRunCompactCard({
           )}
           <button
             type="button"
-            className="icon-button danger"
+            className="icon-button danger program-card-action-delete"
             onClick={onEnd}
             aria-label={`End ${run.title}`}
             title={quickWorkout ? "End workout" : "End program"}

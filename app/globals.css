@@ -2697,8 +2697,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   white-space: normal;
 }
 .program-card-meta {
-  grid-column: 2;
-  grid-row: 1 / span 3;
   margin-top: 0;
   display: flex;
   align-items: center;
@@ -2724,16 +2722,24 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 }
 .program-card-footer {
   width: auto;
-  min-width: 218px;
+  min-width: 0;
   flex: 0 0 auto;
   min-height: 56px;
   padding: 6px 9px 6px 3px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+.program-card-status-row {
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  white-space: nowrap;
 }
-.program-card-footer > .status-badge {
+.program-card-status-row > .status-badge {
   height: auto;
   min-height: 24px;
   width: auto;
@@ -2746,15 +2752,25 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   line-height: 1;
   white-space: nowrap;
 }
-.program-card-footer > .status-badge i {
+.program-card-status-row > .status-badge i {
   width: 5px;
   height: 5px;
 }
 .program-card-actions {
-  width: auto;
-  display: flex;
+  width: 106px;
+  display: grid;
+  grid-template-columns: repeat(3, 32px);
   align-items: center;
   gap: 5px;
+}
+.program-card-action-template {
+  grid-column: 1;
+}
+.program-card-action-schedule {
+  grid-column: 2;
+}
+.program-card-action-delete {
+  grid-column: 3;
 }
 .program-card-actions .icon-button {
   width: 32px;
@@ -4650,12 +4666,11 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   }
   .program-card-main {
     min-height: 0;
-    padding: 11px 12px 9px;
+    padding: 11px 12px 6px;
     grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
+    gap: 0;
   }
-  .program-card-heading,
-  .program-card-meta {
+  .program-card-heading {
     grid-column: 1;
     grid-row: auto;
   }
@@ -4664,7 +4679,7 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   }
   .program-card-meta {
     justify-content: flex-start;
-    padding-left: 40px;
+    padding-left: 0;
   }
   .program-card-footer {
     width: auto;
@@ -4672,18 +4687,28 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
     min-height: 0;
     padding: 0 12px 10px;
     border: 0;
-    flex-wrap: wrap;
-    justify-content: space-between;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .program-card-status-row {
+    justify-content: flex-start;
+    gap: 6px;
+  }
+  .program-card-status-row > * {
+    flex: 0 0 auto;
   }
   .program-card-active-run {
-    max-width: 100%;
-    min-height: 40px;
-    padding: 6px 7px;
+    max-width: none;
+    min-height: 28px;
+    padding: 0 7px;
     text-align: left;
-    line-height: 1.2;
+    line-height: 1;
   }
   .program-card-actions {
-    width: auto;
+    width: 142px;
+    grid-template-columns: repeat(3, 44px);
+    gap: 5px;
+    justify-self: end;
   }
   .builder-layout {
     grid-template-columns: 1fr;

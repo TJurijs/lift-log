@@ -6295,39 +6295,41 @@ function ProgramRow({
         {program.description && (
           <span className="program-card-description">{program.description}</span>
         )}
-        <span className="program-card-meta">
-          {isQuickWorkout ? (
-            estimatedMinutes ? <span>~{estimatedMinutes} min</span> : null
-          ) : (
-            <span>{formatWorkoutCount(workoutCount)}</span>
-          )}
-        </span>
       </button>
       <div className="program-card-footer">
-        {activeRun ? (
-          <button
-            type="button"
-            className="program-card-active-run"
-            onClick={onOpenActiveRun}
-            aria-label={`Open active ${program.title} training`}
-          >
-            {isQuickWorkout ? <Activity size={13} /> : <CalendarPlus size={13} />}
-            {isQuickWorkout
-              ? "In use"
-              : `In use · ${activeRun.completedWorkouts}/${activeRun.totalWorkouts} completed`}
-            <ChevronRight size={13} />
-          </button>
-        ) : program.versionStatus === "draft" ? (
-          <StatusBadge status="editable" label="Editable template" />
-        ) : program.sourceType === "coach" ? (
-          <StatusBadge status="planned" label="Assigned to you" />
-        ) : (
-          <span className="program-card-ready">Ready to use</span>
-        )}
+        <div className="program-card-status-row">
+          <span className="program-card-meta">
+            {isQuickWorkout ? (
+              estimatedMinutes ? <span>~{estimatedMinutes} min</span> : null
+            ) : (
+              <span>{formatWorkoutCount(workoutCount)}</span>
+            )}
+          </span>
+          {activeRun ? (
+            <button
+              type="button"
+              className="program-card-active-run"
+              onClick={onOpenActiveRun}
+              aria-label={`Open active ${program.title} training`}
+            >
+              {isQuickWorkout ? <Activity size={13} /> : <CalendarPlus size={13} />}
+              {isQuickWorkout
+                ? "In use"
+                : `In use · ${activeRun.completedWorkouts}/${activeRun.totalWorkouts} completed`}
+              <ChevronRight size={13} />
+            </button>
+          ) : program.versionStatus === "draft" ? (
+            <StatusBadge status="editable" label="Editable template" />
+          ) : program.sourceType === "coach" ? (
+            <StatusBadge status="planned" label="Assigned to you" />
+          ) : (
+            <span className="program-card-ready">Ready to use</span>
+          )}
+        </div>
         <div className="program-card-actions">
           {canEdit && (
             <button
-              className="icon-button"
+              className="icon-button program-card-action-template"
               disabled={Boolean(action)}
               onClick={onEdit}
               aria-label={`Edit ${program.title} ${objectLabel.toLowerCase()}`}
@@ -6342,7 +6344,7 @@ function ProgramRow({
           )}
           {canDuplicate && onDuplicate && (
             <button
-              className="icon-button"
+              className="icon-button program-card-action-template"
               disabled={Boolean(action)}
               onClick={onDuplicate}
               aria-label={`Duplicate ${program.title} ${objectLabel.toLowerCase()}`}
@@ -6357,7 +6359,7 @@ function ProgramRow({
           )}
           {onSchedule && (
             <button
-              className="icon-button"
+              className="icon-button program-card-action-schedule"
               disabled={Boolean(action)}
               onClick={onSchedule}
               aria-label={`${program.sourceType === "coach" ? "Schedule" : "Start"} ${program.title}`}
@@ -6372,7 +6374,7 @@ function ProgramRow({
           )}
           {canDelete && onDelete && (
             <button
-              className="icon-button danger"
+              className="icon-button danger program-card-action-delete"
               disabled={Boolean(action)}
               onClick={onDelete}
               aria-label={`${deleteLabel} ${program.title}`}

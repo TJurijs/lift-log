@@ -30,17 +30,22 @@ test("Programs expose reusable-content filters without run-status filtering", as
   assert.match(styles, /\.program-filter-panel\s*\{[^}]*grid-template-columns: repeat\(2/);
   assert.match(styles, /\.program-filter-type[\s\S]*color: var\(--accent\)/);
   assert.match(styles, /\.program-card-meta > span\s*\{[^}]*height: 24px[^}]*font-size: var\(--font-caption\)/);
-  assert.match(styles, /\.program-card-footer > \.status-badge\s*\{[^}]*height: 24px[^}]*font-size: var\(--font-caption\)/);
+  assert.match(styles, /\.program-card-status-row > \.status-badge\s*\{[^}]*height: 24px[^}]*font-size: var\(--font-caption\)/);
 });
 
-test("mobile program cards keep descriptions inside the detail view and inset actions", async () => {
+test("mobile program cards align status and actions in stable rows", async () => {
   const styles = await readFile(stylesPath, "utf8");
 
   assert.match(styles, /\.program-card-description\s*\{\s*display:\s*none;/);
   assert.match(
     styles,
-    /\.program-card-footer\s*\{[^}]*padding:\s*0 12px 10px;[^}]*flex-wrap: wrap;/s,
+    /\.program-card-footer\s*\{[^}]*padding:\s*0 12px 10px;[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
   );
+  assert.match(styles, /\.program-card-status-row\s*\{[^}]*white-space:\s*nowrap;/s);
+  assert.match(styles, /\.program-card-actions\s*\{[^}]*grid-template-columns:\s*repeat\(3, 32px\);/s);
+  assert.match(styles, /\.program-card-action-template\s*\{[^}]*grid-column:\s*1;/s);
+  assert.match(styles, /\.program-card-action-schedule\s*\{[^}]*grid-column:\s*2;/s);
+  assert.match(styles, /\.program-card-action-delete\s*\{[^}]*grid-column:\s*3;/s);
 });
 
 test("mobile program editing reserves aligned controls and one exercise list", async () => {
