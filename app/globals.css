@@ -2697,12 +2697,8 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   white-space: normal;
 }
 .program-card-meta {
-  margin-top: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 5px;
   color: var(--muted-dark);
   font-size: var(--font-caption);
   white-space: nowrap;
@@ -2723,7 +2719,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
 .program-card-footer {
   width: auto;
   min-width: 0;
-  flex: 0 0 auto;
   min-height: 56px;
   padding: 6px 9px 6px 3px;
   display: grid;
@@ -4497,10 +4492,6 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
     grid-column: 1 / -1;
     grid-row: 2;
   }
-  .program-card-meta {
-    grid-column: 2;
-    grid-row: 1;
-  }
   .calendar-day-schedule,
   .calendar-day > .calendar-day-number {
     display: none;
@@ -4677,37 +4668,26 @@ html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
   .program-card-description {
     display: none;
   }
-  .program-card-meta {
-    justify-content: flex-start;
-    padding-left: 0;
-  }
   .program-card-footer {
-    width: auto;
-    min-width: 0;
     min-height: 0;
     padding: 0 12px 10px;
-    border: 0;
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
   }
   .program-card-status-row {
     justify-content: flex-start;
-    gap: 6px;
   }
   .program-card-status-row > * {
     flex: 0 0 auto;
   }
   .program-card-active-run {
-    max-width: none;
     min-height: 28px;
     padding: 0 7px;
-    text-align: left;
     line-height: 1;
   }
   .program-card-actions {
     width: 142px;
     grid-template-columns: repeat(3, 44px);
-    gap: 5px;
     justify-self: end;
   }
   .builder-layout {
