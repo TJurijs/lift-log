@@ -6365,11 +6365,7 @@ function ProgramRow({
               aria-label={`${program.sourceType === "coach" ? "Schedule" : "Start"} ${program.title}`}
               title={program.sourceType === "coach" ? "Schedule workout" : `Start ${objectLabel.toLowerCase()}`}
             >
-              {program.sourceType === "coach" || !isQuickWorkout ? (
-                <CalendarPlus size={15} />
-              ) : (
-                <Activity size={15} />
-              )}
+              <CalendarPlus size={15} />
             </button>
           )}
           {canDelete && onDelete && (
