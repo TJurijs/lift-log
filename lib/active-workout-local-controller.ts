@@ -307,7 +307,7 @@ export class ActiveWorkoutLocalController<Plan = unknown> {
     });
   }
 
-  async preparePendingMutation() {
+  async preparePendingMutation(options: { requireInitialSave?: boolean } = {}) {
     return this.#enqueue(async () => {
       const state = this.#requireState();
       const entry = this.#requireEntry();
@@ -315,7 +315,10 @@ export class ActiveWorkoutLocalController<Plan = unknown> {
         throw new Error("Resolve the active workout revision conflict first");
       }
       if (state.pendingMutation) return copyValue(state.pendingMutation);
-      if (!state.dirty) return null;
+      // Completion requires one server-confirmed draft, even when the athlete
+      // deliberately leaves every result blank. Retain the normal no-op path
+      // for untouched forms until an explicit save or finish requests it.
+      if (!state.dirty && !(options.requireInitialSave && state.confirmedRevision === 0)) return null;
 
       const idempotencyKey = this.#createIdempotencyKey();
       if (
@@ -401,7 +404,7 @@ export class ActiveWorkoutLocalController<Plan = unknown> {
     });
   }
 
-  async acknowledgeMutation(idempotencyKey: string, confirmedRevision: number) {
+  async acknowledgeMutation(idempotencyKey: string, confirmedRevision: number, canonicalSnapshot?: ActiveWorkoutDraftSnapshot) {
     return this.#enqueue(async () => {
       assertRevision(confirmedRevision, "Confirmed revision");
       const state = this.#requireState();
@@ -410,14 +413,19 @@ export class ActiveWorkoutLocalController<Plan = unknown> {
       if (confirmedRevision !== pending.expectedRevision + 1) {
         throw new Error("Mutation acknowledgement has an unexpected revision");
       }
+      const confirmed = canonicalSnapshot ?? pending.snapshot;
+      if (!isActiveWorkoutDraftSnapshot(confirmed)) throw new TypeError("Confirmed workout snapshot is invalid");
+      // This is normalization of our own successful write, not an independent
+      // server edit. Keep every newer local change when the same field differs.
+      const merged = mergeActiveWorkoutDraftSnapshots(pending.snapshot, state.snapshot, confirmed).snapshot;
       const updatedAt = this.#timestamp();
       const record: ActiveWorkoutLocalRecord<Plan> = {
         ...entry.record,
         confirmedRevision,
         confirmedWriteToken: idempotencyKey,
-        confirmedSnapshot: cloneActiveWorkoutSnapshot(pending.snapshot),
-        confirmedThroughSequence: pending.throughSequence,
-        compactedSnapshot: cloneActiveWorkoutSnapshot(state.snapshot),
+        confirmedSnapshot: cloneActiveWorkoutSnapshot(confirmed),
+        confirmedThroughSequence: activeWorkoutSnapshotsEqual(merged, confirmed) ? state.latestSequence : pending.throughSequence,
+        compactedSnapshot: cloneActiveWorkoutSnapshot(merged),
         compactedThroughSequence: state.latestSequence,
         pendingMutation: null,
         revisionConflict: null,
@@ -748,37 +756,9 @@ export class ActiveWorkoutLocalController<Plan = unknown> {
       state.snapshot,
       authoritativeSnapshot,
     );
-    const serverMerged = mergeActiveWorkoutDraftSnapshots(
-      pending.snapshot,
-      authoritativeSnapshot,
-      state.snapshot,
-    );
     const updatedAt = this.#timestamp();
-    if (merged.conflicts.length > 0) {
-      const revisionConflict: ActiveWorkoutRevisionConflict = {
-        rejectedMutation: null,
-        authoritativeRevision,
-        authoritativeWriteToken,
-        authoritativeSnapshot: cloneActiveWorkoutSnapshot(
-          authoritativeSnapshot,
-        ),
-        localCandidate: cloneActiveWorkoutSnapshot(merged.snapshot),
-        serverCandidate: cloneActiveWorkoutSnapshot(serverMerged.snapshot),
-        conflicts: [...merged.conflicts],
-        detectedAt: updatedAt,
-      };
-      const conflictRecord: ActiveWorkoutLocalRecord<Plan> = {
-        ...entry.record,
-        compactedSnapshot: cloneActiveWorkoutSnapshot(merged.snapshot),
-        compactedThroughSequence: state.latestSequence,
-        pendingMutation: null,
-        revisionConflict,
-        updatedAt,
-      };
-      await this.#cache.replace(conflictRecord);
-      this.#setEntry({ record: conflictRecord, journal: [] });
-      return this.#requireState();
-    }
+    // The matching token (or exact sent snapshot) identifies our own commit.
+    // Server normalization cannot overwrite edits made after that request.
     const matchesAuthoritative = activeWorkoutSnapshotsEqual(
       merged.snapshot,
       authoritativeSnapshot,

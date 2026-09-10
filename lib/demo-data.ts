@@ -2,6 +2,7 @@ import type {
   AthleteSummary,
   CompletedSession,
   Exercise,
+  PlannedWorkout,
   Program,
   ProgramTemplate,
   ScheduledWorkout,
@@ -16,7 +17,7 @@ export const globalExercises: Exercise[] = [
     cue: "Brace, sit between the hips, drive evenly.",
     scope: "global",
     defaultMode: "sets",
-    defaultFields: ["reps", "load", "rpe"],
+    defaultFields: ["reps", "load"],
   },
   {
     id: "bench-press",
@@ -25,7 +26,7 @@ export const globalExercises: Exercise[] = [
     cue: "Set the upper back and keep the feet planted.",
     scope: "global",
     defaultMode: "sets",
-    defaultFields: ["reps", "load", "rpe"],
+    defaultFields: ["reps", "load"],
   },
   {
     id: "romanian-deadlift",
@@ -34,7 +35,7 @@ export const globalExercises: Exercise[] = [
     cue: "Push the hips back and keep the bar close.",
     scope: "global",
     defaultMode: "sets",
-    defaultFields: ["reps", "load", "rpe"],
+    defaultFields: ["reps", "load"],
   },
   {
     id: "push-up",
@@ -43,7 +44,7 @@ export const globalExercises: Exercise[] = [
     cue: "Move as one line and finish with long arms.",
     scope: "global",
     defaultMode: "sets",
-    defaultFields: ["reps", "rpe"],
+    defaultFields: ["reps"],
   },
   {
     id: "pull-up",
@@ -52,7 +53,7 @@ export const globalExercises: Exercise[] = [
     cue: "Start long, pull the chest toward the bar.",
     scope: "global",
     defaultMode: "sets",
-    defaultFields: ["reps", "rpe"],
+    defaultFields: ["reps"],
   },
   {
     id: "zone-2-bike",
@@ -61,7 +62,7 @@ export const globalExercises: Exercise[] = [
     cue: "Keep a sustainable conversational pace.",
     scope: "global",
     defaultMode: "result",
-    defaultFields: ["duration", "distance", "rpe"],
+    defaultFields: ["duration", "distance"],
   },
   {
     id: "easy-run",
@@ -70,7 +71,7 @@ export const globalExercises: Exercise[] = [
     cue: "Relaxed pace; finish feeling like you could continue.",
     scope: "global",
     defaultMode: "result",
-    defaultFields: ["duration", "distance", "rpe"],
+    defaultFields: ["duration", "distance"],
   },
   {
     id: "rowing-intervals",
@@ -79,7 +80,7 @@ export const globalExercises: Exercise[] = [
     cue: "Repeatable effort across every interval.",
     scope: "global",
     defaultMode: "intervals",
-    defaultFields: ["rounds", "duration", "distance", "rpe"],
+    defaultFields: ["rounds", "duration", "distance"],
   },
   {
     id: "plank",
@@ -88,7 +89,16 @@ export const globalExercises: Exercise[] = [
     cue: "Ribs down, glutes tight, breathe behind the brace.",
     scope: "global",
     defaultMode: "result",
-    defaultFields: ["duration", "rpe"],
+    defaultFields: ["duration"],
+  },
+  {
+    id: "step-up",
+    name: "Step-up",
+    category: "Bodyweight",
+    cue: "Step onto the box with control and stand tall.",
+    scope: "global",
+    defaultMode: "sets",
+    defaultFields: ["reps"],
   },
   {
     id: "mobility-flow",
@@ -106,7 +116,7 @@ export const globalExercises: Exercise[] = [
     cue: "Stay balanced through the pull and receive actively.",
     scope: "global",
     defaultMode: "sets",
-    defaultFields: ["reps", "load", "rpe"],
+    defaultFields: ["reps", "load"],
   },
   {
     id: "clean-jerk",
@@ -115,7 +125,7 @@ export const globalExercises: Exercise[] = [
     cue: "Finish the pull, meet the bar, then drive vertically.",
     scope: "global",
     defaultMode: "sets",
-    defaultFields: ["reps", "load", "rpe"],
+    defaultFields: ["reps", "load"],
   },
 ];
 
@@ -613,3 +623,78 @@ export const demoWorkspace: WorkspaceData = {
   outgoingCoachInvites: [],
   activeSession: null,
 };
+
+/** An isolated local preview: prescribed targets only, with no recorded results. */
+export function createExerciseRecordingDemoWorkspace(): WorkspaceData {
+  const workspace = structuredClone(demoWorkspace);
+  const combination: Exercise = {
+    id: "preview-clean-jerk", name: "Power clean + push jerk", category: "Weightlifting", discipline: "weightlifting",
+    scope: "personal", cue: "Perform the movements in the order shown for each set.",
+    defaultMode: "sets", defaultFields: ["reps", "load"],
+    videoLinks: [
+      { label: "Power clean", url: "https://www.youtube.com/watch?v=YG8M_-11C2A" },
+      { label: "Push jerk", url: "https://www.youtube.com/watch?v=Om7vLD6x8W0" },
+    ],
+  };
+  const versionId = "recording-preview-v1";
+  const scheduleId = "recording-preview-today";
+  const workout: PlannedWorkout = {
+    id: "recording-preview-workout",
+    programVersionId: versionId,
+    scheduledWorkoutId: scheduleId,
+    plannedDate: todayIso,
+    title: "Strength + core",
+    dayLabel: "Today",
+    durationMinutes: 30,
+    sections: [{
+      id: "recording-preview-exercises",
+      title: "Exercises",
+      items: [
+        {
+          id: "preview-plank", exerciseId: "plank", title: "Plank", category: "Core",
+          cue: "Hold a straight body line and breathe steadily. Keep your elbows below your shoulders and avoid letting your hips drop.", mode: "sets", fields: ["duration"],
+          prescription: { sets: 3, durationMinutes: 0.5, restSeconds: 30, targetText: "Rest 30 seconds between sets. Record the time you actually held each set." },
+        },
+        {
+          id: "preview-step-up", exerciseId: "step-up", title: "Step-up", category: "Bodyweight",
+          cue: "8 reps per leg. Step down with control.", mode: "sets", fields: ["reps"],
+          prescription: { sets: 3, reps: "8" },
+        },
+        {
+          id: "preview-combination", exerciseId: combination.id, title: combination.name, category: combination.category,
+          videoLinks: combination.videoLinks,
+          cue: combination.cue, mode: "sets", fields: ["reps", "load"],
+          prescription: { sets: 4, reps: "3", targetText: "MAIN COMPLEX B\nEach set: 2 power cleans, then 1 push jerk.\nComplete 4 sets. RPE 6–7; rest 2–3 minutes after each set.\nThese 4 jerks are additional to the 4 standalone jerks earlier in the workout.\nThe Reps field counts all movements: 2 + 1 = 3 reps per set. Record the weight used for that set." },
+        },
+        {
+          id: "preview-squat", exerciseId: "back-squat", title: "Back squat", category: "Strength",
+          cue: "Choose a comfortable weight and keep each rep controlled.", mode: "sets", fields: ["reps", "load"],
+          prescription: { sets: 3, reps: "5", loadKg: 40 },
+        },
+        {
+          id: "preview-row", title: "Rowing", category: "Cardio",
+          cue: "Keep a steady, comfortable pace.", mode: "result", fields: ["distance", "duration"],
+          prescription: { distance: 500, distanceUnit: "m" },
+        },
+      ],
+    }],
+  };
+  const program: Program = {
+    ...structuredClone(initialProgram),
+    id: "recording-preview-program", versionId, title: "Strength + core", contentType: "quick_workout",
+    description: "A short workout with simple targets for strength and core exercises.", activeWeek: 1,
+    weeks: [{ id: "recording-preview-week", index: 1, label: "Workout", workouts: [workout] }],
+  };
+  return {
+    ...workspace,
+    personalExercises: [...workspace.personalExercises, combination],
+    programCatalog: [program], schedulableProgramIds: [program.id], schedulablePrograms: [program],
+    draftProgram: program, activeProgram: program, completedSessions: [], activeSession: null,
+    scheduledWorkouts: [{
+      id: scheduleId, programId: program.id, programTitle: program.title, programVersionId: versionId,
+      workoutId: workout.id, workoutTitle: workout.title, slotLabel: "Workout 1", plannedDate: todayIso,
+      sequenceNumber: 1, status: "planned", sourceType: "self", sourceLabel: "Created by you",
+      createdByName: program.createdByName, workout, detailsLoaded: true,
+    }],
+  };
+}

@@ -107,16 +107,16 @@ export default defineConfig(({ mode }) => {
               // workspace dependencies. The entry group keeps React/auth eager.
               { name: "repository", test: /lib[\\/]repository\.ts$/, priority: 40, includeDependenciesRecursively: true },
               { name: "workout-persistence", test: /app[\\/]features[\\/]active-workout[\\/]useActiveWorkoutPersistence\.ts$/, priority: 30, includeDependenciesRecursively: true },
-              // Keep the shared catalog filters separate to bound the workspace
-              // response; both workspace and exercise catalog already use them.
-              { name: "exercise-library", test: /app[\\/]features[\\/]exercises[\\/]exercise-library\.ts$/, priority: 10 },
               {
                 name: "program-authoring",
-                test: /(?:app[\\/]features[\\/](?:program-runs[\\/]ProgramRun(?:Schedule)?Wizard\.tsx|programs[\\/]ProgramView\.tsx|authoring[\\/](?:AuthoringDialogs\.ts|ProgramModal\.tsx|WorkoutDialogs\.tsx|ExerciseModal\.tsx))|lib[\\/]program-run-schedule\.ts)$/,
+                // Keep program management lists with their editors and shared
+                // history icon; the program feature remains lazy as a whole.
+                test: /(?:app[\\/]features[\\/](?:program-runs[\\/](?:ProgramRun(?:Schedule)?Wizard|SelfProgramRuns)\.tsx|programs[\\/]ProgramView\.tsx|authoring[\\/](?:AuthoringDialogs\.ts|ProgramModal\.tsx|WorkoutDialogs\.tsx|ExerciseModal\.tsx|PrescriptionModal\.tsx|FormatTrackingFields\.tsx))|lib[\\/]program-run-schedule\.ts|lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/]history\.js)$/,
               },
-              // Combine only the workspace's static dependencies after earlier
-              // groups claim theirs. Dynamic feature imports remain lazy.
-              { name: "workspace", test: /app[\\/]LiftLogApp\.tsx$/, includeDependenciesRecursively: true },
+              // Shared catalog filters, run cards and icons belong to the core
+              // workspace response. Grouping these small shared controls avoids
+              // separate requests; dynamic feature views remain lazy.
+              { name: "workspace", test: /(?:app[\\/]LiftLogApp\.tsx|app[\\/]features[\\/]program-runs[\\/]ProgramRunCompactCard\.tsx|lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/]user-round\.js)$/, includeDependenciesRecursively: true },
             ],
           },
         },

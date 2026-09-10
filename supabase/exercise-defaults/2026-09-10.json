@@ -1,0 +1,2020 @@
+{
+  "version": "2026-09-10",
+  "scope": "Global active catalog defaults only; no workout or session snapshots",
+  "identity": "Exact source provider + external ID, guarded by source URL, name and reviewed current fields; audited UUID retained only as provenance because imported UUIDs differ across databases.",
+  "rpePolicy": "Preserve existing RPE selection; new UI can customize it.",
+  "deferredCount": 10,
+  "overrides": [
+    {
+      "auditedId": "0b6bb4fc-fc66-4f32-81f2-92505c800a7f",
+      "name": "Dip Clean",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "371",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/371/Dip-Clean/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "These are barbell weightlifting repetitions; the importer wrongly treats the leading word Dip as a bodyweight dip."
+    },
+    {
+      "auditedId": "7e509682-acc2-420c-9382-b4575a4c116f",
+      "name": "Dip Clean Pull",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "660",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/660/Dip-Clean-Pull/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "These are barbell weightlifting repetitions; the importer wrongly treats the leading word Dip as a bodyweight dip."
+    },
+    {
+      "auditedId": "d4d82de2-ce48-4a38-9493-dda715116800",
+      "name": "Dip Muscle Clean",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "662",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/662/Dip-Muscle-Clean/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "These are barbell weightlifting repetitions; the importer wrongly treats the leading word Dip as a bodyweight dip."
+    },
+    {
+      "auditedId": "c869f494-e694-4156-a05a-2ddce2d29ef4",
+      "name": "Dip Muscle Snatch",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "464",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/464/Dip-Muscle-Snatch/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "These are barbell weightlifting repetitions; the importer wrongly treats the leading word Dip as a bodyweight dip."
+    },
+    {
+      "auditedId": "8e555020-a89c-4764-8725-1143229f3822",
+      "name": "Dip Power Clean",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "643",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/643/Dip-Power-Clean/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "These are barbell weightlifting repetitions; the importer wrongly treats the leading word Dip as a bodyweight dip."
+    },
+    {
+      "auditedId": "9625b48d-0dfc-45a2-9b3d-f0d009a7a051",
+      "name": "Dip Power Snatch",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "449",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/449/Dip-Power-Snatch/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "These are barbell weightlifting repetitions; the importer wrongly treats the leading word Dip as a bodyweight dip."
+    },
+    {
+      "auditedId": "f725f904-eac1-4c8e-8d47-e355fa2e4ea1",
+      "name": "Dip Snatch",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "401",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/401/Dip-Snatch/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "These are barbell weightlifting repetitions; the importer wrongly treats the leading word Dip as a bodyweight dip."
+    },
+    {
+      "auditedId": "0786bd34-b92d-4f91-af56-e0eb47ed09a9",
+      "name": "Dip Snatch Pull",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "661",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/661/Dip-Snatch-Pull/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "These are barbell weightlifting repetitions; the importer wrongly treats the leading word Dip as a bodyweight dip."
+    },
+    {
+      "auditedId": "3f2ee3d5-f021-4ed6-b20a-ca5cfb11d180",
+      "name": "Block Clean Pull To Hold",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "684",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/684/Block-Clean-Pull-To-Hold/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source programs repeated barbell pulls with a short pause at extension; a hold within each repetition is not a timed-only exercise. Keep the pause instruction as a target/cue."
+    },
+    {
+      "auditedId": "1123e348-e51c-4475-b505-8aa767f181e7",
+      "name": "Block Snatch Pull To Hold",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "672",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/672/Block-Snatch-Pull-To-Hold/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source programs repeated barbell pulls with a short pause at extension; a hold within each repetition is not a timed-only exercise. Keep the pause instruction as a target/cue."
+    },
+    {
+      "auditedId": "e6b5f203-bcdb-4b53-80ba-6f7cd5270517",
+      "name": "Clean Pull To Hold",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "450",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/450/Clean-Pull-To-Hold/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source programs repeated barbell pulls with a short pause at extension; a hold within each repetition is not a timed-only exercise. Keep the pause instruction as a target/cue."
+    },
+    {
+      "auditedId": "67b0e361-07ac-4506-91ae-7339e025b865",
+      "name": "Flat-Footed Clean Pull To Hold",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "454",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/454/Flat-Footed-Clean-Pull-To-Hold/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source programs repeated barbell pulls with a short pause at extension; a hold within each repetition is not a timed-only exercise. Keep the pause instruction as a target/cue."
+    },
+    {
+      "auditedId": "3ff243fe-492b-4b4a-9892-6193fdaf5aee",
+      "name": "Flat-Footed Snatch Pull To Hold",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "457",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/457/Flat-Footed-Snatch-Pull-To-Hold/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source programs repeated barbell pulls with a short pause at extension; a hold within each repetition is not a timed-only exercise. Keep the pause instruction as a target/cue."
+    },
+    {
+      "auditedId": "727c8d5e-cfd0-4c52-9462-b6ff59825ef1",
+      "name": "Snatch Pull To Hold",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "453",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/453/Snatch-Pull-To-Hold/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source programs repeated barbell pulls with a short pause at extension; a hold within each repetition is not a timed-only exercise. Keep the pause instruction as a target/cue."
+    },
+    {
+      "auditedId": "4e9ca67b-27de-484d-8001-2dc1a41406c3",
+      "name": "Back Squat Jump",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "353",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/353/Back-Squat-Jump/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source describes jumping with a barbell, unlike unweighted box/vertical jumps. Section16 must not imply no load."
+    },
+    {
+      "auditedId": "f3ed3ed7-e8f5-4cee-9a16-f7cccc4f6f65",
+      "name": "Concentric Quarter Squat Jump",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "104",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/104/Concentric-Quarter-Squat-Jump/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source describes jumping with a barbell, unlike unweighted box/vertical jumps. Section16 must not imply no load."
+    },
+    {
+      "auditedId": "f6e0728f-98b5-45d7-b093-76c13a9a9ac9",
+      "name": "Pause Back Squat Jump",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "620",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/620/Pause-Back-Squat-Jump/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source describes jumping with a barbell, unlike unweighted box/vertical jumps. Section16 must not imply no load."
+    },
+    {
+      "auditedId": "faeaf802-0a7f-4d76-bc20-5d9a16e52953",
+      "name": "Pause Quarter Back Squat Jump",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "621",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/621/Pause-Quarter-Back-Squat-Jump/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source describes jumping with a barbell, unlike unweighted box/vertical jumps. Section16 must not imply no load."
+    },
+    {
+      "auditedId": "47260d34-56b6-4669-9682-6ed5bcb74510",
+      "name": "Quarter Back Squat Jump",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "426",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/426/Quarter-Back-Squat-Jump/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source describes jumping with a barbell, unlike unweighted box/vertical jumps. Section16 must not imply no load."
+    },
+    {
+      "auditedId": "5da840c6-0d83-4898-948f-bcd0d06e4cde",
+      "name": "Clean Rack Support",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "181",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/181/Clean-Rack-Support/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source explicitly describes static barbell rack holds prescribed by time. Other Jerk Support variants are programmed as repetitions and should stay unchanged."
+    },
+    {
+      "auditedId": "e8b10d6c-7ef7-49a7-a672-e90ca8aca60d",
+      "name": "Jerk Rack Support",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "196",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/196/Jerk-Rack-Support/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source explicitly describes static barbell rack holds prescribed by time. Other Jerk Support variants are programmed as repetitions and should stay unchanged."
+    },
+    {
+      "auditedId": "ce7ea73a-3341-4759-b5e7-5401c2fdf344",
+      "name": "Sledgehammer Wrist Rotation",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "787",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/787/Sledgehammer-Wrist-Rotation/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "distance",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source describes repeated loaded wrist rotations. The substring sled in sledgehammer incorrectly routes it to distance recording."
+    },
+    {
+      "auditedId": "501a68a0-3747-408e-adbc-de0267602d02",
+      "name": "Copenhagen Plank Lift",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "566",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/566/Copenhagen-Plank-Lift/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source explicitly describes repeated raising/lowering or marching and programs repetitions. The static plank position is support for the moving part."
+    },
+    {
+      "auditedId": "9509a7b7-4d8e-458a-83a4-fb249ae65ff2",
+      "name": "Side Plank Clamshell",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "775",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/775/Side-Plank-Clamshell/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source explicitly describes repeated raising/lowering or marching and programs repetitions. The static plank position is support for the moving part."
+    },
+    {
+      "auditedId": "a826a25c-3eab-4276-a7c3-d4eb860b9ea1",
+      "name": "Side Plank Lift",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "499",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/499/Side-Plank-Lift/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source explicitly describes repeated raising/lowering or marching and programs repetitions. The static plank position is support for the moving part."
+    },
+    {
+      "auditedId": "ceb9c327-d6a2-446b-a0e6-cffff5af5746",
+      "name": "Supine Banded Plank March",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "781",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/781/Supine-Banded-Plank-March/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source explicitly describes repeated raising/lowering or marching and programs repetitions. The static plank position is support for the moving part."
+    },
+    {
+      "auditedId": "568d3c00-fcc2-4902-b73e-d8561f4dbd6e",
+      "name": "Plank Pull-Through",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "528",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/528/Plank-Pull-Through/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source describes repeated movement with a dumbbell/plate, and programs repetitions. A band alternative can omit numeric load through an override."
+    },
+    {
+      "auditedId": "bdc00ca7-0939-4df0-866f-daa8732aea57",
+      "name": "Side Plank External Rotation",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "586",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/586/Side-Plank-External-Rotation/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source describes repeated movement with a dumbbell/plate, and programs repetitions. A band alternative can omit numeric load through an override."
+    },
+    {
+      "auditedId": "5c851cf2-32a1-4b64-a427-6d4ff57ef4d6",
+      "name": "Back Extension Hold Rotations",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "506",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/506/Back-Extension-Hold-Rotations/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source programs repeated trunk rotations while maintaining extension. Keep optional weighted or pause variants available; do not treat hold in the name as timed-only."
+    },
+    {
+      "auditedId": "a9f3208d-a298-4eba-a20b-04b625cb6bcd",
+      "name": "Anti-Rotation Landmine",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "504",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/504/Anti-Rotation-Landmine/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "44727f50-1ad9-48b3-9af6-be4e7ea7d57b",
+      "name": "Anti-Rotation Russian Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "503",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/503/Anti-Rotation-Russian-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "7de47fb8-18df-43c5-aad2-7019b9489a11",
+      "name": "Barbell Side Bend",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "701",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/701/Barbell-Side-Bend/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "afadc519-f6c0-4bfe-ae97-304e32fceea9",
+      "name": "Cross Chop",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "158",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/158/Cross-Chop/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "795e1423-b374-4868-9326-f336d59e9b35",
+      "name": "Death March",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "508",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/508/Death-March/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "0b141aac-5d80-4dac-839d-e6e4c0812d07",
+      "name": "Decline Anti-Rotation Russian Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "703",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/703/Decline-Anti-Rotation-Russian-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "5ac7b0ab-cbad-4a80-8106-049dbec19f94",
+      "name": "Decline Russian Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "705",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/705/Decline-Russian-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "d1dc822a-a22c-4588-b6e2-9bcafa8c6045",
+      "name": "Full Moon",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "510",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/510/Full-Moon/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "141fd9ec-2019-4881-9078-c867d5fc343b",
+      "name": "GHD Anti-Rotation Russian Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "634",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/634/GHD-Anti-Rotation-Russian-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "4715e241-b6e5-41e4-8142-c8ea0ecb843d",
+      "name": "GHD Russian Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "707",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/707/GHD-Russian-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "4c41b95c-011d-4474-a573-3aa7c4cc32d3",
+      "name": "GHD Sit-up + Anti-Rotation Russian Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "708",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/708/GHD-Sit-up-Anti-Rotation-Russian-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "8be02c5c-0f3e-4983-89f0-a7d100f0851c",
+      "name": "GHD Sit-up + Russian Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "593",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/593/GHD-Sit-up-Russian-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "0c75729f-7e05-4e41-a097-4d9d1c6b6f05",
+      "name": "Half-Kneeling Cross Chop",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "709",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/709/Half-Kneeling-Cross-Chop/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "3b45379a-eb7a-447a-a0fe-525ead440b45",
+      "name": "Halfmoon",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "511",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/511/Halfmoon/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "eaa02a6b-fc79-44e9-ab4a-072509b57c7f",
+      "name": "Hip Extension Row",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "711",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/711/Hip-Extension-Row/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "bcc54450-9309-45d6-a010-6aa68e1b218c",
+      "name": "Jefferson Curl",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "521",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/521/Jefferson-Curl/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "66ad664b-5278-4c51-bcff-8971956f1a5c",
+      "name": "Low Windmill",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "523",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/523/Low-Windmill/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "cada9b75-8682-4c3f-a1de-5c0e7453a66b",
+      "name": "Russian Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "489",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/489/Russian-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "6874cf43-5326-4fbd-94c7-71769b982bf6",
+      "name": "Side Bend",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "497",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/497/Side-Bend/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "bb7a98b4-07e9-439b-9c13-303dd054c228",
+      "name": "Single-Arm Bench Press In Hollow",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "718",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/718/Single-Arm-Bench-Press-In-Hollow-/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "53d65a07-c4fe-4120-838c-59d0d4c78bbc",
+      "name": "Standing Plate Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "314",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/314/Standing-Plate-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "53dd6cb2-9ad0-42c2-96ba-2369ca429b96",
+      "name": "Topside Halfmoon",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "512",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/512/Topside-Halfmoon/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "af31c0da-ed5a-4110-8abe-aaff875a346a",
+      "name": "Windmill",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "522",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/522/Windmill/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "cf243a85-4748-4d1a-a18c-6a3a560860fd",
+      "name": "Standing Barbell Twist",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "720",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/720/Standing-Barbell-Twist/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "23721c83-bd94-4bc9-87ae-b3ed66645efc",
+      "name": "Basketball Abs",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "507",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/507/Basketball-Abs/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "c34431d8-d19a-426e-a94a-463bd30621ae",
+      "name": "Overhead Basketball Abs",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "713",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/713/Overhead-Basketball-Abs/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The linked source uses an external weighted implement as part of the base execution. Core section12 currently removes load from every exercise, including these weighted movements. Generic unweighted variants can remain available as overrides or explicitly named exercises."
+    },
+    {
+      "auditedId": "13ed08d3-1251-489d-a13e-173bec5213b6",
+      "name": "Prone Weighted Arm Circles",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "772",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/772/Prone-Weighted-Arm-Circles/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "The source uses small hand-held plates. Mobility section18 must not imply no numeric load when the named movement is explicitly weighted."
+    },
+    {
+      "auditedId": "f107814b-42de-455e-90d2-96caeb230942",
+      "name": "Rice Bucket Finger Flexion & Extension",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "773",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/773/Rice-Bucket-Finger-Flexion-Extension/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "Resistance comes from hand depth/motion within rice, not a lifted mass. The source programs repetitions; kilograms of rice is not a meaningful logged load for this movement."
+    },
+    {
+      "auditedId": "7c20e0a7-9f54-453e-a791-df523e10bb4e",
+      "name": "Rice Bucket Wrist Rotations",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "774",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/774/Rice-Bucket-Wrist-Rotations/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "source-backed-correction",
+      "rationale": "Resistance comes from hand depth/motion within rice, not a lifted mass. The source programs repetitions; kilograms of rice is not a meaningful logged load for this movement."
+    },
+    {
+      "auditedId": "d1161851-957b-4c56-95a0-92777912b293",
+      "name": "Step-up",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "560",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/560/Step-up/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "user-preference-default",
+      "rationale": "The source supports both loaded and unloaded variants. Choose repetitions without weight by default, consistent with the user request; keep Add weight/weighted variants available. This is a default preference, not a claim that step-ups cannot use weight."
+    },
+    {
+      "auditedId": "2df44ae4-d386-4202-9a59-5a149909c23a",
+      "name": "Lateral Step-up",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "561",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/561/Lateral-Step-up/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "user-preference-default",
+      "rationale": "The source supports both loaded and unloaded variants. Choose repetitions without weight by default, consistent with the user request; keep Add weight/weighted variants available. This is a default preference, not a claim that step-ups cannot use weight."
+    },
+    {
+      "auditedId": "8fbaf98d-45be-4e73-b6b9-37ce676058a3",
+      "name": "Russian Step-Up",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "739",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/739/Russian-Step-Up/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "user-preference-default",
+      "rationale": "The source supports both loaded and unloaded variants. Choose repetitions without weight by default, consistent with the user request; keep Add weight/weighted variants available. This is a default preference, not a claim that step-ups cannot use weight."
+    },
+    {
+      "auditedId": "0b4aaffd-f6d6-45dc-b96e-acb5e39e315b",
+      "name": "Lateral Russian Step-Up",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "733",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/733/Lateral-Russian-Step-Up/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "user-preference-default",
+      "rationale": "The source supports both loaded and unloaded variants. Choose repetitions without weight by default, consistent with the user request; keep Add weight/weighted variants available. This is a default preference, not a claim that step-ups cannot use weight."
+    },
+    {
+      "auditedId": "82d37dac-168f-47c3-93fb-a8534120e6be",
+      "name": "RNT Step-Up",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "738",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/738/RNT-Step-Up/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "user-preference-default",
+      "rationale": "The source supports both loaded and unloaded variants. Choose repetitions without weight by default, consistent with the user request; keep Add weight/weighted variants available. This is a default preference, not a claim that step-ups cannot use weight."
+    },
+    {
+      "auditedId": "6b85656d-97b4-44ba-b555-7042d892087e",
+      "name": "Reverse Lunge + Step-up",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "598",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/598/Reverse-Lunge-Step-up/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "user-preference-default",
+      "rationale": "The source supports both loaded and unloaded variants. Choose repetitions without weight by default, consistent with the user request; keep Add weight/weighted variants available. This is a default preference, not a claim that step-ups cannot use weight."
+    },
+    {
+      "auditedId": "8a168108-9973-4866-bd26-a3b085b9f6a5",
+      "name": "Step-Down",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "579",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/579/Step-Down/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "user-preference-default",
+      "rationale": "The source supports both loaded and unloaded variants. Choose repetitions without weight by default, consistent with the user request; keep Add weight/weighted variants available. This is a default preference, not a claim that step-ups cannot use weight."
+    },
+    {
+      "auditedId": "c34446de-ea75-47d7-b604-fba31e673509",
+      "name": "Lateral Step-Down",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "734",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/734/Lateral-Step-Down/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "user-preference-default",
+      "rationale": "The source supports both loaded and unloaded variants. Choose repetitions without weight by default, consistent with the user request; keep Add weight/weighted variants available. This is a default preference, not a claim that step-ups cannot use weight."
+    },
+    {
+      "auditedId": "85825f76-6625-4265-9e2b-6f298d6405e1",
+      "name": "Bench Dip",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "546",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/546/Bench-Dip/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution moves bodyweight; external loading is an optional progression. Match generic Pull-up/Dip defaults, while keeping weighted variants or an Add weight control."
+    },
+    {
+      "auditedId": "1721457f-c59d-4152-865f-6a36c5a1967f",
+      "name": "Neutral-Grip Pull-Up",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "864",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/864/Neutral-Grip-Pull-Up/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution moves bodyweight; external loading is an optional progression. Match generic Pull-up/Dip defaults, while keeping weighted variants or an Add weight control."
+    },
+    {
+      "auditedId": "769ddaad-1c71-4c21-8c78-eb51e992dfbf",
+      "name": "Rope Pull-up",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "884",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/884/Rope-Pull-up/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution moves bodyweight; external loading is an optional progression. Match generic Pull-up/Dip defaults, while keeping weighted variants or an Add weight control."
+    },
+    {
+      "auditedId": "31cc6673-b819-4899-bda8-974aa73e46a8",
+      "name": "Ring row",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "879",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/879/Ring-Row/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution moves bodyweight; external loading is an optional progression. Match generic Pull-up/Dip defaults, while keeping weighted variants or an Add weight control."
+    },
+    {
+      "auditedId": "b9449f92-1ffb-493a-9c1b-1fad3caeb604",
+      "name": "Single-Arm Ring Row",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "896",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/896/Single-Arm-Ring-Row/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution moves bodyweight; external loading is an optional progression. Match generic Pull-up/Dip defaults, while keeping weighted variants or an Add weight control."
+    },
+    {
+      "auditedId": "de863a2d-90cb-4bb9-b7a1-2fe821799eb4",
+      "name": "Nordic Curl",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "755",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/755/Nordic-Curl/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution moves bodyweight; external loading is an optional progression. Match generic Pull-up/Dip defaults, while keeping weighted variants or an Add weight control."
+    },
+    {
+      "auditedId": "3a13fd57-ff75-440d-a827-5ce2d24c5f02",
+      "name": "Glute-Ham Raise",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "113",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/113/Glute-Ham-Raise/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution moves bodyweight; external loading is an optional progression. Match generic Pull-up/Dip defaults, while keeping weighted variants or an Add weight control."
+    },
+    {
+      "auditedId": "c2945031-4a6f-47ff-84ae-e19f5f8d93de",
+      "name": "Wall Sit",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "749",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/749/Wall-Sit/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution is an unloaded static hold; weight is an optional progression in the source. Match the plain Plank/Hollow hold default and allow adding weight."
+    },
+    {
+      "auditedId": "243abb53-7980-4731-b91a-dde79c6d4345",
+      "name": "Single-Leg Wall Sit",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "744",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/744/Single-Leg-Wall-Sit/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution is an unloaded static hold; weight is an optional progression in the source. Match the plain Plank/Hollow hold default and allow adding weight."
+    },
+    {
+      "auditedId": "4b6df634-d97e-47b0-b9af-e291cb95e06d",
+      "name": "Single-Leg Glute Bridge Hold",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "742",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/742/Single-Leg-Glute-Bridge-Hold/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "Base execution is an unloaded static hold; weight is an optional progression in the source. Match the plain Plank/Hollow hold default and allow adding weight."
+    },
+    {
+      "auditedId": "29c15226-4c03-482e-a532-e487e52fee5c",
+      "name": "Glute Bridge",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "730",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/730/Glute-Bridge/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "The source supports bodyweight and weighted work. A simple generic default can omit weight; explicitly loaded bridge/hip-thrust variants keep it."
+    },
+    {
+      "auditedId": "04338619-974c-4dee-a6e9-4a0d9c7ff39a",
+      "name": "Single-Leg Glute Bridge",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "496",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/496/Single-Leg-Glute-Bridge/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "The source supports bodyweight and weighted work. A simple generic default can omit weight; explicitly loaded bridge/hip-thrust variants keep it."
+    },
+    {
+      "auditedId": "f39f5ab3-db0b-4ddd-9149-c0477335c651",
+      "name": "Hamstring Bridge",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "732",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/732/Hamstring-Bridge/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "The source supports bodyweight and weighted work. A simple generic default can omit weight; explicitly loaded bridge/hip-thrust variants keep it."
+    },
+    {
+      "auditedId": "f3141fbf-c21e-467b-9bdf-84476e9ca2fd",
+      "name": "Glute-Ham Bridge Walkout",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "731",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/731/Glute-Ham-Bridge-Walkout/",
+      "expected": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "consistency-default",
+      "rationale": "The source supports bodyweight and weighted work. A simple generic default can omit weight; explicitly loaded bridge/hip-thrust variants keep it."
+    },
+    {
+      "auditedId": "2142cc8b-983a-4fa6-a7c0-df3df5e2dd06",
+      "name": "Plank March",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "527",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/527/Plank-March/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "optional-default",
+      "rationale": "The source explicitly supports both repetitions and time. Repetition defaults distinguish these dynamic movements from static planks; current timed recording is also valid and existing timed prescriptions should be preserved."
+    },
+    {
+      "auditedId": "a06996ab-558d-449d-acfc-5c8fe10712e5",
+      "name": "Side Plank Leg Lift",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "531",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/531/Side-Plank-Leg-Lift/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "optional-default",
+      "rationale": "The source explicitly supports both repetitions and time. Repetition defaults distinguish these dynamic movements from static planks; current timed recording is also valid and existing timed prescriptions should be preserved."
+    },
+    {
+      "auditedId": "cb98b5c1-b488-40c7-a9cd-61e3155d5478",
+      "name": "Rolling Pin",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "530",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/530/Rolling-Pin/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "optional-default",
+      "rationale": "The source explicitly supports both repetitions and time. Repetition defaults distinguish these dynamic movements from static planks; current timed recording is also valid and existing timed prescriptions should be preserved."
+    },
+    {
+      "auditedId": "0ba04ee7-cab8-40c6-9fd6-b649492b5a51",
+      "name": "Wall Sit March",
+      "sourceProvider": "catalyst-athletics",
+      "sourceExternalId": "750",
+      "sourceUrl": "https://www.catalystathletics.com/exercise/750/Wall-Sit-March/",
+      "expected": {
+        "mode": "result",
+        "fields": [
+          "duration",
+          "load",
+          "rpe"
+        ]
+      },
+      "recommended": {
+        "mode": "sets",
+        "fields": [
+          "reps",
+          "rpe"
+        ]
+      },
+      "kind": "optional-default",
+      "rationale": "The source supports time or counted marches. Repetitions with optional timed format would be a coherent dynamic default; current duration is also valid, while weight should be optional."
+    }
+  ]
+}

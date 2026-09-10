@@ -27,7 +27,7 @@ import { formatDateOnly } from "../../../lib/date-only";
 import { programRunLifecycleLabel } from "../../../lib/program-progress";
 import { presentProgramProvenance } from "../../../lib/provenance";
 import { ExerciseCategoryMark } from "../../exercise-category-icons";
-import { ExerciseVideoLink } from "../../exercise-video-link";
+import { ExerciseVideoLinks } from "../../exercise-video-link";
 import type { ProgramMetadata, ProgramMetadataState } from "./useProgramMetadataDraft";
 import { actionUi, destinationLabel, trainingContentUi } from "../../ui-semantics";
 const WorkoutIcon = trainingContentUi("quick_workout").icon;
@@ -774,8 +774,9 @@ function ExercisePickerRow({
         </div>
         <Plus size={15} />
       </button>
-      <ExerciseVideoLink
+      <ExerciseVideoLinks
         url={exercise.videoUrl}
+        videoLinks={exercise.videoLinks}
         exerciseName={exercise.name}
       />
     </div>

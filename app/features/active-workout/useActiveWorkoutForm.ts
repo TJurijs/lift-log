@@ -10,10 +10,13 @@ export function starterSetLogs(workout: PlannedWorkout, session: ActiveSession |
     const entries = item.prescription.entries?.length
       ? item.prescription.entries
       : Array.from({ length: item.prescription.sets ?? 1 }, () => item.prescription);
-    logs[item.id] = entries.map((entry) => ({
-      reps: entry.reps?.split("–")[0] ?? item.prescription.reps?.split("–")[0] ?? "",
+    logs[item.id] = entries.map(() => ({
+      reps: "",
       load: "",
       rpe: "",
+      ...(item.fields.includes("duration") ? { duration: "" } : {}),
+      ...(item.fields.includes("distance") ? { distance: "" } : {}),
+      ...(item.fields.includes("heartRate") ? { heartRate: "" } : {}),
     }));
   }
   return logs;
@@ -29,7 +32,7 @@ export function useActiveWorkoutForm(
   const [resultLogs, setResultLogs] = useState<ActiveWorkoutDraftSnapshot["resultLogs"]>(
     initialSession?.resultLogs ?? {},
   );
-  const [sessionRpe, setSessionRpe] = useState(initialSession?.sessionRpe ?? "7");
+  const [sessionRpe, setSessionRpe] = useState(initialSession?.sessionRpe ?? "");
   const [sessionNote, setSessionNote] = useState(initialSession?.sessionNote ?? "");
   const snapshot = useMemo(
     () => ({ setLogs, resultLogs, sessionRpe, sessionNote }),

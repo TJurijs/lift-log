@@ -94,10 +94,12 @@ function isValidItemKey(value: string) {
 function isValidSetValue(value: unknown): value is SessionSetValue {
   return (
     isPlainRecord(value) &&
-    hasOnlyKeys(value, ["reps", "load", "rpe"]) &&
+    hasOnlyKeys(value, ["reps", "load", "rpe", "duration", "distance", "heartRate"]) &&
     isBoundedString(value.reps, MAX_FIELD_LENGTH) &&
     isBoundedString(value.load, MAX_FIELD_LENGTH) &&
-    isBoundedString(value.rpe, MAX_FIELD_LENGTH)
+    isBoundedString(value.rpe, MAX_FIELD_LENGTH) &&
+    ["duration", "distance", "heartRate"].every((field) =>
+      value[field] === undefined || isBoundedString(value[field], MAX_FIELD_LENGTH))
   );
 }
 

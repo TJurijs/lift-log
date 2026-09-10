@@ -35,8 +35,8 @@ export type ExerciseDiscipline = "weightlifting" | "gym" | "functional";
 export type EntryMode = "none" | "sets" | "result" | "intervals";
 /**
  * The user-facing way an exercise is performed and logged. EntryMode remains
- * the compact persistence shape; LoggingFormat distinguishes the two kinds of
- * single-result exercise without requiring a database enum migration.
+ * the compact persistence shape; LoggingFormat describes the recorded metrics
+ * for both single results and repeated sets.
  */
 export type LoggingFormat =
   | "repetitions"
@@ -52,9 +52,9 @@ const defaultTrackingFieldsByMode: Record<
   readonly TrackingField[]
 > = {
   none: [],
-  sets: ["reps", "load", "rpe"],
-  result: ["duration", "distance", "rpe"],
-  intervals: ["rounds", "duration", "rpe"],
+  sets: ["reps"],
+  result: ["duration"],
+  intervals: ["rounds", "duration"],
 };
 
 const compatibleTrackingFieldsByMode: Record<
@@ -62,7 +62,7 @@ const compatibleTrackingFieldsByMode: Record<
   readonly TrackingField[]
 > = {
   none: [],
-  sets: ["reps", "load", "rpe"],
+  sets: ["reps", "duration", "distance", "load", "heartRate", "rpe"],
   result: ["duration", "distance", "load", "heartRate", "rpe"],
   intervals: ["rounds", "duration", "distance", "heartRate", "rpe"],
 };
@@ -76,14 +76,16 @@ export function trackingFieldsForMode(
   const selected = compatibleTrackingFieldsByMode[mode].filter((field) =>
     requested.includes(field),
   );
-  return selected.length || mode === "none" ? selected : [...defaults];
+  // An explicit configuration must keep its primary metric, even if the input
+  // contains only an optional field. Never restore unrelated weight or RPE.
+  return trackingFieldsForLoggingFormat(loggingFormatFor(mode, selected), selected);
 }
 
 const loggingFormatLabels: Record<LoggingFormat, string> = {
-  repetitions: "Repetitions",
-  duration: "Duration",
+  repetitions: "Reps",
+  duration: "Time",
   distance: "Distance",
-  intervals: "Intervals",
+  intervals: "Rounds + time",
   instructions: "Instructions",
 };
 
@@ -113,10 +115,10 @@ const defaultTrackingFieldsByFormat: Record<
   LoggingFormat,
   readonly TrackingField[]
 > = {
-  repetitions: ["reps", "rpe"],
-  duration: ["duration", "rpe"],
-  distance: ["distance", "rpe"],
-  intervals: ["rounds", "duration", "rpe"],
+  repetitions: ["reps"],
+  duration: ["duration"],
+  distance: ["distance", "duration"],
+  intervals: ["rounds", "duration"],
   instructions: [],
 };
 
@@ -135,10 +137,23 @@ export function loggingFormatFor(
   mode: EntryMode,
   fields: readonly TrackingField[] = [],
 ): LoggingFormat {
-  if (mode === "sets") return "repetitions";
   if (mode === "intervals") return "intervals";
   if (mode === "none") return "instructions";
+  if (mode === "sets" && (fields.includes("reps") ||
+    (!fields.includes("duration") && !fields.includes("distance")))) return "repetitions";
   return fields.includes("distance") ? "distance" : "duration";
+}
+
+/** One concise description of the values recorded, shared by cards and details. */
+export function recordingSummary(mode: EntryMode, requested: readonly TrackingField[]) {
+  const fields = trackingFieldsForMode(mode, requested);
+  const format = loggingFormatFor(mode, fields);
+  let label = loggingFormatLabel(format);
+  if (format === "distance" && fields.includes("duration")) label += " + time";
+  if (fields.includes("load")) label += " + weight";
+  if (format === "intervals" && fields.includes("distance")) label += " + distance";
+  const extras = [fields.includes("heartRate") && "Heart rate", fields.includes("rpe") && "RPE"].filter(Boolean);
+  return [label, ...extras].join(" · ");
 }
 
 export function requiredTrackingFieldsForLoggingFormat(
@@ -165,6 +180,11 @@ export function trackingFieldsForLoggingFormat(
   );
 }
 
+export interface ExerciseVideoLink {
+  url: string;
+  label?: string;
+}
+
 export interface Exercise {
   id: string;
   name: string;
@@ -175,6 +195,7 @@ export interface Exercise {
   sourceExternalId?: string;
   sourceUrl?: string;
   videoUrl?: string;
+  videoLinks?: ExerciseVideoLink[];
   cue: string;
   scope: ExerciseScope;
   ownerName?: string;
@@ -216,11 +237,19 @@ export interface WorkoutItem {
   category?: string;
   /** Public movement demo retained from the source exercise. */
   videoUrl?: string;
+  videoLinks?: ExerciseVideoLink[];
   title: string;
   cue: string;
   mode: EntryMode;
   fields: TrackingField[];
   prescription: Prescription;
+}
+
+/** Keep both library cues and workout-specific instructions visible, once. */
+export function workoutItemNotes(item: Pick<WorkoutItem, "cue" | "prescription">) {
+  const cue = item.cue.trim();
+  const target = item.prescription.targetText?.trim();
+  return !target || cue === target || cue.endsWith(`\n${target}`) ? cue : [cue, target].filter(Boolean).join("\n");
 }
 
 export interface WorkoutSection {
@@ -494,6 +523,7 @@ export interface CompletedSessionItemResult {
   /** Visual identity captured from the canonical exercise classification. */
   category?: string;
   videoUrl?: string;
+  videoLinks?: ExerciseVideoLink[];
   cue: string;
   mode: EntryMode;
   fields: TrackingField[];
@@ -610,6 +640,11 @@ export interface SessionSetValue {
   reps: string;
   load: string;
   rpe: string;
+  /** Canonical minutes; short-duration controls display seconds. */
+  duration?: string;
+  /** Canonical kilometres, independent of the display preference. */
+  distance?: string;
+  heartRate?: string;
 }
 
 export interface ActiveSession {
@@ -626,6 +661,8 @@ export interface ActiveSession {
   programVersionId: string;
   scheduledWorkoutId?: string;
   itemLogIds: Record<string, string>;
+  /** The immutable metric selection captured when this session started. */
+  itemFields?: Record<string, TrackingField[]>;
   setLogs: Record<string, SessionSetValue[]>;
   resultLogs: Record<string, Record<string, string>>;
   sessionRpe: string;

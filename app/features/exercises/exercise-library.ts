@@ -1,5 +1,5 @@
 import type { EntryMode, Exercise, ExerciseDiscipline, LoggingFormat, TrackingField } from "../../../lib/domain";
-import { entryModeForLoggingFormat, loggingFormatFor, loggingFormatLabel, requiredTrackingFieldsForLoggingFormat } from "../../../lib/domain";
+import { entryModeForLoggingFormat, loggingFormatFor, recordingSummary, requiredTrackingFieldsForLoggingFormat } from "../../../lib/domain";
 
 export type ExerciseLibraryFilters = {
   disciplines: ExerciseDiscipline[];
@@ -9,11 +9,13 @@ export type ExerciseLibraryFilters = {
 };
 
 export function modeLabel(mode: EntryMode, fields: readonly TrackingField[] = []) {
-  return loggingFormatLabel(loggingFormatFor(mode, fields));
+  return recordingSummary(mode, fields);
 }
 
 export function entryModesForFormats(formats: readonly LoggingFormat[]) {
-  return [...new Set(formats.map(entryModeForLoggingFormat))];
+  return [...new Set(formats.flatMap((format) => format === "duration" || format === "distance"
+    ? ["sets" as const, "result" as const]
+    : [entryModeForLoggingFormat(format)]))];
 }
 
 export function trackingFiltersForExerciseSearch(filters: ExerciseLibraryFilters) {
@@ -126,8 +128,8 @@ export function exerciseTrainingStyleLabel(style: ExerciseDiscipline) {
 export function trackingFieldLabel(field: TrackingField) {
   return {
     reps: "Reps",
-    load: "Load",
-    duration: "Duration",
+    load: "Weight",
+    duration: "Time",
     distance: "Distance",
     rounds: "Rounds",
     heartRate: "Heart rate",

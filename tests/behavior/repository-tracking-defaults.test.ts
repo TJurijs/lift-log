@@ -110,9 +110,9 @@ function repositoryWithDeleteRecorder(result = { count: 1, error: null }) {
 
 describe("personal-exercise tracking defaults", () => {
   it.each<[EntryMode, TrackingField[]]>([
-    ["sets", ["reps", "load", "rpe"]],
-    ["result", ["duration", "distance", "rpe"]],
-    ["intervals", ["rounds", "duration", "rpe"]],
+    ["sets", ["reps"]],
+    ["result", ["duration"]],
+    ["intervals", ["rounds", "duration"]],
     ["none", []],
   ])("maps %s mode to its persisted default fields", async (mode, expectedFields) => {
     const { getInserted, repository } = repositoryWithInsertRecorder();
@@ -169,6 +169,8 @@ describe("personal-exercise tracking defaults", () => {
 
   it.each<[EntryMode, TrackingField[], TrackingField[]]>([
     ["sets", ["reps", "rpe"], ["reps", "rpe"]],
+    ["sets", ["duration", "load"], ["duration", "load"]],
+    ["sets", ["distance", "duration", "heartRate"], ["distance", "duration", "heartRate"]],
     ["result", ["distance", "load", "rpe"], ["distance", "load", "rpe"]],
     [
       "intervals",
@@ -205,7 +207,7 @@ describe("personal-exercise tracking defaults", () => {
       fields: ["reps", "load", "rpe", "load"],
     });
     expect(first.getInserted()).toMatchObject({
-      default_tracking_fields: ["load", "rpe"],
+      default_tracking_fields: ["duration", "load", "rpe"],
     });
 
     const second = repositoryWithInsertRecorder();
@@ -217,7 +219,7 @@ describe("personal-exercise tracking defaults", () => {
       fields: ["reps", "rounds"],
     });
     expect(second.getInserted()).toMatchObject({
-      default_tracking_fields: ["duration", "distance", "rpe"],
+      default_tracking_fields: ["duration"],
     });
   });
 
@@ -236,7 +238,7 @@ describe("personal-exercise tracking defaults", () => {
       category: "Strength",
       cue: "Keep the brace.",
       default_entry_mode: "sets",
-      default_tracking_fields: ["reps", "load", "rpe"],
+      default_tracking_fields: ["reps"],
     });
   });
 

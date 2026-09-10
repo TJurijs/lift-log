@@ -2,7 +2,7 @@ import type { SessionSetValue } from "./domain";
 import type { ActiveWorkoutDraftSnapshot } from "./active-workout-draft-storage";
 
 const MISSING = Symbol("missing active-workout draft value");
-const SET_FIELDS = ["reps", "load", "rpe"] as const;
+const SET_FIELDS = ["reps", "load", "rpe", "duration", "distance", "heartRate"] as const;
 
 type Missing = typeof MISSING;
 type Maybe<T> = T | Missing;
@@ -42,7 +42,7 @@ function mergePrimitive(
 }
 
 function sameSetValue(left: SessionSetValue, right: SessionSetValue) {
-  return SET_FIELDS.every((field) => left[field] === right[field]);
+  return SET_FIELDS.every((field) => (left[field] ?? "") === (right[field] ?? ""));
 }
 
 function sameSetArray(
@@ -106,10 +106,11 @@ function mergeSetLogs(
         const remoteEntry = remoteEntries[row];
         const mergedEntry = {} as SessionSetValue;
         for (const field of SET_FIELDS) {
+          if (baseEntry[field] === undefined && localEntry[field] === undefined && remoteEntry[field] === undefined) continue;
           mergedEntry[field] = mergePrimitive(
-            baseEntry[field],
-            localEntry[field],
-            remoteEntry[field],
+            baseEntry[field] ?? "",
+            localEntry[field] ?? "",
+            remoteEntry[field] ?? "",
             setPath(itemId, row, field),
             conflicts,
           ) as string;

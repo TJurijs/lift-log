@@ -25,6 +25,7 @@ describe("demo workout lifecycle", () => {
     await user.type(note, "Demo session completed");
     await user.type(screen.getByLabelText(`${item.title}, set 1, load in kg`), "72.5");
     await user.click(screen.getByRole("button", { name: "Finish and save session" }));
+    await user.click(await screen.findByRole("button", { name: "Finish without those results" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Finish and save session" })).not.toBeInTheDocument());
     expect(await loadCachedActiveWorkoutWorkspace(demoViewer)).toBeNull();
     await user.click(await screen.findByRole("button", { name: "Show completed" }));

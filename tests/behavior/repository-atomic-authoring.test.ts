@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Exercise, Program, WorkoutSection } from "../../lib/domain";
 import { LiftLogRepository } from "../../lib/repository";
+import { starterSetLogs } from "../../app/features/active-workout/useActiveWorkoutForm";
 
 function makeRepository(data: unknown, error: { message: string } | null = null) {
   const rpc = vi.fn().mockResolvedValue({ data, error });
@@ -13,6 +14,22 @@ function makeRepository(data: unknown, error: { message: string } | null = null)
 }
 
 describe("atomic workout authoring", () => {
+  it.each([
+    { repsMin: null, repsMax: null, expected: undefined },
+    { repsMin: 2, repsMax: 3, expected: "2–3" },
+  ])("keeps complex sequence instructions separate from numeric reps ($expected)", async ({ repsMin, repsMax, expected }) => {
+    const { repository } = makeRepository({
+      id: "complex", name: "Clean + jerk", cue: "Keep the bar close.", entryMode: "sets", trackingFields: ["reps", "load"],
+      prescribedEntries: [{ id: "entry-1", position: 0, repsMin, repsMax, targetText: "2 + 1: two cleans, then one jerk." }],
+    });
+    const parsed = await repository.addWorkoutItem({ id: "section", title: "Exercises", items: [] }, { id: "exercise" } as Exercise);
+    expect(parsed.cue).toBe("Keep the bar close.");
+    expect(parsed.prescription.reps).toBe(expected);
+    expect(parsed.prescription.targetText).toBe("2 + 1: two cleans, then one jerk.");
+    const logs = starterSetLogs({ id: "workout", title: "Workout", dayLabel: "Today", durationMinutes: 10, sections: [{ id: "section", title: "Exercises", items: [parsed] }] }, null);
+    expect(logs.complex).toEqual([{ reps: "", load: "", rpe: "" }]);
+  });
+
   it("uses the persisted workout order and returns its complete section", async () => {
     const { repository, rpc, from } = makeRepository({
       id: "workout-2",

@@ -76,8 +76,8 @@ test("exercise browsing uses three primary disciplines with compact rows and tag
   assert.match(app, /function ExerciseDetailsModal/);
   assert.match(app, /accessibleLabel: `Edit \$\{exercise\.name\}`, onClick: \(\) => onEdit\(exercise\)/);
   assert.match(app, /Training style[\s\S]*Category/);
-  assert.match(app, /<span>Format<\/span>/);
-  assert.match(app, /Track during workout/);
+  assert.match(app, /<span>Record<\/span>/);
+  assert.match(app, /Customize optional fields/);
   assert.match(app, /function ExerciseCategoryIcon/);
   assert.match(app, /function ExercisePickerRow[\s\S]*?<ExerciseCategoryMark category=\{exercise\.category\}/);
   assert.match(app, /exercise-list-identity[\s\S]*?<ExerciseCategoryMark category=\{exercise\.category\}/);

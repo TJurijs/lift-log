@@ -62,7 +62,7 @@ describe("server-backed exercise filters", () => {
     expect(
       screen.getByRole("button", { name: "Functional fitness" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Intervals" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Rounds + time" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Heart rate" })).toBeVisible();
 
     const functionalChip = screen
@@ -126,7 +126,7 @@ describe("server-backed exercise filters", () => {
     );
     await user.click(filterPanel.getByRole("button", { name: "Functional" }));
     await user.click(filterPanel.getByRole("button", { name: "Bodybuilding" }));
-    await user.click(filterPanel.getByRole("button", { name: "Intervals" }));
+    await user.click(filterPanel.getByRole("button", { name: "Rounds + time" }));
     await user.click(filterPanel.getByRole("button", { name: "Heart rate" }));
 
     const activeRequest = {

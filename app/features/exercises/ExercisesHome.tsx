@@ -5,7 +5,7 @@ import { loggingFormatLabel } from "../../../lib/domain";
 import { cn } from "../../../lib/presentation";
 import { PageHeader, SegmentedTabs } from "../../ui-primitives";
 import { ExerciseCategoryIcon, ExerciseCategoryMark } from "../../exercise-category-icons";
-import { ExerciseVideoLink } from "../../exercise-video-link";
+import { ExerciseVideoLinks } from "../../exercise-video-link";
 import { ObjectActionMenu } from "../../object-action-menu";
 import { actionUi } from "../../ui-semantics";
 import { emptyExerciseLibraryFilters, exerciseFilterCategories, exerciseFormatOptions, exerciseTrackingOptions, exerciseTrainingStyles, exerciseTrainingStyleLabel, inferredExerciseDiscipline, modeLabel, toggleExerciseFilterValue, trackingFieldLabel, type ExerciseLibraryFilters } from "./exercise-library";
@@ -230,10 +230,10 @@ export function ExercisesView({
               <button className="filter-tag-category" key={category} onClick={() => toggleCategory(category)}>Category: {category} <X size={12} /></button>
             ))}
             {filters.formats.map((format) => (
-              <button className="filter-tag-logging" key={format} onClick={() => toggleFormat(format)}>Format: {loggingFormatLabel(format)} <X size={12} /></button>
+              <button className="filter-tag-logging" key={format} onClick={() => toggleFormat(format)}>Record: {loggingFormatLabel(format)} <X size={12} /></button>
             ))}
             {filters.tracking.map((field) => (
-              <button className="filter-tag-tracking" key={field} onClick={() => toggleTracking(field)}>Tracking: {trackingFieldLabel(field)} <X size={12} /></button>
+              <button className="filter-tag-tracking" key={field} onClick={() => toggleTracking(field)}>Includes: {trackingFieldLabel(field)} <X size={12} /></button>
             ))}
             <button className="clear" onClick={resetFilters}>Clear filters</button>
           </div>
@@ -262,7 +262,7 @@ export function ExercisesView({
               </div>
             </div>
             <div>
-              <span>Format</span>
+              <span>Record</span>
               <div className="library-filter-chip-row">
                 {exerciseFormatOptions.map((format) => (
                   <button className={cn("filter-tag-logging", filters.formats.includes(format) && "active")} aria-pressed={filters.formats.includes(format)} key={format} onClick={() => toggleFormat(format)}>{loggingFormatLabel(format)}</button>
@@ -270,7 +270,7 @@ export function ExercisesView({
               </div>
             </div>
             <div>
-              <span>Tracking</span>
+              <span>Includes metric</span>
               <div className="library-filter-chip-row">
                 {exerciseTrackingOptions.map((field) => (
                   <button className={cn("filter-tag-tracking", filters.tracking.includes(field) && "active")} aria-pressed={filters.tracking.includes(field)} key={field} onClick={() => toggleTracking(field)}>{trackingFieldLabel(field)}</button>
@@ -325,16 +325,14 @@ export function ExercisesView({
                   <span className="exercise-parameter-tag category">{exercise.category}</span>
                 )}
                 <span className="exercise-parameter-tag logging">{modeLabel(exercise.defaultMode, exercise.defaultFields)}</span>
-                {exercise.defaultFields.length ? exercise.defaultFields.map((field) => (
-                  <span className="exercise-parameter-tag tracking" key={field}>{trackingFieldLabel(field)}</span>
-                )) : <span className="exercise-parameter-tag tracking">No tracking</span>}
               </span>
             </button>
               );
             })()}
             <div className="exercise-list-actions">
-              <ExerciseVideoLink
+              <ExerciseVideoLinks
                 url={exercise.videoUrl}
+                videoLinks={exercise.videoLinks}
                 exerciseName={exercise.name}
                 size={15}
                 label="Video"

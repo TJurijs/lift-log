@@ -2,7 +2,7 @@ import { Activity, ArrowRight, Check, LockKeyhole } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { InlineError, Toast } from "./ui-primitives";
-import { demoWorkspace } from "../lib/demo-data";
+import { demoWorkspace, createExerciseRecordingDemoWorkspace } from "../lib/demo-data";
 import {
   demoViewer,
   getSupabaseBrowserClient,
@@ -92,6 +92,10 @@ function wait(milliseconds: number) {
 }
 
 export default function AppEntry() {
+  const [localDemoWorkspace] = useState<WorkspaceData | null>(() => localDemoAvailable
+    ? new URLSearchParams(window.location.search).get("example") === "recording"
+      ? createExerciseRecordingDemoWorkspace() : demoWorkspace
+    : null);
   const [status, setStatus] = useState<AuthStatus>(isSupabaseConfigured ? "loading" : "anonymous");
   const [session, setSession] = useState<Session | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -128,7 +132,8 @@ export default function AppEntry() {
     );
   }, []);
   useEffect(() => {
-    if (!session?.user.id || import.meta.env.VITE_ENABLE_REMOTE_TELEMETRY !== "true") return;
+    if (import.meta.env.VITE_ENABLE_REMOTE_TELEMETRY !== "true") return;
+    if (!session?.user.id) return;
     const client = getSupabaseBrowserClient();
     if (!client) return;
     let active = true;
@@ -435,7 +440,7 @@ export default function AppEntry() {
         <LiftLogApp
           viewer={demoViewer}
           onSignOut={signOut}
-          initialWorkspace={demoWorkspace}
+          initialWorkspace={localDemoWorkspace!}
           repository={null}
         />
       </Suspense>

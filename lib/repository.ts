@@ -17,6 +17,7 @@ import type {
   CursorPage,
   EntryMode,
   Exercise,
+  ExerciseVideoLink,
   ExerciseCursor,
   ExerciseWorkspaceData,
   FrequentSchedulableWorkoutCandidate,
@@ -48,6 +49,8 @@ import type {
   WorkspaceData,
 } from "./domain";
 import { trackingFieldsForMode } from "./domain";
+import { exerciseVideoLinks, validateExerciseVideoLinks } from "./exercise-videos";
+import type { ActiveWorkoutDraftSnapshot } from "./active-workout-draft-storage";
 import { recordClientPerformance } from "./performance";
 import { implicitProgramWeek } from "./program-tree";
 import { BoundedQueryCache } from "./query-cache";
@@ -70,6 +73,7 @@ interface ExerciseRow {
   source_external_id?: string | null;
   source_url?: string | null;
   video_url?: string | null;
+  video_links?: unknown;
   cue: string;
   default_entry_mode: EntryMode;
   default_tracking_fields: TrackingField[];
@@ -129,6 +133,7 @@ export interface SessionDraftEntryPayload {
 }
 
 export interface SessionDraftPayload {
+  recordingSchema: 2;
   sessionRpe: number | null;
   sessionNote: string;
   items: Array<{
@@ -149,6 +154,7 @@ interface CompletedSessionItemRow extends SessionItemRow {
   snapshot_name: string;
   snapshot_category: string;
   snapshot_video_url: string | null;
+  snapshot_video_links?: unknown;
   snapshot_cue: string;
   tracking_fields: TrackingField[];
 }
@@ -181,6 +187,7 @@ export interface CreateExerciseInput {
   sourceExternalId?: string;
   sourceUrl?: string;
   videoUrl?: string;
+  videoLinks?: ExerciseVideoLink[];
   mode: EntryMode;
   fields?: TrackingField[];
   cue: string;
@@ -821,6 +828,25 @@ const trackingFields = new Set<TrackingField>([
   "rpe",
 ]);
 
+function videoProperties(videoLinks: unknown, videoUrl?: string | null) {
+  return {
+    videoUrl: videoUrl ?? undefined,
+    ...(videoLinks == null ? {} : { videoLinks: exerciseVideoLinks({ videoLinks: Array.isArray(videoLinks) ? videoLinks as ExerciseVideoLink[] : [] }) }),
+  };
+}
+
+function exerciseVideoWrite(input: CreateExerciseInput) {
+  if (input.videoLinks !== undefined) {
+    const links = validateExerciseVideoLinks(input.videoLinks);
+    return { video_links: links, video_url: links[0]?.url ?? null };
+  }
+  if (input.videoUrl !== undefined) {
+    const links = input.videoUrl ? validateExerciseVideoLinks([{ url: input.videoUrl }]) : [];
+    return { video_url: links[0]?.url ?? null };
+  }
+  return {};
+}
+
 function parseCoachCompletedSessionDetail(
   value: unknown,
 ): CompletedSessionDetail | null {
@@ -853,13 +879,7 @@ function parseCoachCompletedSessionDetail(
             "exercise_category",
             "snapshot_category",
           ) ?? undefined,
-        videoUrl:
-          jsonNullableString(
-            item,
-            "videoUrl",
-            "video_url",
-            "snapshot_video_url",
-          ) ?? undefined,
+        ...videoProperties(jsonField(item, "videoLinks", "video_links", "snapshot_video_links"), jsonNullableString(item, "videoUrl", "video_url", "snapshot_video_url")),
         cue: jsonString(item, "cue", "snapshot_cue") ?? "",
         mode: modeValue as EntryMode,
         fields,
@@ -900,14 +920,14 @@ function parseCoachCompletedSessionDetail(
 }
 
 function numberValue(value: NumericValue | undefined) {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function displayNumber(value: NumericValue | undefined) {
+function displayNumber(value: NumericValue | undefined, divisor = 1) {
   const parsed = numberValue(value);
-  return parsed === null ? "" : String(parsed);
+  return parsed === null ? "" : String(parsed / divisor);
 }
 
 function numericRange(value?: string) {
@@ -971,8 +991,8 @@ function prescriptionEntryFromRow(row: PrescriptionRow): PrescriptionEntry {
         ? `${repsLow}–${repsHigh}`
         : repsLow || repsHigh || undefined,
     loadKg: numberValue(row.load_kg) ?? undefined,
-    durationMinutes: row.duration_seconds ? row.duration_seconds / 60 : undefined,
-    distance: numberValue(row.distance_metres)
+    durationMinutes: row.duration_seconds !== null ? row.duration_seconds / 60 : undefined,
+    distance: numberValue(row.distance_metres) !== null
       ? Number(numberValue(row.distance_metres)) / 1000
       : undefined,
     distanceUnit: "km",
@@ -1011,7 +1031,7 @@ function prescriptionFromRows(
       reps:
         repsLow && repsHigh && repsLow !== repsHigh
           ? `${repsLow}–${repsHigh}`
-          : repsLow || repsHigh || first.target_text || undefined,
+          : repsLow || repsHigh || undefined,
       loadKg: numberValue(first.load_kg) ?? undefined,
       targetRpe,
       targetText: first.target_text ?? undefined,
@@ -1021,12 +1041,8 @@ function prescriptionFromRows(
 
   return {
     loadKg: numberValue(first.load_kg) ?? undefined,
-    durationMinutes: first.duration_seconds
-      ? first.duration_seconds / 60
-      : undefined,
-    distance: numberValue(first.distance_metres)
-      ? Number(numberValue(first.distance_metres)) / 1000
-      : undefined,
+    durationMinutes: entries[0].durationMinutes,
+    distance: entries[0].distance,
     distanceUnit: "km",
     rounds:
       mode === "intervals" && ordered.length > 1
@@ -1059,7 +1075,7 @@ function mapExercise(row: ExerciseRow, ownerName: string): Exercise {
     sourceProvider: row.source_provider ?? undefined,
     sourceExternalId: row.source_external_id ?? undefined,
     sourceUrl: row.source_url ?? undefined,
-    videoUrl: row.video_url ?? undefined,
+    ...videoProperties(row.video_links, row.video_url),
     cue: row.cue,
     scope: row.scope,
     ownerName: row.scope === "personal" ? ownerName : undefined,
@@ -1130,7 +1146,7 @@ function parseWorkoutItemPayload(
       jsonNullableString(item, "sourceExerciseId", "source_exercise_id") ?? undefined,
     category:
       jsonNullableString(item, "category", "exerciseCategory", "exercise_category") ?? undefined,
-    videoUrl: jsonNullableString(item, "videoUrl", "video_url") ?? undefined,
+    ...videoProperties(jsonField(item, "videoLinks", "video_links", "snapshot_video_links"), jsonNullableString(item, "videoUrl", "video_url")),
     title: jsonString(item, "name", "snapshotName", "snapshot_name") ?? "Exercise",
     cue: jsonString(item, "cue", "snapshotCue", "snapshot_cue") ?? "",
     mode,
@@ -1332,6 +1348,7 @@ function parseActiveSessionPayload(value: unknown): ActiveSession | null {
   );
   if (!id || !workoutId || !programVersionId) return null;
   const itemLogIds = jsonStringMap(jsonField(row, "itemLogIds", "item_log_ids"));
+  const itemFields: Record<string, TrackingField[]> = {};
   const setLogs: Record<string, SessionSetValue[]> = {};
   const resultLogs: Record<string, Record<string, string>> = {};
   for (const item of jsonRecords(jsonField(row, "items"))) {
@@ -1343,6 +1360,8 @@ function parseActiveSessionPayload(value: unknown): ActiveSession | null {
     const itemLogId = jsonString(item, "itemLogId", "item_log_id");
     if (!sourceItemId || !itemLogId) continue;
     itemLogIds[sourceItemId] = itemLogId;
+    const fields = jsonField(item, "trackingFields", "tracking_fields");
+    if (Array.isArray(fields)) itemFields[sourceItemId] = parseTrackingFields(fields);
     const mode = parseEntryMode(jsonField(item, "entryMode", "entry_mode"));
     const entries = jsonRecords(jsonField(item, "entries")).sort(
       (left, right) =>
@@ -1354,6 +1373,12 @@ function parseActiveSessionPayload(value: unknown): ActiveSession | null {
         reps: displayNumber(jsonNumeric(entry, "reps")),
         load: displayNumber(jsonNumeric(entry, "loadKg", "load_kg")),
         rpe: displayNumber(jsonNumeric(entry, "rpe")),
+        ...(itemFields[sourceItemId]?.includes("duration") || jsonNumeric(entry, "durationSeconds", "duration_seconds") != null
+          ? { duration: displayNumber(jsonNumeric(entry, "durationSeconds", "duration_seconds"), 60) } : {}),
+        ...(itemFields[sourceItemId]?.includes("distance") || jsonNumeric(entry, "distanceMetres", "distance_metres") != null
+          ? { distance: displayNumber(jsonNumeric(entry, "distanceMetres", "distance_metres"), 1000) } : {}),
+        ...(itemFields[sourceItemId]?.includes("heartRate") || jsonNumeric(entry, "heartRate", "heart_rate") != null
+          ? { heartRate: displayNumber(jsonNumeric(entry, "heartRate", "heart_rate")) } : {}),
       }));
       continue;
     }
@@ -1432,9 +1457,10 @@ function parseActiveSessionPayload(value: unknown): ActiveSession | null {
         "scheduled_workout_id",
       ) ?? undefined,
     itemLogIds,
+    itemFields,
     setLogs,
     resultLogs,
-    sessionRpe: displayNumber(jsonNumeric(row, "sessionRpe", "session_rpe")) || "7",
+    sessionRpe: displayNumber(jsonNumeric(row, "sessionRpe", "session_rpe")),
     sessionNote: jsonString(row, "sessionNote", "session_note") ?? "",
   };
 }
@@ -1467,10 +1493,10 @@ export function buildSessionDraftPayload(
             position,
             reps: numberValue(set.reps),
             loadKg: numberValue(set.load),
-            durationSeconds: null,
-            distanceMetres: null,
+            durationSeconds: numberValue(set.duration) === null ? null : Math.round(Number(set.duration) * 60),
+            distanceMetres: numberValue(set.distance) === null ? null : Number(set.distance) * 1000,
             rounds: null,
-            heartRate: null,
+            heartRate: numberValue(set.heartRate),
             rpe: numberValue(set.rpe),
           }))
         : result && intervalPositions.length
@@ -1486,7 +1512,7 @@ export function buildSessionDraftPayload(
                 numberValue(result[`round.${position}.distance`]) === null
                   ? null
                   : Number(result[`round.${position}.distance`]) * 1000,
-              rounds: result[`round.${position}.completed`] ? 1 : null,
+              rounds: result[`round.${position}.completed`] === "1" ? 1 : null,
               heartRate: numberValue(result[`round.${position}.heartRate`]),
               rpe: numberValue(result[`round.${position}.rpe`]),
             }))
@@ -1510,14 +1536,50 @@ export function buildSessionDraftPayload(
               },
             ]
           : [];
+      const fields = session.itemFields?.[itemId];
+      if (fields) {
+        for (const entry of entries) {
+          if (!fields.includes("reps")) entry.reps = null;
+          if (!fields.includes("load")) entry.loadKg = null;
+          if (!fields.includes("duration")) entry.durationSeconds = null;
+          if (!fields.includes("distance")) entry.distanceMetres = null;
+          if (!fields.includes("rounds")) entry.rounds = null;
+          if (!fields.includes("heartRate")) entry.heartRate = null;
+          if (!fields.includes("rpe")) entry.rpe = null;
+        }
+      }
       return { itemLogId, entries };
     },
   );
   return {
+    recordingSchema: 2,
     sessionRpe: numberValue(sessionRpe),
     sessionNote,
     items,
   };
+}
+
+/** The exact view of a successful write that the next server bootstrap returns. */
+export function normalizeSessionDraftSnapshot(
+  session: ActiveSession,
+  snapshot: ActiveWorkoutDraftSnapshot,
+): ActiveWorkoutDraftSnapshot {
+  const payload = buildSessionDraftPayload(session, snapshot.setLogs, snapshot.resultLogs, snapshot.sessionRpe, snapshot.sessionNote);
+  const itemIds = Object.keys(session.itemLogIds);
+  const parsed = parseActiveSessionPayload({
+    id: session.id, workoutId: session.workoutId, programVersionId: session.programVersionId,
+    sessionRpe: payload.sessionRpe, sessionNote: payload.sessionNote,
+    items: payload.items.map((item, index) => {
+      const itemId = itemIds[index];
+      const results = snapshot.resultLogs[itemId] ?? session.resultLogs[itemId];
+      const entryMode = snapshot.setLogs[itemId] || session.setLogs[itemId] ? "sets"
+        : results && Object.keys(results).some((key) => /^round\.\d+\./.test(key)) ? "intervals"
+        : results ? "result" : "none";
+      return { ...item, sourceWorkoutItemId: itemId, entryMode, trackingFields: session.itemFields?.[itemId] };
+    }),
+  });
+  if (!parsed) throw new Error("The saved workout snapshot could not be normalized");
+  return { setLogs: parsed.setLogs, resultLogs: parsed.resultLogs, sessionRpe: parsed.sessionRpe, sessionNote: parsed.sessionNote };
 }
 
 export class LiftLogRepository {
@@ -2365,6 +2427,7 @@ export class LiftLogRepository {
               ),
             source_url: jsonNullableString(row, "source_url", "sourceUrl"),
             video_url: jsonNullableString(row, "video_url", "videoUrl"),
+            video_links: jsonField(row, "video_links", "videoLinks"),
             cue: jsonString(row, "cue") ?? "",
             default_entry_mode: parseEntryMode(
               jsonField(row, "default_entry_mode", "defaultEntryMode"),
@@ -3102,13 +3165,13 @@ export class LiftLogRepository {
         source_provider: input.sourceProvider ?? null,
         source_external_id: input.sourceExternalId ?? null,
         source_url: input.sourceUrl ?? null,
-        video_url: input.videoUrl ?? null,
+        ...exerciseVideoWrite(input),
         cue: input.cue,
         default_entry_mode: input.mode,
         default_tracking_fields: fields,
       })
       .select(
-        "id, scope, owner_id, name, category, discipline, tags, source_provider, source_external_id, source_url, video_url, cue, default_entry_mode, default_tracking_fields",
+        "id, scope, owner_id, name, category, discipline, tags, source_provider, source_external_id, source_url, video_url, video_links, cue, default_entry_mode, default_tracking_fields",
       )
       .single();
     if (result.error || !result.data)
@@ -3132,7 +3195,7 @@ export class LiftLogRepository {
         source_provider: input.sourceProvider ?? null,
         source_external_id: input.sourceExternalId ?? null,
         source_url: input.sourceUrl ?? null,
-        video_url: input.videoUrl ?? null,
+        ...exerciseVideoWrite(input),
         cue: input.cue,
         default_entry_mode: input.mode,
         default_tracking_fields: fields,
@@ -3141,12 +3204,15 @@ export class LiftLogRepository {
       .eq("scope", "personal")
       .eq("owner_id", this.viewerId)
       .select(
-        "id, scope, owner_id, name, category, discipline, tags, source_provider, source_external_id, source_url, video_url, cue, default_entry_mode, default_tracking_fields",
+        "id, scope, owner_id, name, category, discipline, tags, source_provider, source_external_id, source_url, video_url, video_links, cue, default_entry_mode, default_tracking_fields",
       )
       .maybeSingle();
     if (result.error || !result.data)
       fail("Could not update the exercise", result.error);
     this.queryCache.delete("feature:exercises");
+    // Planned content reads current library media; completed sessions retain
+    // their own snapshots and must stay in the immutable history cache.
+    if (input.videoLinks !== undefined || input.videoUrl !== undefined) this.invalidateProgramRunMutation();
     return mapExercise(result.data as ExerciseRow, this.viewerName);
   }
 
@@ -3249,10 +3315,10 @@ export class LiftLogRepository {
             reps_min: reps.minimum,
             reps_max: reps.maximum,
             load_kg: entry.loadKg ?? item.prescription.loadKg ?? null,
-            duration_seconds: (entry.durationMinutes ?? item.prescription.durationMinutes)
+            duration_seconds: (entry.durationMinutes ?? item.prescription.durationMinutes) !== undefined
               ? Math.round((entry.durationMinutes ?? item.prescription.durationMinutes ?? 0) * 60)
               : null,
-            distance_metres: (entry.distance ?? item.prescription.distance)
+            distance_metres: (entry.distance ?? item.prescription.distance) !== undefined
               ? (entry.distance ?? item.prescription.distance ?? 0) *
                 ((entry.distanceUnit ?? item.prescription.distanceUnit) === "km" ? 1000 : 1)
               : null,
@@ -3333,7 +3399,10 @@ export class LiftLogRepository {
       );
     }
     if (result.error) {
-      if (/revision is stale/i.test(result.error.message))
+      // An upgraded client can rebuild a previously committed pending write
+      // with new metadata. Read the authoritative receipt before retrying.
+      if (/revision is stale/i.test(result.error.message) ||
+        result.error.message === "Workout draft token was already used with a different payload")
         throw new SessionRevisionConflictError();
       fail("Could not save workout changes", result.error);
     }
@@ -3444,7 +3513,7 @@ export class LiftLogRepository {
         (from, to) => this.client
           .from("session_item_logs")
           .select(
-            "id, workout_session_id, source_workout_item_id, snapshot_name, snapshot_category, snapshot_video_url, snapshot_cue, entry_mode, tracking_fields, position",
+            "id, workout_session_id, source_workout_item_id, snapshot_name, snapshot_category, snapshot_video_url, snapshot_video_links, snapshot_cue, entry_mode, tracking_fields, position",
           )
           .eq("workout_session_id", session.id)
           .order("position")
@@ -3481,7 +3550,7 @@ export class LiftLogRepository {
         id: item.id,
         title: item.snapshot_name,
         category: item.snapshot_category,
-        videoUrl: item.snapshot_video_url ?? undefined,
+        ...videoProperties(item.snapshot_video_links, item.snapshot_video_url),
         cue: item.snapshot_cue,
         mode: item.entry_mode,
         fields: item.tracking_fields,

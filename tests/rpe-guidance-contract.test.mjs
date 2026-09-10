@@ -18,7 +18,7 @@ test("planned and actual RPE remain distinct and guided", async () => {
   assert.match(app, /<small>Target<\/small>/);
   assert.match(app, /<strong className=\{`rpe-\$\{rpeTone\(normalizedValue\)\}`\}>RPE \{normalizedValue\}<\/strong>/);
   assert.match(app, /<span>Actual RPE<\/span>/);
-  assert.match(app, /<span id="session-rpe-label">Session RPE<\/span>/);
+  assert.match(app, /<span id="session-rpe-label">Session RPE · optional<\/span>/);
   assert.match(app, /function PlannedRpeSelect/);
   assert.match(
     app,

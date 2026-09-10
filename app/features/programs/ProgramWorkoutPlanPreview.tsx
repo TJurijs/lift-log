@@ -6,8 +6,10 @@ import type {
   WorkoutItem,
 } from "../../../lib/domain";
 import { formatWeight } from "../../../lib/units";
+import { formatRecordedDuration } from "../../../lib/duration";
+import { workoutItemNotes } from "../../../lib/domain";
 import { ExerciseCategoryIcon } from "../../exercise-category-icons";
-import { ExerciseVideoLink } from "../../exercise-video-link";
+import { ExerciseVideoLinks } from "../../exercise-video-link";
 
 type WeightUnit = OwnProfile["weightUnit"];
 
@@ -27,7 +29,7 @@ type EntryField =
   | "restSeconds"
   | "targetRpe";
 
-const setFields = ["reps", "loadKg", "targetRpe"] as const;
+const setFields = ["reps", "durationMinutes", "distance", "distanceUnit", "loadKg", "restSeconds", "targetRpe"] as const;
 const intervalFields = [
   "workSeconds",
   "restSeconds",
@@ -109,9 +111,12 @@ function planSummary(
 
   if (item.mode === "sets") {
     const reps = uniformValue(item, entries, "reps");
+    const duration = uniformValue(item, entries, "durationMinutes");
     parts.push(
       reps !== undefined && !varying
         ? `${entries.length} × ${reps}`
+        : duration !== undefined && !varying
+          ? `${entries.length} × ${formatRecordedDuration(Number(duration))}`
         : `${entries.length} ${entries.length === 1 ? "set" : "sets"}`,
     );
     if (varying) parts.push("Per-set plan");
@@ -120,37 +125,43 @@ function planSummary(
       weightUnit,
     );
     if (load) parts.push(load);
+    if (duration !== undefined && (reps !== undefined || varying)) parts.push(formatRecordedDuration(Number(duration)));
+    const distance = uniformDistance(item, entries);
+    if (distance) parts.push(distance);
+    const rest = uniformValue(item, entries, "restSeconds");
+    if (rest !== undefined) parts.push(`${rest}s rest`);
   } else if (item.mode === "intervals") {
     parts.push(`${entries.length} ${entries.length === 1 ? "round" : "rounds"}`);
     const work = uniformValue(item, entries, "workSeconds");
     const rest = uniformValue(item, entries, "restSeconds");
     const duration = uniformValue(item, entries, "durationMinutes");
-    const distance = formatDistance(
-      uniformValue(item, entries, "distance") as number | undefined,
-      uniformValue(item, entries, "distanceUnit") as
-        | PrescriptionEntry["distanceUnit"]
-        | undefined,
-    );
+    const distance = uniformDistance(item, entries);
     if (work !== undefined) parts.push(`${work}s work`);
     if (rest !== undefined) parts.push(`${rest}s rest`);
-    if (duration !== undefined) parts.push(`${duration} min`);
+    if (duration !== undefined) parts.push(formatRecordedDuration(Number(duration)));
     if (distance) parts.push(distance);
     if (varying) parts.push("Per-round plan");
   } else if (item.mode === "result") {
-    const duration = item.prescription.durationMinutes;
-    const distance = formatDistance(
-      item.prescription.distance,
-      item.prescription.distanceUnit,
-    );
-    const load = formatLoad(item.prescription.loadKg, weightUnit);
-    if (duration !== undefined) parts.push(`${duration} min`);
+    const duration = uniformValue(item, entries, "durationMinutes");
+    const distance = uniformDistance(item, entries);
+    const load = formatLoad(uniformValue(item, entries, "loadKg") as number | undefined, weightUnit);
+    if (duration !== undefined) parts.push(formatRecordedDuration(Number(duration)));
     if (distance) parts.push(distance);
     if (load) parts.push(load);
+    const rest = uniformValue(item, entries, "restSeconds");
+    if (rest !== undefined) parts.push(`${rest}s rest`);
   } else {
     parts.push("Instructions only");
   }
 
   return parts.join(" · ") || "Open plan";
+}
+
+function uniformDistance(item: WorkoutItem, entries: PrescriptionEntry[]) {
+  return fieldVaries(entries, item.prescription, "distanceUnit") ? null : formatDistance(
+    uniformValue(item, entries, "distance") as number | undefined,
+    uniformValue(item, entries, "distanceUnit") as PrescriptionEntry["distanceUnit"],
+  );
 }
 
 function numericRpe(value: string) {
@@ -177,159 +188,47 @@ function TargetRpe({ value }: { value?: string }) {
   );
 }
 
-function cell(value: string | number | null | undefined) {
-  return value === null || value === undefined || value === "" ? "—" : value;
-}
+type PlanField = Exclude<EntryField, "distanceUnit">;
+const columnLabels: Record<PlanField, string> = {
+  reps: "Reps", loadKg: "Load", durationMinutes: "Time", distance: "Distance",
+  workSeconds: "Work", restSeconds: "Rest", targetRpe: "RPE target",
+};
 
-function SetPlanTable({
-  item,
-  entries,
-  weightUnit,
-}: {
+function PlanTable({ item, entries, weightUnit }: {
   item: WorkoutItem;
   entries: PrescriptionEntry[];
   weightUnit: WeightUnit;
 }) {
-  const showReps = entries.some(
-    (entry) => effectiveValue(entry, item.prescription, "reps") !== undefined,
+  const rounds = item.mode === "intervals";
+  const columns = (rounds ? intervalFields : setFields).filter((field): field is PlanField =>
+    field !== "distanceUnit" && entries.some((entry) => effectiveValue(entry, item.prescription, field) !== undefined),
   );
-  const showLoad = entries.some(
-    (entry) => effectiveValue(entry, item.prescription, "loadKg") !== undefined,
-  );
-  const showRpe = entries.some(
-    (entry) => effectiveValue(entry, item.prescription, "targetRpe") !== undefined,
-  );
-
+  const label = (field: PlanField) => field === "loadKg" ? `Load (${weightUnit})` : columnLabels[field];
+  function content(entry: PrescriptionEntry, field: PlanField) {
+    const value = effectiveValue(entry, item.prescription, field);
+    if (value === undefined || value === "") return "—";
+    if (field === "targetRpe") return <TargetRpe value={String(value)} />;
+    if (field === "loadKg") return formatWeight(Number(value), weightUnit);
+    if (field === "durationMinutes") return formatRecordedDuration(Number(value));
+    if (field === "workSeconds" || field === "restSeconds") return `${value}s`;
+    if (field === "distance") return formatDistance(Number(value), effectiveValue(entry, item.prescription, "distanceUnit") as PrescriptionEntry["distanceUnit"]);
+    return value;
+  }
   return (
     <div className="program-plan-table-wrap">
-      <table aria-label={`Per-set plan for ${item.title}`} className="program-plan-table">
-        <thead>
-          <tr>
-            <th scope="col">Set</th>
-            {showReps && <th scope="col">Reps</th>}
-            {showLoad && <th scope="col">Load ({weightUnit})</th>}
-            {showRpe && <th scope="col">RPE target</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry, index) => {
-            const load = effectiveValue(entry, item.prescription, "loadKg");
-            return (
-              <tr key={index}>
-                <th scope="row">{index + 1}</th>
-                {showReps && (
-                  <td>{cell(effectiveValue(entry, item.prescription, "reps"))}</td>
-                )}
-                {showLoad && (
-                  <td>
-                    {cell(
-                      typeof load === "number"
-                        ? formatWeight(load, weightUnit)
-                        : undefined,
-                    )}
-                  </td>
-                )}
-                {showRpe && (
-                  <td>
-                    <TargetRpe
-                      value={effectiveValue(
-                        entry,
-                        item.prescription,
-                        "targetRpe",
-                      )?.toString()}
-                    />
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-        </tbody>
+      <table aria-label={`Per-${rounds ? "round" : "set"} plan for ${item.title}`}
+        className={`program-plan-table${rounds ? " program-plan-interval-table" : ""}`}>
+        <thead><tr><th scope="col">{rounds ? "Round" : "Set"}</th>
+          {columns.map((field) => <th scope="col" key={field}>{label(field)}</th>)}
+        </tr></thead>
+        <tbody>{entries.map((entry, index) => <tr key={index}>
+          <th scope="row">{index + 1}</th>
+          {columns.map((field) => <td key={field} data-label={label(field)}>{content(entry, field)}</td>)}
+        </tr>)}</tbody>
       </table>
     </div>
   );
 }
-
-function IntervalPlanTable({
-  item,
-  entries,
-}: {
-  item: WorkoutItem;
-  entries: PrescriptionEntry[];
-}) {
-  const showWork = entries.some(
-    (entry) => effectiveValue(entry, item.prescription, "workSeconds") !== undefined,
-  );
-  const showRest = entries.some(
-    (entry) => effectiveValue(entry, item.prescription, "restSeconds") !== undefined,
-  );
-  const showDuration = entries.some(
-    (entry) => effectiveValue(entry, item.prescription, "durationMinutes") !== undefined,
-  );
-  const showDistance = entries.some(
-    (entry) => effectiveValue(entry, item.prescription, "distance") !== undefined,
-  );
-  const showRpe = entries.some(
-    (entry) => effectiveValue(entry, item.prescription, "targetRpe") !== undefined,
-  );
-
-  return (
-    <div className="program-plan-table-wrap">
-      <table
-        aria-label={`Per-round plan for ${item.title}`}
-        className="program-plan-table program-plan-interval-table"
-      >
-        <thead>
-          <tr>
-            <th scope="col">Round</th>
-            {showWork && <th scope="col">Work</th>}
-            {showRest && <th scope="col">Rest</th>}
-            {showDuration && <th scope="col">Time</th>}
-            {showDistance && <th scope="col">Distance</th>}
-            {showRpe && <th scope="col">RPE target</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry, index) => {
-            const work = effectiveValue(entry, item.prescription, "workSeconds");
-            const rest = effectiveValue(entry, item.prescription, "restSeconds");
-            const duration = effectiveValue(
-              entry,
-              item.prescription,
-              "durationMinutes",
-            );
-            const distance = effectiveValue(entry, item.prescription, "distance");
-            const distanceUnit = effectiveValue(
-              entry,
-              item.prescription,
-              "distanceUnit",
-            );
-            const rpe = effectiveValue(entry, item.prescription, "targetRpe");
-            return (
-              <tr key={index}>
-                <th scope="row">{index + 1}</th>
-                {showWork && <td data-label="Work">{work === undefined ? "—" : `${work}s`}</td>}
-                {showRest && <td data-label="Rest">{rest === undefined ? "—" : `${rest}s`}</td>}
-                {showDuration && (
-                  <td data-label="Time">{duration === undefined ? "—" : `${duration} min`}</td>
-                )}
-                {showDistance && (
-                  <td data-label="Distance">
-                    {formatDistance(
-                      distance as number | undefined,
-                      distanceUnit as PrescriptionEntry["distanceUnit"] | undefined,
-                    ) ?? "—"}
-                  </td>
-                )}
-                {showRpe && <td data-label="RPE target"><TargetRpe value={rpe?.toString()} /></td>}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function PlanExercise({
   item,
   category,
@@ -343,12 +242,7 @@ function PlanExercise({
   const varying = hasVaryingPlan(item, entries);
   const uniformRpe = uniformValue(item, entries, "targetRpe");
   const categoryLabel = (category ?? item.category)?.trim() || "General";
-  const note = [item.cue, item.prescription.targetText]
-    .map((value) => value?.trim())
-    .filter((value, index, values): value is string =>
-      Boolean(value) && values.indexOf(value) === index,
-    )
-    .join(" ");
+  const note = workoutItemNotes(item);
 
   return (
     <li className="program-plan-exercise">
@@ -362,7 +256,7 @@ function PlanExercise({
         <div className="program-plan-title-block">
           <span className="program-plan-title">
             <strong>{item.title}</strong>
-            <ExerciseVideoLink url={item.videoUrl} exerciseName={item.title} />
+            <ExerciseVideoLinks url={item.videoUrl} videoLinks={item.videoLinks} exerciseName={item.title} />
           </span>
           <div className="program-plan-summary">
             <span>{planSummary(item, entries, weightUnit)}</span>
@@ -371,11 +265,8 @@ function PlanExercise({
         </div>
       </div>
       {note && <p className="program-plan-note">{note}</p>}
-      {varying && item.mode === "sets" && (
-        <SetPlanTable item={item} entries={entries} weightUnit={weightUnit} />
-      )}
-      {varying && item.mode === "intervals" && (
-        <IntervalPlanTable item={item} entries={entries} />
+      {varying && (item.mode === "sets" || item.mode === "intervals") && (
+        <PlanTable item={item} entries={entries} weightUnit={weightUnit} />
       )}
     </li>
   );

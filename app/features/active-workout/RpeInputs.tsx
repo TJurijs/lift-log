@@ -58,7 +58,7 @@ export function RpeChoiceButtons({
           type="button"
           key={option.value}
           className={cn(value === option.value && "selected", `rpe-${rpeTone(option.value)}`)}
-          onClick={() => onChange(option.value)}
+          onClick={() => onChange(value === option.value ? "" : option.value)}
           aria-label={`RPE ${option.value}: ${option.label}, ${option.detail}`}
           aria-pressed={value === option.value}
         >

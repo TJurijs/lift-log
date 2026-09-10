@@ -2,7 +2,6 @@ import { useScheduleCandidates } from "./features/scheduling/useScheduleCandidat
 import { useCoachingWorkspace } from "./features/coaching/useCoachingWorkspace";
 import { ProgramsHome, CoachProgramEmpty, type ProgramAction, type ProgramSourceTab } from "./features/programs/ProgramsHome";
 import { useProgramMetadataDraft, type ProgramMetadata } from "./features/programs/useProgramMetadataDraft";
-import { FormatTrackingFields } from "./features/authoring/FormatTrackingFields";
 import { navigationItems, destinationLabel, actionUi, trainingContentUi } from "./ui-semantics";
 import { ObjectActionMenu, type ObjectAction } from "./object-action-menu";
 import {
@@ -24,7 +23,6 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Settings2,
   Trash2,
   UserPlus,
   Users,
@@ -56,7 +54,6 @@ import type {
   Exercise,
   ExerciseDiscipline,
   FrequentSchedulableWorkoutCandidate,
-  LoggingFormat,
   OwnProfile,
   OutgoingCoachInvite,
   PendingCoachInvite,
@@ -77,11 +74,11 @@ import type {
   WorkspaceData,
 } from "../lib/domain";
 import {
-  entryModeForLoggingFormat,
   loggingFormatFor,
   loggingFormatLabel,
-  trackingFieldsForLoggingFormat,
   trackingFieldsForMode,
+  recordingSummary,
+  workoutItemNotes,
 } from "../lib/domain";
 import type { AppViewer } from "../lib/auth";
 import {
@@ -108,7 +105,6 @@ import {
 import {
   formatDistanceKilometres,
   formatWeight,
-  weightKgValue,
 } from "../lib/units";
 import {
   programWorkoutCount,
@@ -146,23 +142,27 @@ import {
 import {
   ExerciseCategoryMark,
 } from "./exercise-category-icons";
-import { ExerciseVideoLink } from "./exercise-video-link";
+import { ExerciseVideoLinks } from "./exercise-video-link";
 import { useActiveWorkoutPersistence } from "./features/active-workout/useActiveWorkoutPersistence";
 import { starterSetLogs, useActiveWorkoutForm } from "./features/active-workout/useActiveWorkoutForm";
 import { MeasurementInput } from "./features/active-workout/MeasurementInput";
+import { DurationInput, DurationField } from "./features/active-workout/DurationInput";
+import { formatRecordedDuration } from "../lib/duration";
+import { plannedRecordingValues, unrecordedEntryCount } from "../lib/workout-recording";
 import { completeDemoWorkout, createDemoWorkoutSession } from "./features/active-workout/demo-workout";
-import { PlannedRpeSelect, RpeChoiceButtons, RpeLegend, RpeSelect, rpeTone, wholeRpe } from "./features/active-workout/RpeInputs";
+import { RpeChoiceButtons, RpeLegend, RpeSelect, rpeTone, wholeRpe } from "./features/active-workout/RpeInputs";
 export { PlannedRpeSelect, RpeChoiceButtons, RpeSelect } from "./features/active-workout/RpeInputs";
 import type { CoachWorkspaceProgram } from "./features/coaching/CoachWorkspace";
 import type { ProgramRunWizardSubmission } from "./features/program-runs/ProgramRunWizard";
 import { useCompletedHistory } from "./features/next-workouts/useCompletedHistory";
 import "./features/feature-styles.css";
 
-import { emptyExerciseLibraryFilters, exerciseTrainingStyleLabel, filterCompleteExerciseLibrary, inferredExerciseDiscipline, trackingFieldLabel, type ExerciseLibraryFilters } from "./features/exercises/exercise-library";
+import { emptyExerciseLibraryFilters, exerciseTrainingStyleLabel, filterCompleteExerciseLibrary, inferredExerciseDiscipline, type ExerciseLibraryFilters } from "./features/exercises/exercise-library";
 import { useExerciseSearch } from "./features/exercises/useExerciseSearch";
 
 const ExercisesHome = lazy(() => import("./features/exercises/ExercisesHome"));
 const loadAuthoringDialogs = () => import("./features/authoring/AuthoringDialogs");
+const PrescriptionModal = lazy(() => import("./features/authoring/PrescriptionModal"));
 const ExerciseModal = lazy(() => loadAuthoringDialogs().then(({ ExerciseModal: component }) => ({ default: component })));
 const ProgramModal = lazy(() => loadAuthoringDialogs().then(({ ProgramModal: component }) => ({ default: component })));
 const WorkoutModal = lazy(() => loadAuthoringDialogs().then(({ WorkoutModal: component }) => ({ default: component })));
@@ -319,11 +319,12 @@ function prescriptionLabel(
   if (item.mode === "sets") {
     const variedReps = prescriptionEntryVaries(item, "reps");
     const variedLoad = prescriptionEntryVaries(item, "loadKg");
-    parts.push(
-      variedReps
-        ? `${target.sets ?? 1} sets`
-        : `${target.sets ?? 1} × ${target.reps ?? "open"}`,
-    );
+    const count = target.sets ?? 1;
+    if (item.fields.includes("duration") && target.durationMinutes !== undefined && !prescriptionEntryVaries(item, "durationMinutes"))
+      parts.push(`${count} × ${formatRecordedDuration(target.durationMinutes)}`);
+    else if (item.fields.includes("distance") && target.distance !== undefined && !prescriptionEntryVaries(item, "distance"))
+      parts.push(`${count} × ${target.distance} ${target.distanceUnit ?? "m"}`);
+    else parts.push(variedReps || !item.fields.includes("reps") || !target.reps ? `${count} sets` : `${count} × ${target.reps}`);
     if (variedLoad) parts.push("varied load");
     else if (target.loadKg !== undefined)
       parts.push(`${formatWeight(target.loadKg, weightUnit)} ${weightUnit}`);
@@ -331,11 +332,9 @@ function prescriptionLabel(
     parts.push(`${target.rounds ?? 1} rounds`);
     if (target.workSeconds !== undefined)
       parts.push(`${target.workSeconds}s work`);
-    if (target.restSeconds !== undefined)
-      parts.push(`${target.restSeconds}s rest`);
   } else {
     if (target.durationMinutes !== undefined)
-      parts.push(`${target.durationMinutes} min`);
+      parts.push(formatRecordedDuration(target.durationMinutes));
     if (target.distance !== undefined) {
       const distanceKm = target.distanceUnit === "km" ? target.distance : target.distance / 1000;
       parts.push(distanceUnit === "mi"
@@ -344,6 +343,10 @@ function prescriptionLabel(
     }
     if (target.loadKg !== undefined)
       parts.push(`${formatWeight(target.loadKg, weightUnit)} ${weightUnit}`);
+  }
+  if (item.mode !== "none") {
+    if (prescriptionEntryVaries(item, "restSeconds")) parts.push("varied rest");
+    else if (target.restSeconds !== undefined) parts.push(`${target.restSeconds}s rest`);
   }
   return parts.join(" · ") || (item.mode === "none" ? "Instructions" : "Open");
 }
@@ -448,6 +451,7 @@ export default function LiftLogApp({
     Boolean(initialWorkspace.activeSession),
   );
   const [workoutComplete, setWorkoutComplete] = useState(false);
+  const [unrecordedFinishCount, setUnrecordedFinishCount] = useState<number | null>(null);
   const workoutActionRef = useRef<"starting" | "finishing" | null>(null);
   const [workoutAction, setWorkoutAction] = useState<
     "starting" | "finishing" | null
@@ -1888,6 +1892,15 @@ export default function LiftLogApp({
   }
 
   async function finishWorkout() {
+    if (todayWorkout) {
+      const count = unrecordedEntryCount(todayWorkout, setLogs, resultLogs);
+      if (count) { setUnrecordedFinishCount(count); return; }
+    }
+    await saveFinishedWorkout();
+  }
+
+  async function saveFinishedWorkout() {
+    setUnrecordedFinishCount(null);
     if (activeSession && !activeWorkoutPersistence.editable) return;
     if (workoutActionRef.current) return;
     workoutActionRef.current = "finishing";
@@ -2083,19 +2096,17 @@ export default function LiftLogApp({
         exerciseId: exercise.id,
         category: exercise.category,
         videoUrl: exercise.videoUrl,
+        videoLinks: exercise.videoLinks,
         title: exercise.name,
         cue: exercise.cue,
         mode: exercise.defaultMode,
         fields: exercise.defaultFields,
         prescription:
           exercise.defaultMode === "sets"
-            ? { sets: 3, reps: "8", targetRpe: "7–8" }
+            ? { sets: exercise.defaultFields.includes("reps") ? 3 : 1, entries: Array.from({ length: exercise.defaultFields.includes("reps") ? 3 : 1 }, () => ({})) }
             : exercise.defaultMode === "intervals"
-              ? { rounds: 5, workSeconds: 60, restSeconds: 60 }
-              : exercise.defaultMode === "result" &&
-                  exercise.defaultFields.includes("duration")
-                ? { durationMinutes: 20 }
-                : {},
+              ? { rounds: 1, entries: [{}] }
+              : {},
       };
     }
     setProgram((previous) =>
@@ -2310,6 +2321,7 @@ export default function LiftLogApp({
     mode: EntryMode,
     fields: TrackingField[],
     cue: string,
+    videoLinks: Exercise["videoLinks"],
   ) {
     let exercise: Exercise;
     if (repository) {
@@ -2321,6 +2333,7 @@ export default function LiftLogApp({
           mode,
           fields,
           cue,
+          videoLinks,
         });
       } catch (error) {
         throw error instanceof Error ? error : new Error("The exercise could not be saved");
@@ -2333,6 +2346,8 @@ export default function LiftLogApp({
         discipline,
         cue,
         scope: "personal",
+        videoLinks,
+        videoUrl: videoLinks?.[0]?.url,
         ownerName: viewer.name,
         defaultMode: mode,
         defaultFields: trackingFieldsForMode(mode, fields),
@@ -2359,6 +2374,7 @@ export default function LiftLogApp({
     mode: EntryMode,
     fields: TrackingField[],
     cue: string,
+    videoLinks: Exercise["videoLinks"],
   ) {
     if (original.scope !== "personal") return;
     const input = {
@@ -2369,7 +2385,8 @@ export default function LiftLogApp({
       sourceProvider: original.sourceProvider,
       sourceExternalId: original.sourceExternalId,
       sourceUrl: original.sourceUrl,
-      videoUrl: original.videoUrl,
+      videoUrl: videoLinks?.[0]?.url,
+      videoLinks,
       mode,
       fields,
       cue,
@@ -2384,6 +2401,8 @@ export default function LiftLogApp({
             discipline,
             cue,
             defaultMode: mode,
+            videoLinks,
+            videoUrl: videoLinks?.[0]?.url,
             defaultFields: trackingFieldsForMode(mode, input.fields),
           };
       setWorkspace((previous) => ({
@@ -2433,6 +2452,7 @@ export default function LiftLogApp({
             sourceExternalId: exercise.sourceExternalId,
             sourceUrl: exercise.sourceUrl,
             videoUrl: exercise.videoUrl,
+            videoLinks: exercise.videoLinks,
             mode: exercise.defaultMode,
             fields: exercise.defaultFields,
             cue: exercise.cue,
@@ -4442,7 +4462,7 @@ export default function LiftLogApp({
             setExerciseEditing(null);
             setModal(exerciseDetailTarget ? "exercise-details" : null);
           }}
-          onSave={(name, discipline, category, mode, fields, cue) =>
+          onSave={(name, discipline, category, mode, fields, cue, videoLinks) =>
             exerciseEditing
               ? updatePersonalExercise(
                   exerciseEditing,
@@ -4452,6 +4472,7 @@ export default function LiftLogApp({
                   mode,
                   fields,
                   cue,
+                  videoLinks,
                 )
               : addPersonalExercise(
                   name,
@@ -4460,6 +4481,7 @@ export default function LiftLogApp({
                   mode,
                   fields,
                   cue,
+                  videoLinks,
                 )
           }
         />
@@ -4722,6 +4744,13 @@ export default function LiftLogApp({
         </ModalShell>
       )}
       </Suspense>
+      {unrecordedFinishCount !== null && <ModalShell title="Finish with unrecorded results?" onClose={() => setUnrecordedFinishCount(null)}
+        description={`${unrecordedFinishCount} ${unrecordedFinishCount === 1 ? "set or result has" : "sets or results have"} not been recorded. Missing values will stay blank.`}>
+        <div className="modal-actions">
+          <button className="button secondary" onClick={() => setUnrecordedFinishCount(null)}>Keep logging</button>
+          <button className="button primary" onClick={() => void saveFinishedWorkout()}>Finish without those results</button>
+        </div>
+      </ModalShell>}
       {toast && <Toast message={toast} />}
     </main>
   );
@@ -4992,7 +5021,7 @@ function TodayView({
           <div>
             <strong>Nice work. Your session is logged.</strong>
             <p>
-              RPE {sessionRpe} · {workout.durationMinutes} planned minutes
+              {sessionRpe ? `RPE ${sessionRpe} · ` : ""}{workout.durationMinutes} planned minutes
             </p>
           </div>
           <button className="button ghost" onClick={onReset}>
@@ -5058,8 +5087,8 @@ function TodayView({
           {workoutStarted && (
             <div className="session-finish">
               <div className="session-rpe-field" role="group" aria-labelledby="session-rpe-label">
-                <span id="session-rpe-label">Session RPE</span>
-                <small>How did the whole session feel?</small>
+                <span id="session-rpe-label">Session RPE · optional</span>
+                <small>How did the whole session feel? Tap again to clear.</small>
                 <RpeChoiceButtons value={sessionRpe} onChange={onSessionRpe} />
               </div>
               <RpeLegend />
@@ -5147,8 +5176,20 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
   onRemoveSet: (itemId: string, index: number) => void;
   onUpdateResult: (itemId: string, field: string, value: string) => void;
 }) {
-  const note = item.cue || item.prescription.targetText || "";
+  const note = workoutItemNotes(item);
+  const multipleVideos = (item.videoLinks?.length ?? 0) > 1;
+  const videos = <ExerciseVideoLinks url={item.videoUrl} videoLinks={item.videoLinks} exerciseName={item.title} />;
   const fields = workoutLogFields(item);
+  const canUseTargets = active && item.mode !== "intervals" && (item.mode === "sets" ? setLogs : [resultLog]).some((row, index) =>
+    Object.entries(plannedRecordingValues(item, index)).some(([field]) => !row[field as keyof typeof row]?.trim()));
+  function useTargets() {
+    if (item.mode === "sets") setLogs.forEach((row, index) => {
+      for (const [field, value] of Object.entries(plannedRecordingValues(item, index)))
+        if (!row[field as keyof SetLog]?.trim() && value !== undefined) onUpdateSet(item.id, index, field as keyof SetLog, value);
+    });
+    else for (const [field, value] of Object.entries(plannedRecordingValues(item)))
+      if (!resultLog[field]?.trim() && value !== undefined) onUpdateResult(item.id, field, value);
+  }
   const plannedRpeVaries = prescriptionEntryVaries(item, "targetRpe");
   const prescriptionSummary = (
     <div className="exercise-prescription">
@@ -5167,9 +5208,10 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
         <div>
           <span className="exercise-title-with-video">
             <strong>{item.title}</strong>
-            <ExerciseVideoLink url={item.videoUrl} exerciseName={item.title} />
+            {!multipleVideos && videos}
           </span>
-          <small>{note}</small>
+          {multipleVideos && videos}
+          <small className="exercise-note">{note}</small>
         </div>
       </div>
     );
@@ -5182,7 +5224,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
               <div className="builder-exercise-title-row">
                 <ExerciseCategoryMark category={category ?? item.category} compact />
                 <strong>{item.title}</strong>
-                <ExerciseVideoLink url={item.videoUrl} exerciseName={item.title} />
+                {!multipleVideos && videos}
               </div>
               {prescriptionSummary}
             </>
@@ -5190,13 +5232,17 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
             <div className="exercise-name-with-icon">
               <ExerciseCategoryMark category={category ?? item.category} compact />
               <strong>{item.title}</strong>
-              <ExerciseVideoLink url={item.videoUrl} exerciseName={item.title} />
+              {!multipleVideos && videos}
             </div>
           )}
-          <small>{note}</small>
+          {builderPreview && <small className="exercise-note">{note}</small>}
         </div>
         {!builderPreview && prescriptionSummary}
       </div>
+      {multipleVideos && videos}
+      {!builderPreview && note && <small className="exercise-note">{note}</small>}
+      {canUseTargets && <button className="text-button use-targets" aria-label={`Use targets for ${item.title}`}
+        title="Fill empty results from numeric targets. RPE stays unrecorded." onClick={useTargets}><Check size={14} /> Use targets</button>}
       {item.mode === "sets" && (
         <div
           className={cn(
@@ -5208,7 +5254,10 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
           <div className="set-header">
             <span>Set</span>
             {fields.includes("reps") && <span>Reps</span>}
+            {fields.includes("duration") && <span>Time sec</span>}
+            {fields.includes("distance") && <span>Distance {distanceUnit}</span>}
             {fields.includes("load") && <span>Load {weightUnit}</span>}
+            {fields.includes("heartRate") && <span>Avg HR</span>}
             {fields.includes("rpe") && <span>Actual RPE</span>}
             <span />
           </div>
@@ -5227,6 +5276,10 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
                   placeholder="—"
                 />
               )}
+              {fields.includes("duration") && <DurationInput aria-label={`${item.title}, set ${index + 1}, time in seconds`} disabled={!active}
+                value={row.duration ?? ""} onChange={(value) => onUpdateSet(item.id, index, "duration", value)} placeholder="—" />}
+              {fields.includes("distance") && <MeasurementInput aria-label={`${item.title}, set ${index + 1}, distance in ${distanceUnit}`} disabled={!active}
+                quantity="distance" unit={distanceUnit} value={row.distance ?? ""} onChange={(value) => onUpdateSet(item.id, index, "distance", value)} placeholder="—" />}
               {fields.includes("load") && (
                 <MeasurementInput
                   aria-label={`${item.title}, set ${index + 1}, load in ${weightUnit}`}
@@ -5238,6 +5291,8 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
                   placeholder="—"
                 />
               )}
+              {fields.includes("heartRate") && <input aria-label={`${item.title}, set ${index + 1}, average heart rate`} disabled={!active}
+                inputMode="numeric" value={row.heartRate ?? ""} placeholder="—" onChange={(event) => onUpdateSet(item.id, index, "heartRate", event.target.value)} />}
               {fields.includes("rpe") && (
                 <RpeSelect
                   ariaLabel={`${item.title}, set ${index + 1}, actual RPE`}
@@ -5279,9 +5334,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
       {item.mode === "result" && (
         <div className="result-fields">
           {fields.includes("duration") && (
-            <ResultInput
-              label="Duration"
-              unit="min"
+            <DurationField
               disabled={!active}
               value={resultLog.duration ?? ""}
               onChange={(value) => onUpdateResult(item.id, "duration", value)}
@@ -5351,7 +5404,7 @@ function IntervalLogTable({
     (field) => fields.includes(field),
   );
   const completedRounds = rounds.filter((_, index) =>
-    Boolean(resultLog[`round.${index}.completed`]),
+    resultLog[`round.${index}.completed`] === "1",
   ).length;
   const plannedSeconds = rounds.reduce(
     (total, round) =>
@@ -5376,7 +5429,7 @@ function IntervalLogTable({
       </div>
       {rounds.map((round, index) => {
         const completedKey = `round.${index}.completed`;
-        const completed = Boolean(resultLog[completedKey]);
+        const completed = resultLog[completedKey] === "1";
         return (
           <div className="interval-log-row" key={index}>
             {fields.includes("rounds") ? (
@@ -5510,11 +5563,7 @@ function programPreviewSetLogs(item: WorkoutItem): SetLog[] {
   const entries = item.prescription.entries?.length
     ? item.prescription.entries
     : Array.from({ length: item.prescription.sets ?? 1 }, () => item.prescription);
-  return entries.map((entry) => ({
-    reps: entry.reps?.split("–")[0] ?? item.prescription.reps?.split("–")[0] ?? "",
-    load: (entry.loadKg ?? item.prescription.loadKg)?.toString() ?? "",
-    rpe: "",
-  }));
+  return entries.map((_, index) => ({ reps: "", load: "", rpe: "", ...plannedRecordingValues(item, index) }));
 }
 
 function programPreviewResultLog(item: WorkoutItem): Record<string, string> {
@@ -5540,12 +5589,12 @@ function completedEntryLabel(
   if (entry.loadKg !== undefined)
     parts.push(`${formatWeight(entry.loadKg, weightUnit)} ${weightUnit}`);
   if (entry.durationMinutes !== undefined)
-    parts.push(`${entry.durationMinutes} min`);
+    parts.push(formatRecordedDuration(entry.durationMinutes));
   if (entry.distanceKm !== undefined) parts.push(`${formatDistanceKilometres(entry.distanceKm, distanceUnit)} ${distanceUnit}`);
   if (entry.rounds !== undefined) parts.push(`${entry.rounds} rounds`);
   if (entry.heartRate !== undefined) parts.push(`${entry.heartRate} bpm`);
   if (entry.rpe !== undefined) parts.push(`RPE ${entry.rpe}`);
-  return parts.join(" · ") || "Completed";
+  return parts.join(" · ") || "No values recorded";
 }
 
 function completedFieldLabel(
@@ -5555,7 +5604,7 @@ function completedFieldLabel(
 ) {
   if (field === "reps") return "Reps";
   if (field === "load") return `Load ${weightUnit}`;
-  if (field === "duration") return "Duration";
+  if (field === "duration") return "Time";
   if (field === "distance") return `Distance ${distanceUnit}`;
   if (field === "rounds") return "Rounds";
   if (field === "heartRate") return "Avg HR";
@@ -5573,7 +5622,7 @@ function completedFieldValue(
     return entry.loadKg === undefined
       ? undefined
       : formatWeight(entry.loadKg, weightUnit);
-  if (field === "duration") return entry.durationMinutes;
+  if (field === "duration") return entry.durationMinutes === undefined ? undefined : formatRecordedDuration(entry.durationMinutes);
   if (field === "distance") return entry.distanceKm === undefined ? undefined : formatDistanceKilometres(entry.distanceKm, distanceUnit);
   if (field === "rounds") return entry.rounds;
   if (field === "heartRate") return entry.heartRate;
@@ -5676,8 +5725,9 @@ function CompletedWorkoutView({
                     <div className="calendar-result-copy">
                       <span className="exercise-title-with-video">
                         <strong>{item.title}</strong>
-                        <ExerciseVideoLink
+                        <ExerciseVideoLinks
                           url={item.videoUrl}
+                          videoLinks={item.videoLinks}
                           exerciseName={item.title}
                         />
                       </span>
@@ -6102,9 +6152,6 @@ function ExerciseDetailsModal({
   onCopy?: () => void;
   onEdit?: () => void;
 }) {
-  const tracking = exercise.defaultFields.length
-    ? exercise.defaultFields.map(trackingFieldLabel).join(" · ")
-    : "No tracking fields";
   const trainingStyle = exerciseTrainingStyleLabel(
     inferredExerciseDiscipline(exercise),
   );
@@ -6135,12 +6182,8 @@ function ExerciseDetailsModal({
             </div>
           )}
           <div>
-            <dt>Format</dt>
-            <dd>{modeLabel(exercise.defaultMode, exercise.defaultFields)}</dd>
-          </div>
-          <div>
-            <dt>Tracking</dt>
-            <dd>{tracking}</dd>
+            <dt>Record</dt>
+            <dd>{recordingSummary(exercise.defaultMode, exercise.defaultFields)}</dd>
           </div>
         </dl>
         {exercise.cue ? (
@@ -6154,8 +6197,9 @@ function ExerciseDetailsModal({
         <button className="button secondary" disabled={copying} onClick={onClose}>
           Close
         </button>
-        <ExerciseVideoLink
+        <ExerciseVideoLinks
           url={exercise.videoUrl}
+          videoLinks={exercise.videoLinks}
           exerciseName={exercise.name}
           size={16}
         />
@@ -6353,605 +6397,7 @@ function DeleteContentModal({
   );
 }
 
-type PrescriptionDraftEntry = {
-  reps: string;
-  load: string;
-  rpe: string;
-  duration: string;
-  distance: string;
-  work: string;
-  rest: string;
-};
-
-type PerEntryField = "reps" | "load" | "rpe" | "work" | "rest";
-
-function prescriptionDraftEntry(
-  entry: PrescriptionEntry | undefined,
-  prescription: WorkoutItem["prescription"],
-  weightUnit: OwnProfile["weightUnit"],
-): PrescriptionDraftEntry {
-  return {
-    reps: entry?.reps ?? prescription.reps ?? "",
-    load:
-      entry?.loadKg ?? prescription.loadKg
-        ? formatWeight(entry?.loadKg ?? prescription.loadKg ?? 0, weightUnit)
-        : "",
-    rpe: wholeRpe(entry?.targetRpe ?? prescription.targetRpe ?? ""),
-    duration: String(entry?.durationMinutes ?? prescription.durationMinutes ?? ""),
-    distance: String(entry?.distance ?? prescription.distance ?? ""),
-    work: String(entry?.workSeconds ?? prescription.workSeconds ?? ""),
-    rest: String(entry?.restSeconds ?? prescription.restSeconds ?? ""),
-  };
-}
-
-function prescriptionDraftEntries(
-  mode: EntryMode,
-  prescription: WorkoutItem["prescription"],
-  weightUnit: OwnProfile["weightUnit"],
-) {
-  const count =
-    mode === "sets"
-      ? Math.max(1, prescription.sets ?? 3)
-      : mode === "intervals"
-        ? Math.max(1, prescription.rounds ?? 1)
-        : 1;
-  const source = prescription.entries?.length
-    ? prescription.entries
-    : [undefined];
-  return Array.from({ length: count }, (_, index) =>
-    prescriptionDraftEntry(source[index] ?? source.at(-1), prescription, weightUnit),
-  );
-}
-
-function PrescriptionModal({
-  item,
-  weightUnit,
-  onClose,
-  onSave,
-}: {
-  item: WorkoutItem;
-  weightUnit: OwnProfile["weightUnit"];
-  onClose: () => void;
-  onSave: (item: WorkoutItem) => Promise<void>;
-}) {
-  const initialFormat = loggingFormatFor(item.mode, item.fields);
-  const [format, setFormat] = useState<LoggingFormat>(initialFormat);
-  const [trackingFields, setTrackingFields] = useState<TrackingField[]>(() =>
-    trackingFieldsForLoggingFormat(initialFormat, workoutLogFields(item)),
-  );
-  const [entries, setEntries] = useState<PrescriptionDraftEntry[]>(() =>
-    prescriptionDraftEntries(item.mode, item.prescription, weightUnit),
-  );
-  const initialEntries = prescriptionDraftEntries(
-    item.mode,
-    item.prescription,
-    weightUnit,
-  );
-  const [perEntry, setPerEntry] = useState<Record<PerEntryField, boolean>>(
-    () => ({
-      reps: initialEntries.some((entry) => entry.reps !== initialEntries[0]?.reps),
-      load: initialEntries.some((entry) => entry.load !== initialEntries[0]?.load),
-      rpe: initialEntries.some((entry) => entry.rpe !== initialEntries[0]?.rpe),
-      work: initialEntries.some((entry) => entry.work !== initialEntries[0]?.work),
-      rest: initialEntries.some((entry) => entry.rest !== initialEntries[0]?.rest),
-    }),
-  );
-  const [note, setNote] = useState(
-    [item.cue, item.prescription.targetText].filter(Boolean).join("\n"),
-  );
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const mode = entryModeForLoggingFormat(format);
-  const entryCount = entries.length;
-  const entryLabel = mode === "intervals" ? "Per round" : "Per set";
-  const setPlanFields: PerEntryField[] = (["reps", "load", "rpe"] as const).filter(
-    (field) => trackingFields.includes(field),
-  );
-  const intervalPlanFields: PerEntryField[] = trackingFields.includes("rpe")
-    ? ["work", "rest", "rpe"]
-    : ["work", "rest"];
-  const tracks = (field: TrackingField) => trackingFields.includes(field);
-  function numberOrUndefined(value: string) {
-    const parsed = Number(value);
-    return value.trim() && Number.isFinite(parsed) ? parsed : undefined;
-  }
-  function changeEntryCount(value: string) {
-    const count = Math.min(30, Math.max(1, Math.trunc(Number(value) || 1)));
-    setEntries((previous) =>
-      Array.from({ length: count }, (_, index) =>
-        previous[index] ?? previous.at(-1) ?? prescriptionDraftEntry(undefined, item.prescription, weightUnit),
-      ),
-    );
-  }
-  function updateEntry(
-    index: number,
-    field: keyof PrescriptionDraftEntry,
-    value: string,
-  ) {
-    setEntries((previous) =>
-      previous.map((entry, entryIndex) =>
-        entryIndex === index ? { ...entry, [field]: value } : entry,
-      ),
-    );
-  }
-  function updateShared(field: PerEntryField, value: string) {
-    setPerEntry((previous) => ({ ...previous, [field]: false }));
-    setEntries((previous) =>
-      previous.map((entry) => ({ ...entry, [field]: value })),
-    );
-  }
-  function togglePerEntry(field: PerEntryField, checked: boolean) {
-    setPerEntry((previous) => ({ ...previous, [field]: checked }));
-    if (!checked) {
-      setEntries((previous) => {
-        const sharedValue = previous[0]?.[field] ?? "";
-        return previous.map((entry) => ({ ...entry, [field]: sharedValue }));
-      });
-    }
-  }
-  function resetForFormat(nextFormat: LoggingFormat) {
-    const nextMode = entryModeForLoggingFormat(nextFormat);
-    setFormat(nextFormat);
-    setTrackingFields(trackingFieldsForLoggingFormat(nextFormat));
-    setEntries(prescriptionDraftEntries(nextMode, item.prescription, weightUnit));
-    setPerEntry({ reps: false, load: false, rpe: false, work: false, rest: false });
-  }
-  async function save() {
-    setSaving(true);
-    setError("");
-    const nextFields = trackingFieldsForLoggingFormat(format, trackingFields);
-    const savedEntries: PrescriptionEntry[] = entries.map((entry) => ({
-      reps: nextFields.includes("reps")
-        ? entry.reps.trim() || undefined
-        : undefined,
-      loadKg: nextFields.includes("load")
-        ? numberOrUndefined(weightKgValue(entry.load, weightUnit))
-        : undefined,
-      durationMinutes:
-        mode === "result" && nextFields.includes("duration")
-          ? numberOrUndefined(entry.duration)
-          : undefined,
-      distance:
-        mode === "result" && nextFields.includes("distance")
-          ? numberOrUndefined(entry.distance)
-          : undefined,
-      distanceUnit:
-        mode === "result" && nextFields.includes("distance") ? "km" : undefined,
-      workSeconds:
-        mode === "intervals" ? numberOrUndefined(entry.work) : undefined,
-      restSeconds:
-        mode === "intervals" ? numberOrUndefined(entry.rest) : undefined,
-      targetRpe: nextFields.includes("rpe")
-        ? wholeRpe(entry.rpe) || undefined
-        : undefined,
-    }));
-    const firstEntry = savedEntries[0] ?? {};
-    const nextItem: WorkoutItem = {
-      ...item,
-      cue: note.trim(),
-      mode,
-      fields: nextFields,
-      prescription:
-        mode === "sets"
-          ? {
-              sets: entryCount,
-              reps: firstEntry.reps,
-              loadKg: firstEntry.loadKg,
-              targetRpe: firstEntry.targetRpe,
-              entries: savedEntries,
-            }
-          : mode === "intervals"
-            ? {
-                rounds: entryCount,
-                workSeconds: firstEntry.workSeconds,
-                restSeconds: firstEntry.restSeconds,
-                targetRpe: firstEntry.targetRpe,
-                entries: savedEntries,
-              }
-            : mode === "result"
-              ? {
-                  durationMinutes: firstEntry.durationMinutes,
-                  distance: firstEntry.distance,
-                  distanceUnit: firstEntry.distanceUnit,
-                  loadKg: firstEntry.loadKg,
-                  targetRpe: firstEntry.targetRpe,
-                  entries: savedEntries,
-                }
-              : {},
-    };
-    try {
-      await onSave(nextItem);
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "The prescription could not be saved.",
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <ModalShell
-      title={`Prescribe ${item.title}`}
-      description="Set the target here. Actual results are logged during training."
-      onClose={onClose}
-      className="prescription-modal"
-    >
-      <div className="form-grid prescription-form">
-        <label className="form-field full">
-          <span>Format</span>
-          <select
-            value={format}
-            onChange={(event) =>
-              resetForFormat(event.target.value as LoggingFormat)
-            }
-          >
-            <option value="repetitions">Repetitions</option>
-            <option value="duration">Duration</option>
-            <option value="distance">Distance</option>
-            <option value="intervals">Intervals</option>
-            <option value="instructions">Instructions only</option>
-          </select>
-        </label>
-        <FormatTrackingFields
-          format={format}
-          value={trackingFields}
-          onChange={setTrackingFields}
-        />
-        {mode === "sets" && (
-          <>
-            <label className="form-field">
-              <span>Sets</span>
-              <input
-                type="number"
-                min="1"
-                max="30"
-                value={entryCount}
-                onChange={(event) => changeEntryCount(event.target.value)}
-              />
-            </label>
-            {tracks("reps") && (
-              <div className="form-field">
-                <FieldLabel
-                  label="Reps"
-                  perEntryLabel={entryLabel}
-                  checked={perEntry.reps}
-                  onToggle={(checked) => togglePerEntry("reps", checked)}
-                />
-                {perEntry.reps ? (
-                  <PerEntryValue label={entryLabel} />
-                ) : (
-                  <input
-                    aria-label="Repetitions"
-                    value={entries[0]?.reps ?? ""}
-                    onChange={(event) => updateShared("reps", event.target.value)}
-                    placeholder="5 or 8–10"
-                  />
-                )}
-              </div>
-            )}
-            {tracks("load") && (
-              <div className="form-field">
-                <FieldLabel
-                  label={`Weight (${weightUnit})`}
-                  optional
-                  perEntryLabel={entryLabel}
-                  checked={perEntry.load}
-                  onToggle={(checked) => togglePerEntry("load", checked)}
-                />
-                {perEntry.load ? (
-                  <PerEntryValue label={entryLabel} />
-                ) : (
-                  <input
-                    aria-label={`Target weight in ${weightUnit}`}
-                    inputMode="decimal"
-                    value={entries[0]?.load ?? ""}
-                    onChange={(event) => updateShared("load", event.target.value)}
-                    placeholder="Optional"
-                  />
-                )}
-              </div>
-            )}
-            {tracks("rpe") && (
-              <div className="form-field planned-rpe-field">
-                <FieldLabel
-                  label="Target RPE"
-                  optional
-                  perEntryLabel={entryLabel}
-                  checked={perEntry.rpe}
-                  onToggle={(checked) => togglePerEntry("rpe", checked)}
-                />
-                {perEntry.rpe ? (
-                  <PerEntryValue label={entryLabel} />
-                ) : (
-                  <PlannedRpeSelect
-                    value={entries[0]?.rpe ?? ""}
-                    onChange={(value) => updateShared("rpe", value)}
-                  />
-                )}
-              </div>
-            )}
-            {setPlanFields.length > 0 && (
-              <PrescriptionEntryTable
-                label="Set plan"
-                rows={entries}
-                weightUnit={weightUnit}
-                fields={setPlanFields}
-                editable={perEntry}
-                onChange={updateEntry}
-              />
-            )}
-          </>
-        )}
-        {mode === "result" && (
-          <>
-            {tracks("duration") && (
-              <label className="form-field">
-                <span>Duration (min)</span>
-                <input
-                  type="number"
-                  min="0"
-                  value={entries[0]?.duration ?? ""}
-                  onChange={(event) => updateEntry(0, "duration", event.target.value)}
-                />
-              </label>
-            )}
-            {tracks("distance") && (
-              <label className="form-field">
-                <span>Distance (km)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={entries[0]?.distance ?? ""}
-                  onChange={(event) => updateEntry(0, "distance", event.target.value)}
-                />
-              </label>
-            )}
-            {tracks("load") && (
-              <label className="form-field">
-                <span>Weight ({weightUnit})</span>
-                <input
-                  inputMode="decimal"
-                  value={entries[0]?.load ?? ""}
-                  onChange={(event) => updateEntry(0, "load", event.target.value)}
-                  placeholder="Optional"
-                />
-              </label>
-            )}
-          </>
-        )}
-        {mode === "intervals" && (
-          <>
-            <label className="form-field">
-              <span>Rounds</span>
-              <input
-                type="number"
-                min="1"
-                value={entryCount}
-                onChange={(event) => changeEntryCount(event.target.value)}
-              />
-            </label>
-            <div className="form-field">
-              <FieldLabel
-                label="Work (sec)"
-                perEntryLabel={entryLabel}
-                checked={perEntry.work}
-                onToggle={(checked) => togglePerEntry("work", checked)}
-              />
-              {perEntry.work ? (
-                <PerEntryValue label={entryLabel} />
-              ) : (
-                <input
-                  aria-label="Work seconds"
-                  inputMode="numeric"
-                  value={entries[0]?.work ?? ""}
-                  onChange={(event) => updateShared("work", event.target.value)}
-                />
-              )}
-            </div>
-            <div className="form-field">
-              <FieldLabel
-                label="Rest (sec)"
-                perEntryLabel={entryLabel}
-                checked={perEntry.rest}
-                onToggle={(checked) => togglePerEntry("rest", checked)}
-              />
-              {perEntry.rest ? (
-                <PerEntryValue label={entryLabel} />
-              ) : (
-                <input
-                  aria-label="Rest seconds"
-                  inputMode="numeric"
-                  value={entries[0]?.rest ?? ""}
-                  onChange={(event) => updateShared("rest", event.target.value)}
-                />
-              )}
-            </div>
-            {tracks("rpe") && (
-              <div className="form-field planned-rpe-field">
-                <FieldLabel
-                  label="Target RPE"
-                  optional
-                  perEntryLabel={entryLabel}
-                  checked={perEntry.rpe}
-                  onToggle={(checked) => togglePerEntry("rpe", checked)}
-                />
-                {perEntry.rpe ? (
-                  <PerEntryValue label={entryLabel} />
-                ) : (
-                  <PlannedRpeSelect
-                    value={entries[0]?.rpe ?? ""}
-                    onChange={(value) => updateShared("rpe", value)}
-                  />
-                )}
-              </div>
-            )}
-            <PrescriptionEntryTable
-              label="Round plan"
-              rows={entries}
-              weightUnit={weightUnit}
-              fields={intervalPlanFields}
-              editable={perEntry}
-              onChange={updateEntry}
-            />
-          </>
-        )}
-        {mode === "result" && tracks("rpe") && (
-          <div className="form-field planned-rpe-field result-rpe-field">
-            <span>Target RPE <em>optional</em></span>
-            <PlannedRpeSelect
-              value={entries[0]?.rpe ?? ""}
-              onChange={(value) => updateEntry(0, "rpe", value)}
-            />
-          </div>
-        )}
-        <label className="form-field full">
-          <span>
-            Coaching notes <em>optional</em>
-          </span>
-          <textarea
-            rows={2}
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            placeholder="Technique cues, tempo, substitutions…"
-          />
-        </label>
-      </div>
-      {error && <InlineError>{error}</InlineError>}
-      <div className="modal-actions prescription-actions">
-        <button className="button secondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="button primary"
-          disabled={
-            saving ||
-            ((mode === "sets" || mode === "intervals") && entryCount < 1)
-          }
-          onClick={save}
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
-
-function FieldLabel({
-  label,
-  optional = false,
-  perEntryLabel,
-  checked,
-  onToggle,
-}: {
-  label: string;
-  optional?: boolean;
-  perEntryLabel: string;
-  checked: boolean;
-  onToggle: (checked: boolean) => void;
-}) {
-  return (
-    <span className="prescription-field-label">
-      <b>{label}</b>
-      {optional && <em>optional</em>}
-      <label className="per-entry-toggle">
-        <input
-          type="checkbox"
-          checked={checked}
-          aria-label={`${perEntryLabel} values for ${label}`}
-          onChange={(event) => onToggle(event.target.checked)}
-        />
-        <i aria-hidden />
-        <small>{perEntryLabel}</small>
-      </label>
-    </span>
-  );
-}
-
-function PerEntryValue({ label }: { label: string }) {
-  return (
-    <div className="per-entry-value" aria-label={`${label} values are edited below`}>
-      <Settings2 size={13} />
-      Edit below
-    </div>
-  );
-}
-
-function PrescriptionEntryTable({
-  label,
-  rows,
-  weightUnit,
-  fields,
-  editable,
-  onChange,
-}: {
-  label: string;
-  rows: PrescriptionDraftEntry[];
-  weightUnit: OwnProfile["weightUnit"];
-  fields: PerEntryField[];
-  editable: Record<PerEntryField, boolean>;
-  onChange: (index: number, field: keyof PrescriptionDraftEntry, value: string) => void;
-}) {
-  return (
-    <div
-      className={cn(
-        "prescription-entry-table",
-        "full",
-        `tracking-${fields.length}`,
-      )}
-    >
-      <div className="prescription-entry-heading">
-        <strong>{label}</strong>
-      </div>
-      <div className="prescription-entry-grid">
-        <div className="prescription-entry-row prescription-entry-header">
-          <span>#</span>
-          {fields.map((field) => (
-            <span key={field}>
-              {field === "load"
-                ? `Load ${weightUnit}`
-                : field === "rpe"
-                  ? "RPE"
-                  : field === "work"
-                    ? "Work s"
-                    : field === "rest"
-                      ? "Rest s"
-                      : field[0].toUpperCase() + field.slice(1)}
-            </span>
-          ))}
-        </div>
-        {rows.map((row, index) => (
-          <div className="prescription-entry-row" key={index}>
-            <span>{index + 1}</span>
-            {fields.map((field) =>
-              field === "rpe" ? (
-                <PlannedRpeSelect
-                  ariaLabel={`${label}, ${index + 1}, planned RPE`}
-                  key={field}
-                  disabled={!editable.rpe}
-                  value={row.rpe}
-                  onChange={(value) => onChange(index, "rpe", value)}
-                />
-              ) : (
-                <input
-                  aria-label={`${label}, ${index + 1}, ${field === "load" ? `weight in ${weightUnit}` : field}`}
-                  key={field}
-                  disabled={!editable[field]}
-                  inputMode={field === "load" ? "decimal" : field === "reps" ? "text" : "numeric"}
-                  placeholder="—"
-                  value={row[field]}
-                  onChange={(event) => onChange(index, field, event.target.value)}
-                />
-              ),
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// Extracted authoring: app/features/authoring/PrescriptionModal.tsx
 
 function DeactivateProgramModal({
   programTitle,

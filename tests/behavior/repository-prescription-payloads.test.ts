@@ -24,6 +24,15 @@ function repositoryWithRpcRecorder() {
 }
 
 describe("workout-item prescription persistence", () => {
+  it("retains explicit zero targets while omitted duration and distance remain null", async () => {
+    const { calls, repository } = repositoryWithRpcRecorder();
+    await repository.updateWorkoutItemPrescription({ id: "zero-item", title: "Timed sets", cue: "", mode: "sets", fields: ["duration", "distance"], prescription: { sets: 2, entries: [{ durationMinutes: 0, distance: 0, distanceUnit: "m" }, {}] } });
+    expect(calls[0].arguments.target_entries).toEqual([
+      expect.objectContaining({ duration_seconds: 0, distance_metres: 0 }),
+      expect.objectContaining({ duration_seconds: null, distance_metres: null }),
+    ]);
+  });
+
   it("serializes per-set ranges and canonical metric quantities for the RPC", async () => {
     const { calls, repository } = repositoryWithRpcRecorder();
     const item: WorkoutItem = {

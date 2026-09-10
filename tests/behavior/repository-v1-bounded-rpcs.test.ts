@@ -205,6 +205,49 @@ describe("v1 bounded repository RPCs", () => {
     });
   });
 
+  it("retains ordered session-snapshot video links in the resumed active workout", async () => {
+    const links = [{ url: "https://example.com/front", label: "Front" }, { url: "https://example.com/side", label: "Side" }];
+    const activeWorkout = workoutPayload();
+    Object.assign(activeWorkout.sections[0].items[0], { videoUrl: links[0].url, videoLinks: links });
+    const rpc = vi.fn().mockResolvedValue({ data: {
+      profile,
+      activeSession: { id: "session-1", workoutId: "workout-1", programVersionId: "version-1", scheduledWorkoutId: "schedule-1", items: [] },
+      activeWorkout,
+      nextWorkouts: [{ id: "schedule-1", workoutId: "workout-1", workoutTitle: "Snatch", programVersionId: "version-1", programTitle: "Training", status: "in_progress", sequenceNumber: 1 }],
+    }, error: null });
+    const { repository } = repositoryWithRpc(rpc);
+    const workspace = await repository.loadBootstrap();
+    expect(workspace.scheduledWorkouts[0].workout.sections[0].items[0].videoLinks).toEqual(links);
+  });
+
+  it("hydrates timed set actuals and missing session RPE without borrowing targets", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        profile,
+        activeSession: {
+          id: "session-1", draftRevision: 2, programVersionId: "version-1", workoutId: "workout-1", sessionRpe: null,
+          items: [{
+            itemLogId: "log-1", sourceWorkoutItemId: "item-1", entryMode: "sets", trackingFields: ["duration", "distance", "heartRate"],
+            entries: [
+              { position: 1, durationSeconds: null, distanceMetres: 0, heartRate: null },
+              { position: 0, durationSeconds: 30, distanceMetres: 1609.344, heartRate: 132 },
+            ],
+          }],
+        },
+        activeWorkout: workoutPayload(), nextWorkouts: [],
+      }, error: null,
+    });
+    const { repository } = repositoryWithRpc(rpc);
+    const workspace = await repository.loadBootstrap();
+    expect(workspace.activeSession).toMatchObject({
+      sessionRpe: "", itemFields: { "item-1": ["duration", "distance", "heartRate"] },
+      setLogs: { "item-1": [
+        { reps: "", load: "", rpe: "", duration: "0.5", distance: "1.609344", heartRate: "132" },
+        { reps: "", load: "", rpe: "", duration: "", distance: "0", heartRate: "" },
+      ] },
+    });
+  });
+
   it("restores result load and per-round interval duration from active-session entries", async () => {
     const rpc = vi.fn().mockResolvedValue({
       data: {

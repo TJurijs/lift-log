@@ -55,6 +55,7 @@ describe("workout-session draft persistence", () => {
         "Felt controlled.",
       ),
     ).toEqual({
+      recordingSchema: 2,
       sessionRpe: 8,
       sessionNote: "Felt controlled.",
       items: [

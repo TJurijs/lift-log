@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { readAppSource } from "./helpers/app-source.mjs";
 
-const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const unitsUrl = new URL("../lib/units.ts", import.meta.url);
 const rpeUrl = new URL("../app/features/active-workout/RpeInputs.tsx", import.meta.url);
 
 test("weight targets respect the account unit and retain planned-effort guidance", async () => {
   const [shell, units, rpe] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAppSource(),
     readFile(unitsUrl, "utf8"),
     readFile(rpeUrl, "utf8"),
   ]);

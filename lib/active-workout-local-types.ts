@@ -8,6 +8,7 @@ const MAX_ITEM_COUNT = 250;
 const MAX_ENTRY_COUNT = 5_000;
 const MAX_KEY_LENGTH = 256;
 const MAX_FIELD_LENGTH = 128;
+const SET_FIELDS = ["reps", "load", "rpe", "duration", "distance", "heartRate"] as const;
 const blockedRecordKeys = new Set(["__proto__", "constructor", "prototype"]);
 
 export interface ActiveWorkoutSessionIdentity {
@@ -171,10 +172,12 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]) {
 function isSetValue(value: unknown): value is SessionSetValue {
   return (
     isPlainRecord(value) &&
-    Object.keys(value).every((key) => ["reps", "load", "rpe"].includes(key)) &&
+    hasOnlyKeys(value, SET_FIELDS) &&
     isBoundedString(value.reps) &&
     isBoundedString(value.load) &&
-    isBoundedString(value.rpe)
+    isBoundedString(value.rpe) &&
+    ["duration", "distance", "heartRate"].every((field) =>
+      value[field] === undefined || isBoundedString(value[field]))
   );
 }
 
@@ -275,9 +278,7 @@ export function activeWorkoutSnapshotsEqual(
       leftEntries.length !== rightEntries.length ||
       leftEntries.some(
         (entry, index) =>
-          entry.reps !== rightEntries[index].reps ||
-          entry.load !== rightEntries[index].load ||
-          entry.rpe !== rightEntries[index].rpe,
+          SET_FIELDS.some((field) => (entry[field] ?? "") !== (rightEntries[index][field] ?? "")),
       )
     ) {
       return false;
@@ -411,7 +412,7 @@ export function applyActiveWorkoutPatch(
       if (!isBoundedString(change.value)) {
         throw new RangeError("Workout set value is too long");
       }
-      if (!(["reps", "load", "rpe"] as unknown[]).includes(change.field)) {
+      if (!(SET_FIELDS as readonly unknown[]).includes(change.field)) {
         throw new TypeError("Workout set field is invalid");
       }
       entries[change.index] = {

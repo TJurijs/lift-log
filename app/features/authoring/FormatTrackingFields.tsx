@@ -1,6 +1,40 @@
-import { optionalTrackingFieldsForLoggingFormat, requiredTrackingFieldsForLoggingFormat, trackingFieldsForLoggingFormat, type LoggingFormat, type TrackingField } from "../../../lib/domain";
+import { optionalTrackingFieldsForLoggingFormat, trackingFieldsForLoggingFormat, type LoggingFormat, type TrackingField } from "../../../lib/domain";
 import { cn } from "../../../lib/presentation";
 import { trackingFieldLabel } from "../exercises/exercise-library";
+
+/** The same recording setup is used for library defaults and workout targets. */
+export function RecordConfiguration({ format, value, onChange }: {
+  format: LoggingFormat;
+  value: TrackingField[];
+  onChange: (format: LoggingFormat, fields: TrackingField[]) => void;
+}) {
+  const selected = format === "repetitions" && value.includes("load") ? "weighted_repetitions" : format;
+  return (
+    <>
+      <label className="form-field full">
+        <span>Record</span>
+        <select value={selected} onChange={(event) => {
+          const weighted = event.target.value === "weighted_repetitions";
+          const nextFormat = weighted ? "repetitions" : event.target.value as LoggingFormat;
+          // Preserve deliberately selected compatible extras. New exercises
+          // start with no optional extras.
+          const extras = value.filter((field) => field === "rpe" || field === "heartRate");
+          const defaults = trackingFieldsForLoggingFormat(nextFormat);
+          if (weighted || (nextFormat !== "repetitions" && value.includes("load"))) defaults.push("load");
+          onChange(nextFormat, trackingFieldsForLoggingFormat(nextFormat, [...defaults, ...extras]));
+        }}>
+          <option value="repetitions">Reps</option>
+          <option value="weighted_repetitions">Reps + weight</option>
+          <option value="duration">Time</option>
+          <option value="distance">{format === "distance" && !value.includes("duration") ? "Distance" : "Distance + time"}</option>
+          <option value="intervals">Rounds + time</option>
+          <option value="instructions">Instructions only</option>
+        </select>
+      </label>
+      <FormatTrackingFields format={format} value={value} onChange={(fields) => onChange(format, fields)} />
+    </>
+  );
+}
 
 export function FormatTrackingFields({
   format,
@@ -11,43 +45,37 @@ export function FormatTrackingFields({
   value: TrackingField[];
   onChange: (fields: TrackingField[]) => void;
 }) {
-  const required = requiredTrackingFieldsForLoggingFormat(format);
   const optional = optionalTrackingFieldsForLoggingFormat(format);
-  const available = [...required, ...optional];
-  if (!available.length) {
+  const selectedExtras = optional.filter((field) => value.includes(field)).map(trackingFieldLabel);
+  if (!optional.length) {
     return (
       <div className="format-tracking-empty full">
-        No values to enter—show instructions only.
+        Show instructions without entering a result.
       </div>
     );
   }
   return (
-    <fieldset className="format-tracking-field full">
-      <legend>
-        Track during workout <em>choose only what matters</em>
-      </legend>
+    <details className="format-tracking-field full" key={format}>
+      <summary className="text-button">Customize optional fields{selectedExtras.length > 0 && <span> · {selectedExtras.join(", ")}</span>}</summary>
       <div
         className={cn(
           "format-tracking-options",
-          `tracking-${available.length}`,
+          `tracking-${optional.length}`,
         )}
       >
-        {available.map((field) => {
-          const isRequired = required.includes(field);
-          const checked = isRequired || value.includes(field);
+        {optional.map((field) => {
+          const checked = value.includes(field);
           return (
             <label
               className={cn(
                 "format-tracking-option",
                 checked && "selected",
-                isRequired && "required",
               )}
               key={field}
             >
               <input
                 type="checkbox"
                 checked={checked}
-                disabled={isRequired}
                 onChange={(event) =>
                   onChange(
                     trackingFieldsForLoggingFormat(
@@ -60,11 +88,10 @@ export function FormatTrackingFields({
                 }
               />
               <span>{trackingFieldLabel(field)}</span>
-              {isRequired && <small>Required</small>}
             </label>
           );
         })}
       </div>
-    </fieldset>
+    </details>
   );
 }

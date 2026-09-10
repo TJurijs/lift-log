@@ -116,6 +116,8 @@
   color: var(--muted);
   font-size: var(--font-caption);
   line-height: 1.45;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .program-plan-table-wrap {

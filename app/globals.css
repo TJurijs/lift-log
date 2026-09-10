@@ -1095,9 +1095,9 @@ textarea:disabled {
   gap: 5px;
 }
 .exercise-heading strong {
-  font-size: 12px;
+  font-size: var(--font-body);
 }
-.exercise-heading small {
+.exercise-heading small, .exercise-note {
   color: var(--muted);
   font-size: var(--font-caption);
 }
@@ -1117,6 +1117,7 @@ textarea:disabled {
   min-width: 0;
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 .exercise-title-with-video > strong {
@@ -1137,6 +1138,20 @@ textarea:disabled {
   text-decoration: none;
   cursor: pointer;
 }
+.exercise-video-links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: min(100%, 360px);
+}
+.exercise-video-links > .button {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.log-item > .exercise-video-links {
+  margin-top: 6px;
+}
+.exercise-video-editor button { align-self: end; }
 .exercise-video-link:hover,
 .exercise-video-link:focus-visible {
   border-color: rgba(190, 246, 88, 0.2);
@@ -1306,6 +1321,13 @@ textarea:disabled {
 .set-table.tracking-3 {
   --metric-count: 3;
 }
+.exercise-note { display: block; margin-top: 6px; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.5; font-size: var(--font-body); }
+.set-table.tracking-4 { --metric-count: 4; }
+.set-table.tracking-5 { --metric-count: 5; }
+.use-targets { margin-top: 8px; font-size: var(--font-caption); }
+.duration-input > span { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.duration-input select { width: auto; min-height: 28px; padding: 2px 5px; font-size: inherit; }
+.prescription-form { border: 0; padding: 0; margin: 0; min-width: 0; }
 .set-header,
 .set-row {
   display: grid;
@@ -1757,6 +1779,8 @@ textarea:disabled {
 }
 .prescription-entry-table.tracking-1 { --prescription-field-count: 1; }
 .prescription-entry-table.tracking-2 { --prescription-field-count: 2; }
+.prescription-entry-table.tracking-4 { --prescription-field-count: 4; }
+.prescription-entry-table.tracking-5 { --prescription-field-count: 5; }
 .prescription-entry-heading {
   margin-bottom: 7px;
   display: flex;
@@ -2190,9 +2214,6 @@ textarea:disabled {
 }
 .picker-result-row:hover .picker-result-main {
   color: var(--text);
-}
-.picker-result-row > .exercise-video-link {
-  align-self: center;
 }
 .picker-result-main > div {
   min-width: 0;
@@ -4784,12 +4805,6 @@ textarea:disabled {
   }
   .exercise-heading {
     gap: 7px;
-  }
-  .exercise-heading small {
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
   }
   .set-table {
     margin-top: 10px;

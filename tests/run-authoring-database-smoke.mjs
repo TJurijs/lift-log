@@ -73,7 +73,7 @@ try {
     { mode: "sets", fields: ["reps", "load", "rpe"], entries: 3 },
     { mode: "intervals", fields: ["rounds", "duration"], entries: 1 },
     { mode: "result", fields: ["duration"], entries: 1 },
-    { mode: "result", fields: ["distance"], entries: 0 },
+    { mode: "result", fields: ["distance"], entries: 1 },
     { mode: "none", fields: [], entries: 0 },
   ];
   let setExerciseId;
@@ -96,12 +96,12 @@ try {
     assert.deepEqual(result.payload.trackingFields, fixture.fields);
     assert.equal(result.payload.prescribedEntries.length, fixture.entries);
     if (fixture.mode === "sets") {
-      assert.equal(result.payload.prescribedEntries[2].repsMin, 8);
-      assert.equal(result.payload.prescribedEntries[2].targetRpeMax, 8);
+      assert.equal(result.payload.prescribedEntries[2].repsMin, null);
+      assert.equal(result.payload.prescribedEntries[2].targetRpeMax, null);
     }
-    if (fixture.mode === "intervals") assert.equal(result.payload.prescribedEntries[0].rounds, 5);
+    if (fixture.mode === "intervals") assert.equal(result.payload.prescribedEntries[0].rounds, null);
     if (fixture.mode === "result" && fixture.entries) {
-      assert.equal(result.payload.prescribedEntries[0].durationSeconds, 1200);
+      assert.equal(result.payload.prescribedEntries[0].durationSeconds, null);
     }
   }
 

@@ -1,76 +1,13 @@
 import { ExternalLink, Play, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { lazy, Suspense, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useModalFocus } from "./use-modal-focus";
+import type { ExerciseVideoLink as VideoLink } from "../lib/domain";
+import { exerciseVideoLinks } from "../lib/exercise-videos";
 
-type YouTubePlayer = {
-  destroy: () => void;
-  mute: () => void;
-  playVideo: () => void;
-  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
-};
-
-type YouTubePlayerEvent = { target: YouTubePlayer };
-type YouTubeStateEvent = YouTubePlayerEvent & { data: number };
-type YouTubeApi = {
-  Player: new (
-    iframe: HTMLIFrameElement,
-    options: {
-      events: {
-        onReady: (event: YouTubePlayerEvent) => void;
-        onStateChange: (event: YouTubeStateEvent) => void;
-      };
-    },
-  ) => YouTubePlayer;
-  PlayerState: { ENDED: number };
-};
-
-declare global {
-  interface Window {
-    YT?: YouTubeApi;
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-
-let youtubeApiPromise: Promise<YouTubeApi> | null = null;
-
-function loadYouTubeApi() {
-  if (window.YT?.Player) return Promise.resolve(window.YT);
-  if (youtubeApiPromise) return youtubeApiPromise;
-
-  youtubeApiPromise = new Promise<YouTubeApi>((resolve, reject) => {
-    const previousReady = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
-      previousReady?.();
-      if (window.YT?.Player) resolve(window.YT);
-      else reject(new Error("YouTube player API did not become available"));
-    };
-
-    const existing = document.querySelector<HTMLScriptElement>(
-      'script[src="https://www.youtube.com/iframe_api"]',
-    );
-    if (existing) {
-      existing.addEventListener(
-        "error",
-        () => reject(new Error("YouTube player API could not be loaded")),
-        { once: true },
-      );
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = "https://www.youtube.com/iframe_api";
-    script.async = true;
-    script.addEventListener(
-      "error",
-      () => reject(new Error("YouTube player API could not be loaded")),
-      { once: true },
-    );
-    document.head.appendChild(script);
-  });
-
-  return youtubeApiPromise;
-}
+const VideoPlayer = lazy(() => import("./exercise-video-dialog").catch(() => ({
+  default: () => <p role="alert">The player could not load. Open the video on YouTube above.</p>,
+})));
 
 function youtubeVideoId(url: string) {
   try {
@@ -88,110 +25,51 @@ function youtubeVideoId(url: string) {
   return null;
 }
 
-function youtubeEmbedUrl(videoId: string) {
-  const parameters = new URLSearchParams({
-    autoplay: "1",
-    mute: "1",
-    start: "7",
-    playsinline: "1",
-    controls: "0",
-    enablejsapi: "1",
-    rel: "0",
-    fs: "0",
-    iv_load_policy: "3",
-  });
-  if (typeof window !== "undefined" && window.location.origin !== "null") {
-    parameters.set("origin", window.location.origin);
-  }
-  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${parameters}`;
-}
-
 export function ExerciseVideoLink({
   url,
   exerciseName,
   size = 14,
   label,
+  startSeconds = 7,
+  accessibleLabel,
 }: {
   url?: string;
   exerciseName: string;
   size?: number;
   label?: string;
+  startSeconds?: number;
+  accessibleLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const titleId = useId();
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+
   const dialogRef = useRef<HTMLElement>(null);
   useModalFocus(dialogRef, () => setOpen(false), open);
-  const videoId = url ? youtubeVideoId(url) : null;
+  const link = exerciseVideoLinks({ videoUrl: url })[0];
+  const videoId = link ? youtubeVideoId(link.url) : null;
 
-  useEffect(() => {
-    if (!open || !videoId || !iframeRef.current) return;
-    let cancelled = false;
-    let player: YouTubePlayer | null = null;
-
-    void loadYouTubeApi()
-      .then((api) => {
-        if (cancelled || !iframeRef.current) return;
-        player = new api.Player(iframeRef.current, {
-          events: {
-            onReady: ({ target }) => {
-              target.mute();
-              target.seekTo(7, true);
-              target.playVideo();
-            },
-            onStateChange: ({ data, target }) => {
-              if (data !== api.PlayerState.ENDED) return;
-              target.seekTo(7, true);
-              target.playVideo();
-            },
-          },
-        });
-      })
-      .catch(() => {
-        // The privacy-enhanced iframe still autoplays if the optional API fails.
-      });
-
-    return () => {
-      cancelled = true;
-      player?.destroy();
-    };
-  }, [open, videoId]);
-
-  if (!url) return null;
-
-  if (!videoId) {
-    return (
-      <a
-        className={label ? "button secondary small" : "exercise-video-link"}
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label={`Watch ${exerciseName} video`}
-        title="Watch exercise video"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <Play aria-hidden="true" size={size} fill="currentColor" />
-        {label}
-      </a>
-    );
-  }
+  if (!link) return null;
+  const Opener = videoId ? "button" : "a";
 
   return (
     <>
-      <button
+      <Opener
         className={label ? "button secondary small" : "exercise-video-link"}
-        type="button"
-        aria-label={`Watch ${exerciseName} video`}
+        type={videoId ? "button" : undefined}
+        href={videoId ? undefined : link.url}
+        target={videoId ? undefined : "_blank"}
+        rel={videoId ? undefined : "noopener noreferrer"}
+        aria-label={accessibleLabel ?? `Watch ${exerciseName} video`}
         title="Watch exercise video"
         onClick={(event) => {
           event.stopPropagation();
-          setOpen(true);
+          if (videoId) setOpen(true);
         }}
       >
         <Play aria-hidden="true" size={size} fill="currentColor" />
         {label}
-      </button>
-      {open
+      </Opener>
+      {open && videoId
         ? createPortal(
             <div className="exercise-video-backdrop">
               <button
@@ -213,7 +91,7 @@ export function ExerciseVideoLink({
                   <strong id={titleId}>{exerciseName}</strong>
                   <div className="exercise-video-sheet-actions">
                     <a
-                      href={url}
+                      href={link.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       aria-label={`Open ${exerciseName} on YouTube`}
@@ -233,14 +111,9 @@ export function ExerciseVideoLink({
                   </div>
                 </header>
                 <div className="exercise-video-frame">
-                  <iframe
-                    ref={iframeRef}
-                    src={youtubeEmbedUrl(videoId)}
-                    title={`${exerciseName} exercise demonstration`}
-                    allow="autoplay; encrypted-media; picture-in-picture"
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    loading="eager"
-                  />
+                  <Suspense fallback={<p role="status">Loading video…</p>}>
+                    <VideoPlayer videoId={videoId} exerciseName={exerciseName} startSeconds={startSeconds} />
+                  </Suspense>
                 </div>
               </section>
             </div>,
@@ -249,4 +122,21 @@ export function ExerciseVideoLink({
         : null}
     </>
   );
+}
+
+export function ExerciseVideoLinks({ videoLinks, url, exerciseName, size, label }: {
+  videoLinks?: readonly VideoLink[];
+  url?: string;
+  exerciseName: string;
+  size?: number;
+  label?: string;
+}) {
+  const videos = exerciseVideoLinks({ videoLinks, videoUrl: url });
+  if (!videos.length) return null;
+  return <span className="exercise-video-links">{videos.map((video, index) => {
+    const title = videos.length > 1 ? video.label ? `${index + 1}. ${video.label}` : `Video ${index + 1}` : video.label;
+    return <ExerciseVideoLink key={video.url} url={video.url} exerciseName={title ? `${exerciseName} — ${title}` : exerciseName}
+      label={title || label} accessibleLabel={videos.length > 1 ? `Watch ${exerciseName}: ${title}` : undefined}
+      size={size} startSeconds={videoLinks === undefined ? 7 : 0} />;
+  })}</span>;
 }

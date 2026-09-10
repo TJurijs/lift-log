@@ -20,17 +20,16 @@ test("prescriptions support shared defaults and per-entry set or round targets",
   assert.match(domain, /export interface PrescriptionEntry/);
   assert.match(domain, /entries\?: PrescriptionEntry\[\]/);
   assert.match(app, /function PrescriptionEntryTable/);
-  assert.match(app, /label="Set plan"/);
-  assert.match(app, /label="Round plan"/);
+  assert.match(app, /label=\{mode === "intervals" \? "Round plan" : "Set plan"\}/);
   assert.match(app, /Per set/);
   assert.match(app, /Per round/);
   assert.match(app, /function FieldLabel/);
   assert.match(app, /type="checkbox"/);
   assert.match(app, /className="prescription-modal"/);
-  assert.match(app, /<span>Format<\/span>/);
-  assert.match(app, /<option value="repetitions">Repetitions<\/option>/);
-  assert.match(app, /<option value="duration">Duration<\/option>/);
-  assert.match(app, /<option value="distance">Distance<\/option>/);
+  assert.match(app, /<span>Record<\/span>/);
+  assert.match(app, /<option value="repetitions">Reps<\/option>/);
+  assert.match(app, /<option value="duration">Time<\/option>/);
+  assert.match(app, /<option value="distance">/);
   assert.match(app, /function FormatTrackingFields/);
   assert.match(app, /\{saving \? "Saving…" : "Save"\}/);
   assert.match(

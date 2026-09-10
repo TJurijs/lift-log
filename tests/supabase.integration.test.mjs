@@ -3337,6 +3337,7 @@ test(
         "mode",
         "position",
         "title",
+        "videoLinks",
         "videoUrl",
       ]);
       assert.deepEqual(

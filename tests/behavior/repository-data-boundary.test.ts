@@ -193,6 +193,7 @@ describe("repository data boundary", () => {
               id: "item-1",
               title: "Back squat",
               cue: "Brace",
+              videoLinks: [{ url: "https://example.com/front", label: "Front" }, { url: "https://example.com/side", label: "Side" }],
               mode: "sets",
               fields: ["reps", "load", "rpe", "not-a-field"],
               position: 0,
@@ -245,6 +246,7 @@ describe("repository data boundary", () => {
       ],
     });
     expect(detail).not.toHaveProperty("note");
+    expect(detail?.items[0].videoLinks).toEqual([{ url: "https://example.com/front", label: "Front" }, { url: "https://example.com/side", label: "Side" }]);
     expect(detail?.items[0]).not.toHaveProperty("note");
     expect(detail?.items[0]?.entries[0]).not.toHaveProperty("note");
     expect(from).not.toHaveBeenCalled();

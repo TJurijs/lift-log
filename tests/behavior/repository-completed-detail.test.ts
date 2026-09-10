@@ -9,6 +9,7 @@ function completedDetailSource(failSecondPage = false) {
     snapshot_name: `Exercise ${position + 1}`,
     snapshot_category: "Strength",
     snapshot_video_url: null,
+    snapshot_video_links: position === 0 ? [{ url: "https://example.com/front", label: "Front view" }, { url: "https://example.com/side", label: "Side view" }] : null,
     snapshot_cue: "",
     entry_mode: "sets",
     tracking_fields: ["reps", "load"],
@@ -82,6 +83,8 @@ describe("completed workout detail", () => {
     const detail = await repository.loadCompletedSessionDetail("session-1");
 
     expect(detail?.items).toHaveLength(12);
+    expect(detail?.items[0].videoLinks).toEqual([{ url: "https://example.com/front", label: "Front view" }, { url: "https://example.com/side", label: "Side view" }]);
+    expect(detail?.items[1].videoLinks).toBeUndefined();
     expect(detail?.items.every((item) => item.entries.length === 100)).toBe(true);
     expect(detail?.items.at(-1)?.entries.at(-1)).toMatchObject({
       position: 99,

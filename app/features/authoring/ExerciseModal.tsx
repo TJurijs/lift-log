@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
-import { entryModeForLoggingFormat, loggingFormatFor, trackingFieldsForLoggingFormat, type EntryMode, type Exercise, type ExerciseDiscipline, type LoggingFormat, type TrackingField } from "../../../lib/domain";
+import { entryModeForLoggingFormat, loggingFormatFor, trackingFieldsForLoggingFormat, type EntryMode, type Exercise, type ExerciseDiscipline, type ExerciseVideoLink, type LoggingFormat, type TrackingField } from "../../../lib/domain";
+import { exerciseVideoLinks, validateExerciseVideoLinks } from "../../../lib/exercise-videos";
 import { exerciseCategories, exerciseTrainingStyles, inferredExerciseDiscipline } from "../exercises/exercise-library";
 import { AsyncButton, InlineError, ModalShell } from "../../ui-primitives";
-import { FormatTrackingFields } from "./FormatTrackingFields";
+import { RecordConfiguration } from "./FormatTrackingFields";
 
 export function ExerciseModal({
   exercise,
@@ -18,6 +19,7 @@ export function ExerciseModal({
     mode: EntryMode,
     fields: TrackingField[],
     cue: string,
+    videoLinks: ExerciseVideoLink[],
   ) => Promise<void>;
 }) {
   const [name, setName] = useState(exercise?.name ?? "");
@@ -38,6 +40,8 @@ export function ExerciseModal({
       : trackingFieldsForLoggingFormat(initialFormat),
   );
   const [cue, setCue] = useState(exercise?.cue ?? "");
+  const [videos, setVideos] = useState(() => exerciseVideoLinks(exercise ?? {}).map((video, key) => ({ ...video, key })));
+  const videoKey = useRef(videos.length);
   const hasLegacyCategory = !exerciseCategories.some(
     (candidate) => candidate === category,
   );
@@ -47,7 +51,7 @@ export function ExerciseModal({
     setSaving(true);
     setError("");
     try {
-      await onSave(name.trim(), discipline, category, entryModeForLoggingFormat(format), trackingFieldsForLoggingFormat(format, trackingFields), cue.trim());
+      await onSave(name.trim(), discipline, category, entryModeForLoggingFormat(format), trackingFieldsForLoggingFormat(format, trackingFields), cue.trim(), validateExerciseVideoLinks(videos.map(({ url, label }) => ({ url, label }))));
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "The exercise could not be saved. Try again.");
     } finally {
@@ -106,27 +110,13 @@ export function ExerciseModal({
             ))}
           </select>
         </label>
-        <label className="form-field full">
-          <span>Format</span>
-          <select
-            value={format}
-            onChange={(event) => {
-              const nextFormat = event.target.value as LoggingFormat;
-              setFormat(nextFormat);
-              setTrackingFields(trackingFieldsForLoggingFormat(nextFormat));
-            }}
-          >
-            <option value="repetitions">Repetitions</option>
-            <option value="duration">Duration</option>
-            <option value="distance">Distance</option>
-            <option value="intervals">Intervals</option>
-            <option value="instructions">Instructions only</option>
-          </select>
-        </label>
-        <FormatTrackingFields
+        <RecordConfiguration
           format={format}
           value={trackingFields}
-          onChange={setTrackingFields}
+          onChange={(nextFormat, fields) => {
+            setFormat(nextFormat);
+            setTrackingFields(fields);
+          }}
         />
         <label className="form-field full">
           <span>Default cue</span>
@@ -136,6 +126,25 @@ export function ExerciseModal({
             placeholder="Short instruction shown in the workout"
           />
         </label>
+        <div className="form-field full exercise-video-editor">
+          <span>Videos <em>optional · up to 10</em></span>
+          {videos.map((video, index) => <div className="form-grid" key={video.key}>
+            <label className="form-field full">
+              <span>Video {index + 1} URL</span>
+              <input type="url" maxLength={2048} placeholder="https://…" value={video.url}
+                onChange={(event) => setVideos((current) => current.map((row) => row.key === video.key ? { ...row, url: event.target.value } : row))} />
+            </label>
+            <label className="form-field">
+              <span>Video {index + 1} label <em>optional</em></span>
+              <input maxLength={80} placeholder="e.g. Power clean" value={video.label ?? ""}
+                onChange={(event) => setVideos((current) => current.map((row) => row.key === video.key ? { ...row, label: event.target.value } : row))} />
+            </label>
+            <button type="button" className="button secondary small" aria-label={`Remove video ${index + 1}`}
+              onClick={() => setVideos((current) => current.filter((row) => row.key !== video.key))}>Remove video</button>
+          </div>)}
+          <button type="button" className="button secondary small" disabled={videos.length >= 10}
+            onClick={() => { const key = videoKey.current++; setVideos((current) => [...current, { key, url: "" }]); }}>Add video</button>
+        </div>
       </fieldset>
       {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">

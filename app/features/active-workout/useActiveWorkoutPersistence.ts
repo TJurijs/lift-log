@@ -11,6 +11,7 @@ import type { AppViewer } from "../../../lib/auth";
 import type { ActiveWorkoutRepository } from "../../../lib/repository-contracts";
 import {
   isAmbiguousSessionDraftError,
+  normalizeSessionDraftSnapshot,
   SessionRevisionConflictError,
 } from "../../../lib/repository";
 import { mergeActiveWorkoutDraftSnapshots } from "../../../lib/active-workout-draft-merge";
@@ -247,6 +248,7 @@ export async function loadCachedActiveWorkoutWorkspace(
       ? { scheduledWorkoutId: identity.scheduledWorkoutId }
       : {}),
     itemLogIds: identity.itemLogIds ?? {},
+    itemFields: Object.fromEntries(plan.workout.sections.flatMap((section) => section.items).map((item) => [item.id, item.fields])),
     // A session revision must stay paired with the snapshot confirmed at that
     // revision. The controller restores the journal's newer local edits after
     // it acquires the writer lease; they are not a server revision of their own.
@@ -328,14 +330,14 @@ export function diffActiveWorkoutSnapshots(
     const nextRows = next.setLogs[itemId] ?? [];
     const commonLength = Math.min(currentRows.length, nextRows.length);
     for (let index = 0; index < commonLength; index += 1) {
-      for (const field of ["reps", "load", "rpe"] as const) {
-        if (currentRows[index][field] !== nextRows[index][field]) {
+      for (const field of ["reps", "load", "rpe", "duration", "distance", "heartRate"] as const) {
+        if ((currentRows[index][field] ?? "") !== (nextRows[index][field] ?? "")) {
           changes.push({
             type: "set-set-field",
             itemId,
             index,
             field,
-            value: nextRows[index][field],
+            value: nextRows[index][field] ?? "",
           });
         }
       }
@@ -691,7 +693,7 @@ export function useActiveWorkoutPersistence(
         let recoveryAttempts = 0;
         while (true) {
           assertScope(scope);
-          const pending = await controller.preparePendingMutation();
+          const pending = await controller.preparePendingMutation({ requireInitialSave: required });
           assertScope(scope);
           if (!pending) {
             setStatus("saved");
@@ -729,11 +731,24 @@ export function useActiveWorkoutPersistence(
               },
             );
             assertScope(scope);
-            await controller.acknowledgeMutation(
+            const acknowledged = await controller.acknowledgeMutation(
               pending.idempotencyKey,
               result.revision,
+              normalizeSessionDraftSnapshot(session, pending.snapshot),
             );
             assertScope(scope);
+            // UI edits may arrive while the durable acknowledgement is saving.
+            // Normalize only values still equal to those in the sent snapshot.
+            const nextSnapshot = mergeActiveWorkoutDraftSnapshots(
+              pending.snapshot,
+              optionsRef.current.snapshot,
+              acknowledged.snapshot,
+            ).snapshot;
+            if (!activeWorkoutSnapshotsEqual(optionsRef.current.snapshot, nextSnapshot)) {
+              optionsRef.current.onApplySnapshot(nextSnapshot);
+              await stageSnapshot(nextSnapshot);
+              assertScope(scope);
+            }
             optionsRef.current.onRevisionConfirmed(
               result.revision,
               pending.idempotencyKey,
@@ -774,7 +789,7 @@ export function useActiveWorkoutPersistence(
       trackSessionWork(scope.userId, scope.sessionId, tracked);
       return tracked;
     },
-    [assertScope, clearSyncTimer, reconcileRevisionConflict],
+    [assertScope, clearSyncTimer, reconcileRevisionConflict, stageSnapshot],
   );
   useEffect(() => {
     syncNowRef.current = syncNow;

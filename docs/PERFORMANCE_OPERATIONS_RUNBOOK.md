@@ -33,11 +33,13 @@ Budgets live in `performance/budgets.json` and are evaluated by code rather than
 | --- | --- |
 | Initial JavaScript | ≤460,000 raw / ≤130,000 gzip bytes |
 | Largest lazy JavaScript chunk | ≤180,000 raw / ≤45,000 gzip bytes |
-| All JavaScript cached by the app shell | ≤810,000 raw / ≤225,000 gzip bytes |
+| All JavaScript cached by the app shell | ≤815,000 raw / ≤227,000 gzip bytes |
 | CSS | ≤120,000 raw / ≤22,000 gzip bytes |
 | Bootstrap | ≤6 Data API requests, ≤2,500 ms, ≤250 visible rows |
 | Warm navigation/detail | ≤2 Data API requests p95, ≤500 ms p95, ≤250 visible rows |
 | Responsiveness | navigation p95 ≤3 long tasks and ≤200 ms total; interaction p75 ≤200 ms when supported |
+
+The total JavaScript budget was updated on 10 September 2026 for custom multi-video authoring, URL validation and immutable session media. The first feature build measured 811,715 raw / 225,810 gzip bytes, compared with 807,981 / 224,583 before the feature. Initial JavaScript, largest lazy chunk, CSS and runtime limits remain unchanged. Production output was checked for accidental demo fixtures; no preview data was included. See `docs/review/EXERCISE_VIDEOS_LOCAL_IMPLEMENTATION_2026_09_10.md` for final measurements and validation.
 
 Commands:
 
