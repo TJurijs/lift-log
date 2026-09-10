@@ -10,14 +10,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
-  useEffect,
-  useEffectEvent,
   useId,
   useRef,
   type ButtonHTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import { useModalFocus } from "./use-modal-focus";
 import { cn, type DisplayStatus, type EntitySource } from "../lib/presentation";
 import type { ProvenancePresentation } from "../lib/provenance";
 import type { SessionDraftSaveStatus } from "../lib/session-draft-coordinator";
@@ -159,14 +158,16 @@ export function DetailNavigation({
   title,
   onBack,
   action,
+  className,
 }: {
   backLabel: string;
   title: string;
   onBack: () => void;
   action?: ReactNode;
+  className?: string;
 }) {
   return (
-    <nav className="detail-navigation" aria-label={`${title} navigation`}>
+    <nav className={cn("detail-navigation", className)} aria-label={`${title} navigation`}>
       <button
         type="button"
         className="detail-navigation-back"
@@ -202,6 +203,7 @@ export type SegmentedTab<T extends string> = {
   value: T;
   label: ReactNode;
   icon?: LucideIcon;
+  loading?: boolean;
   disabled?: boolean;
   badge?: number;
 };
@@ -275,6 +277,7 @@ export function SegmentedTabs<T extends string>({
               selectionMode === "buttons" ? value === tab.value : undefined
             }
             aria-controls={selectionMode === "tabs" ? panelId : undefined}
+            aria-busy={tab.loading || undefined}
             className={value === tab.value ? "active" : ""}
             disabled={tab.disabled}
             id={
@@ -300,7 +303,7 @@ export function SegmentedTabs<T extends string>({
                 : undefined
             }
           >
-            {Icon && <Icon size={15} />}
+            {tab.loading ? <LoaderCircle className="button-spinner" size={15} aria-hidden="true" /> : Icon && <Icon size={15} />}
             {tab.label}
             {tab.badge !== undefined && tab.badge > 0 && (
               <span className="request-count-badge" aria-label={`${tab.badge} pending`}>
@@ -408,9 +411,6 @@ export function InlineError({
   );
 }
 
-const openModalDialogs = new Set<HTMLElement>();
-let overflowBeforeModals = "";
-
 export function ModalShell({
   title,
   description,
@@ -431,79 +431,7 @@ export function ModalShell({
   const dialogRef = useRef<HTMLElement>(null);
   const titleId = useId();
   const descriptionId = useId();
-  const dismissOnEscape = useEffectEvent((event: globalThis.KeyboardEvent) => {
-    if (!dismissible) return;
-    event.preventDefault();
-    onClose();
-  });
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    const previousFocus =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    if (!openModalDialogs.size) overflowBeforeModals = document.body.style.overflow;
-    openModalDialogs.add(dialog);
-    document.body.style.overflow = "hidden";
-    const focusableElements = () => {
-      return [...dialog.querySelectorAll<HTMLElement>(
-        "a[href], button, input, select, textarea, summary, [tabindex]",
-      )].filter((element) => {
-        if (
-          element.tabIndex < 0 ||
-          element.matches(":disabled, input[type='hidden']") ||
-          element.closest("[hidden], [inert]") ||
-          getComputedStyle(element).visibility === "hidden"
-        ) return false;
-        for (let ancestor: HTMLElement | null = element; ancestor && ancestor !== dialog; ancestor = ancestor.parentElement) {
-          if (getComputedStyle(ancestor).display === "none") return false;
-        }
-        return true;
-      });
-    };
-    const initialCandidates = focusableElements();
-    const initialFocus =
-      initialCandidates.find((element) => element.hasAttribute("data-modal-initial-focus")) ??
-      initialCandidates.find((element) => element.matches("input, select, textarea")) ??
-      dialog;
-    initialFocus?.focus();
-
-    function handleKeyDown(event: globalThis.KeyboardEvent) {
-      const dialogs = document.querySelectorAll("[aria-modal='true']");
-      if (dialogs.item(dialogs.length - 1) !== dialog) return;
-      if (event.key === "Escape") {
-        dismissOnEscape(event);
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-      const focusable = focusableElements();
-      if (!focusable.length) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable.at(-1)!;
-      const focusInside = focusable.includes(document.activeElement as HTMLElement);
-      if (event.shiftKey && (!focusInside || document.activeElement === first)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (!focusInside || document.activeElement === last)) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      openModalDialogs.delete(dialog);
-      if (!openModalDialogs.size) document.body.style.overflow = overflowBeforeModals;
-      if (previousFocus?.isConnected) previousFocus.focus();
-    };
-  }, []);
+  useModalFocus(dialogRef, onClose, true, dismissible);
 
   return (
     <div className="modal-backdrop">

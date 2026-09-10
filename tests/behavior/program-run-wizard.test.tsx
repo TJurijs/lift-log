@@ -73,7 +73,7 @@ describe("ProgramRunWizard", () => {
     fireEvent.change(date, { target: { value: originalDate } });
     expect(screen.getByLabelText("Date for Snatch")).toHaveValue(originalDate);
     fireEvent.change(date, { target: { value: "" } });
-    await user.click(screen.getByRole("button", { name: "Start and schedule program" }));
+    await user.click(screen.getByRole("button", { name: "Use program" }));
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       workoutDates: [
         { workoutId: "workout-1", plannedDate: undefined },
@@ -144,12 +144,12 @@ describe("ProgramRunWizard", () => {
       />,
     );
 
-    expect(screen.getByRole("radio", { name: /Start and schedule/ })).toBeVisible();
+    expect(screen.getByRole("radio", { name: /Schedule now/ })).toBeVisible();
     expect(screen.queryByRole("radio", { name: /Assign and schedule/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: /Set full schedule later/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getAllByText("Unscheduled")).toHaveLength(2);
-    await user.click(screen.getByRole("button", { name: "Start program" }));
+    await user.click(screen.getByRole("button", { name: "Use program" }));
 
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       programId: "program-1",
@@ -234,7 +234,7 @@ describe("ProgramRunWizard", () => {
 
     await user.click(screen.getByRole("radio", { name: /Set full schedule later/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(screen.getByRole("button", { name: "Start workout" }));
+    await user.click(screen.getByRole("button", { name: "Use workout" }));
 
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       programId: "quick-1",
@@ -264,9 +264,9 @@ describe("ProgramRunWizard", () => {
 
     await user.click(screen.getByRole("radio", { name: /Set full schedule later/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(screen.getByRole("button", { name: "Start program" }));
+    await user.click(screen.getByRole("button", { name: "Use program" }));
     expect(await screen.findByText("Try again")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Start program" }));
+    await user.click(screen.getByRole("button", { name: "Use program" }));
     expect(onCreate).toHaveBeenCalledTimes(2);
 
     const firstKey = onCreate.mock.calls[0][0].idempotencyKey;
@@ -275,9 +275,9 @@ describe("ProgramRunWizard", () => {
 
     await screen.findByText("Try again");
     await user.click(screen.getByRole("button", { name: /Back/ }));
-    await user.click(screen.getByRole("radio", { name: /Start and schedule/ }));
+    await user.click(screen.getByRole("radio", { name: /Schedule now/ }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(screen.getByRole("button", { name: "Start and schedule program" }));
+    await user.click(screen.getByRole("button", { name: "Use program" }));
     expect(onCreate).toHaveBeenCalledTimes(3);
     expect(onCreate.mock.calls[2][0].idempotencyKey).not.toBe(firstKey);
   });
@@ -351,7 +351,7 @@ describe("ProgramRunWizard", () => {
       target: { value: "2026-09-06" },
     });
     await user.click(
-      screen.getByRole("button", { name: "Start and schedule program" }),
+      screen.getByRole("button", { name: "Use program" }),
     );
 
     expect(

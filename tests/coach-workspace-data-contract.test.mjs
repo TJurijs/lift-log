@@ -158,8 +158,9 @@ test("coaching workspace is two bounded requests and exposes its athlete cursor"
 
 test("selected athlete detail remains lazy in coach mode and on explicit selection", async () => {
   const app = await readFile(appUrl, "utf8");
+  const controller = await readFile(new URL("../app/features/coaching/useCoachingWorkspace.ts", import.meta.url), "utf8");
   const detailLoader = sourceBetween(
-    app,
+    controller,
     "async function loadCoachedAthleteDetail",
     "async function refreshCoachWorkspace",
   );

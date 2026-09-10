@@ -1,18 +1,20 @@
+import { readAppSource as readAuthoringSource } from "./helpers/app-source.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const domainUrl = new URL("../lib/domain.ts", import.meta.url);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
+const previewStylesUrl = new URL("../app/dev-mobile-preview.css", import.meta.url);
 
 test("prescriptions support shared defaults and per-entry set or round targets", async () => {
-  const [app, domain, repository, styles] = await Promise.all([
-    readFile(appUrl, "utf8"),
+  const [app, domain, repository, styles, previewStyles] = await Promise.all([
+    readAuthoringSource(),
     readFile(domainUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
+    readFile(previewStylesUrl, "utf8"),
   ]);
 
   assert.match(domain, /export interface PrescriptionEntry/);
@@ -52,7 +54,7 @@ test("prescriptions support shared defaults and per-entry set or round targets",
     "the visually hidden per-entry checkbox cannot widen the modal",
   );
   assert.match(
-    styles,
+    previewStyles,
     /iframe\.dev-mobile-preview-frame\s*\{[^}]*box-sizing:\s*content-box;/s,
     "the labelled preview viewport excludes the decorative device border",
   );

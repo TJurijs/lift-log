@@ -107,6 +107,8 @@ jobs:
           name: local-supabase-performance-${{ github.run_id }}
           path: |
             artifacts/performance
+            artifacts/database-contract
+            artifacts/recovery/**/report.json
             test-results
             playwright-report
           if-no-files-found: error

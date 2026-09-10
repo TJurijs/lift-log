@@ -117,13 +117,9 @@ export default function AppEntry() {
       : null;
 
   useEffect(() => {
-    const environment = import.meta.env.PROD
-      ? "production"
-      : import.meta.env.MODE === "test"
-        ? "test"
-        : import.meta.env.MODE === "localdev" || import.meta.env.DEV
-          ? "local"
-          : "development";
+    const environment = import.meta.env.MODE === "production" ? "production"
+      : import.meta.env.MODE === "nonprod" ? "development"
+      : import.meta.env.MODE === "test" ? "test" : "local";
     return installBrowserTelemetry(
       createTelemetryCollector({
         sink: createBrowserTelemetrySink(),
@@ -131,6 +127,22 @@ export default function AppEntry() {
       }),
     );
   }, []);
+  useEffect(() => {
+    if (!session?.user.id || import.meta.env.VITE_ENABLE_REMOTE_TELEMETRY !== "true") return;
+    const client = getSupabaseBrowserClient();
+    if (!client) return;
+    let active = true;
+    let dispose: (() => void) | undefined;
+    void import("../lib/remote-telemetry").then(({ installRemoteTelemetry }) => {
+      if (!active) return;
+      dispose = installRemoteTelemetry(async events => {
+        const result = await client.rpc("collect_client_telemetry", { events });
+        if (result.error) throw result.error;
+      });
+    }).catch(() => undefined);
+    return () => { active = false; dispose?.(); };
+  }, [session?.user.id]);
+
   useEffect(() => {
     let active = true;
     let nextRepository: LiftLogRepository | null = null;

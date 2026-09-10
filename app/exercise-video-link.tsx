@@ -1,6 +1,7 @@
 import { ExternalLink, Play, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useModalFocus } from "./use-modal-focus";
 
 type YouTubePlayer = {
   destroy: () => void;
@@ -109,29 +110,19 @@ export function ExerciseVideoLink({
   url,
   exerciseName,
   size = 14,
+  label,
 }: {
   url?: string;
   exerciseName: string;
   size?: number;
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   const titleId = useId();
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus(dialogRef, () => setOpen(false), open);
   const videoId = url ? youtubeVideoId(url) : null;
-
-  useEffect(() => {
-    if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
 
   useEffect(() => {
     if (!open || !videoId || !iframeRef.current) return;
@@ -171,7 +162,7 @@ export function ExerciseVideoLink({
   if (!videoId) {
     return (
       <a
-        className="exercise-video-link"
+        className={label ? "button secondary small" : "exercise-video-link"}
         href={url}
         target="_blank"
         rel="noopener noreferrer"
@@ -180,6 +171,7 @@ export function ExerciseVideoLink({
         onClick={(event) => event.stopPropagation()}
       >
         <Play aria-hidden="true" size={size} fill="currentColor" />
+        {label}
       </a>
     );
   }
@@ -187,7 +179,7 @@ export function ExerciseVideoLink({
   return (
     <>
       <button
-        className="exercise-video-link"
+        className={label ? "button secondary small" : "exercise-video-link"}
         type="button"
         aria-label={`Watch ${exerciseName} video`}
         title="Watch exercise video"
@@ -197,6 +189,7 @@ export function ExerciseVideoLink({
         }}
       >
         <Play aria-hidden="true" size={size} fill="currentColor" />
+        {label}
       </button>
       {open
         ? createPortal(
@@ -205,10 +198,13 @@ export function ExerciseVideoLink({
                 className="exercise-video-backdrop-close"
                 type="button"
                 aria-label="Dismiss exercise video"
+                tabIndex={-1}
                 onClick={() => setOpen(false)}
               />
               <section
                 className="exercise-video-sheet"
+                ref={dialogRef}
+                tabIndex={-1}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={titleId}
@@ -229,6 +225,7 @@ export function ExerciseVideoLink({
                       className="icon-button"
                       type="button"
                       aria-label="Close exercise video"
+                      data-modal-initial-focus
                       onClick={() => setOpen(false)}
                     >
                       <X aria-hidden="true" size={18} />

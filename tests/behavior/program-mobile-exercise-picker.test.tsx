@@ -89,6 +89,8 @@ describe("mobile program exercise picker", () => {
 
     render(
       <ProgramView
+        metadata={{ title: program.title, description: program.description, status: "saved", error: "" }}
+        onMetadataChange={vi.fn()}
         program={program}
         action={null}
         mutationPending={false}
@@ -150,6 +152,8 @@ describe("mobile program exercise picker", () => {
 
     const { container } = render(
       <ProgramView
+        metadata={{ title: program.title, description: program.description, status: "saved", error: "" }}
+        onMetadataChange={vi.fn()}
         program={longProgram}
         action={null}
         mutationPending={false}
@@ -202,6 +206,8 @@ describe("mobile program exercise picker", () => {
 
     render(
       <ProgramView
+        metadata={{ title: program.title, description: program.description, status: "saved", error: "" }}
+        onMetadataChange={vi.fn()}
         program={program}
         action={null}
         mutationPending={false}

@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import ProgramView from "../../app/features/programs/ProgramView";
+import ProgramView, { type ProgramViewProps } from "../../app/features/programs/ProgramView";
 import type { TrainingContentCapabilities } from "../../lib/capabilities";
 import type {
   PlannedWorkout,
@@ -107,12 +107,15 @@ function renderRun(options: {
   program?: Program;
   run?: ProgramRunSummary;
   viewerId?: string;
+  props?: Partial<ProgramViewProps>;
 } = {}) {
   const onDuplicate = vi.fn();
   const onOpenRunWorkout = vi.fn();
   const onOpenActivity = vi.fn();
   const rendered = render(
     <ProgramView
+        metadata={{ title: program.title, description: program.description, status: "saved", error: "" }}
+        onMetadataChange={vi.fn()}
       program={options.program ?? program}
       programRun={options.run ?? run}
       action={null}
@@ -154,12 +157,32 @@ function renderRun(options: {
       backLabel={options.backLabel}
       onEditWorkout={vi.fn()}
       renderWorkoutItem={() => null}
+      {...options.props}
     />,
   );
   return { ...rendered, onDuplicate, onOpenRunWorkout, onOpenActivity };
 }
 
 describe("ProgramView program-run presentation", () => {
+  it("retries the retained metadata draft without requiring a second save action", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const draft = { title: "Updated plan", description: "Retained description", status: "error" as const, error: "Connection unavailable" };
+    renderRun({ props: {
+      program: { ...program, versionStatus: "draft" }, programRun: undefined,
+      capabilities: { ...capabilities, edit: true, save: true }, metadata: draft, onSave,
+    } });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Couldn't save");
+    expect(screen.getByRole("textbox", { name: "Program name" })).toHaveValue(draft.title);
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue(draft.description);
+    expect(screen.queryByRole("button", { name: /^Save/ })).not.toBeInTheDocument();
+    await user.click(within(screen.getByRole("alert")).getByRole("button", { name: "Try again" }));
+
+    expect(onSave).toHaveBeenCalledWith(draft.title, draft.description);
+    expect(screen.getByRole("textbox", { name: "Program name" })).toHaveValue(draft.title);
+  });
+
   it("shows complete run status metadata without depending on agenda previews", async () => {
     const user = userEvent.setup();
     const { container, onOpenRunWorkout } = renderRun();
@@ -212,7 +235,7 @@ describe("ProgramView program-run presentation", () => {
     const { onDuplicate } = renderRun();
 
     const duplicateActions = screen.getAllByRole("button", { name: "Duplicate" });
-    expect(duplicateActions).toHaveLength(2);
+    expect(duplicateActions).toHaveLength(1);
     await user.click(duplicateActions[0]);
     expect(onDuplicate).toHaveBeenCalledOnce();
   });

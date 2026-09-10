@@ -8,7 +8,7 @@ import type {
   WorkspaceData,
 } from "../../../lib/domain";
 import type { AppViewer } from "../../../lib/auth";
-import type { LiftLogRepository } from "../../../lib/repository";
+import type { ActiveWorkoutRepository } from "../../../lib/repository-contracts";
 import {
   isAmbiguousSessionDraftError,
   SessionRevisionConflictError,
@@ -101,7 +101,7 @@ export interface UseActiveWorkoutPersistenceOptions {
   workout: PlannedWorkout | undefined;
   schedule?: ScheduledWorkout;
   profile: OwnProfile;
-  repository: LiftLogRepository | null;
+  repository: ActiveWorkoutRepository | null;
   snapshot: ActiveWorkoutDraftSnapshot;
   onApplySnapshot: (snapshot: ActiveWorkoutDraftSnapshot) => void;
   onSessionRefresh: (session: ActiveSession) => void;
@@ -1100,9 +1100,26 @@ export function useActiveWorkoutPersistence(
         : null,
     retryEditing,
     flush: () => syncNow(true),
+    flushConfirmed: async () => {
+      const scope = scopeRef.current;
+      await syncNow(true);
+      assertScope(scope);
+      const state = controllerRef.current?.getSnapshot();
+      if (!state) throw new Error("The confirmed workout is unavailable");
+      return { revision: state.confirmedRevision, snapshot: state.confirmedSnapshot };
+    },
     recover: async () => {
       await reconcileRevisionConflict();
       return syncNow(true);
+    },
+    recoverConfirmed: async () => {
+      const scope = scopeRef.current;
+      await reconcileRevisionConflict();
+      await syncNow(true);
+      assertScope(scope);
+      const state = controllerRef.current?.getSnapshot();
+      if (!state) throw new Error("The confirmed workout is unavailable");
+      return { revision: state.confirmedRevision, snapshot: state.confirmedSnapshot };
     },
     resolveConflict,
     clearAfterCompletion,

@@ -1,22 +1,21 @@
+import { useScheduleCandidates } from "./features/scheduling/useScheduleCandidates";
+import { useCoachingWorkspace } from "./features/coaching/useCoachingWorkspace";
+import { ProgramsHome, CoachProgramEmpty, type ProgramAction, type ProgramSourceTab } from "./features/programs/ProgramsHome";
+import { useProgramMetadataDraft, type ProgramMetadata } from "./features/programs/useProgramMetadataDraft";
+import { FormatTrackingFields } from "./features/authoring/FormatTrackingFields";
+import { navigationItems, destinationLabel, actionUi, trainingContentUi } from "./ui-semantics";
+import { ObjectActionMenu, type ObjectAction } from "./object-action-menu";
 import {
   Activity,
-  ArrowLeft,
-  ArrowRight,
   BookOpen,
   CalendarDays,
   CalendarMinus,
-  CalendarPlus,
   Check,
-  ChevronDown,
-  ChevronRight,
-  CircleUserRound,
   Clock3,
   Copy,
   Dumbbell,
   Gauge,
   Info,
-  LayoutDashboard,
-  Layers3,
   LoaderCircle,
   LockKeyhole,
   LogOut,
@@ -36,7 +35,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
-  useId,
+  useLayoutEffect,
   memo,
   useMemo,
   useRef,
@@ -48,9 +47,7 @@ import type {
   CalendarCursor,
   CalendarWorkspaceData,
   CoachAgendaEntry,
-  CoachAthleteCursor,
   CoachConnection,
-  CoachingWorkspaceData,
   CoachInviteReceipt,
   CoachInviteTarget,
   CompletedSession,
@@ -73,7 +70,6 @@ import type {
   ProgramRunWorkoutDate,
   ScheduledWorkout,
   SchedulableWorkoutCandidate,
-  SchedulableWorkoutCursor,
   SessionSetValue,
   TrackingField,
   ViewName,
@@ -84,8 +80,6 @@ import {
   entryModeForLoggingFormat,
   loggingFormatFor,
   loggingFormatLabel,
-  optionalTrackingFieldsForLoggingFormat,
-  requiredTrackingFieldsForLoggingFormat,
   trackingFieldsForLoggingFormat,
   trackingFieldsForMode,
 } from "../lib/domain";
@@ -94,7 +88,6 @@ import {
   LiftLogRepository,
   SessionRevisionConflictError,
 } from "../lib/repository";
-import type { ActiveWorkoutDraftSnapshot } from "../lib/active-workout-draft-storage";
 import type { SessionDraftSaveStatus } from "../lib/session-draft-coordinator";
 import {
   deriveOccurrenceCapabilities,
@@ -107,15 +100,14 @@ import { localDateOnly } from "../lib/date-only";
 import {
   cn,
   formatDuration,
-  formatWorkoutCount,
   getInitials,
 } from "../lib/presentation";
 import {
   presentProgramProvenance,
 } from "../lib/provenance";
 import {
+  formatDistanceKilometres,
   formatWeight,
-  weightInputValue,
   weightKgValue,
 } from "../lib/units";
 import {
@@ -156,15 +148,25 @@ import {
 } from "./exercise-category-icons";
 import { ExerciseVideoLink } from "./exercise-video-link";
 import { useActiveWorkoutPersistence } from "./features/active-workout/useActiveWorkoutPersistence";
+import { starterSetLogs, useActiveWorkoutForm } from "./features/active-workout/useActiveWorkoutForm";
+import { MeasurementInput } from "./features/active-workout/MeasurementInput";
+import { completeDemoWorkout, createDemoWorkoutSession } from "./features/active-workout/demo-workout";
+import { PlannedRpeSelect, RpeChoiceButtons, RpeLegend, RpeSelect, rpeTone, wholeRpe } from "./features/active-workout/RpeInputs";
+export { PlannedRpeSelect, RpeChoiceButtons, RpeSelect } from "./features/active-workout/RpeInputs";
 import type { CoachWorkspaceProgram } from "./features/coaching/CoachWorkspace";
 import type { ProgramRunWizardSubmission } from "./features/program-runs/ProgramRunWizard";
 import { useCompletedHistory } from "./features/next-workouts/useCompletedHistory";
 import "./features/feature-styles.css";
 
-import { emptyExerciseLibraryFilters, exerciseCategories, exerciseTrainingStyles, exerciseTrainingStyleLabel, filterCompleteExerciseLibrary, inferredExerciseDiscipline, trackingFieldLabel, type ExerciseLibraryFilters } from "./features/exercises/exercise-library";
+import { emptyExerciseLibraryFilters, exerciseTrainingStyleLabel, filterCompleteExerciseLibrary, inferredExerciseDiscipline, trackingFieldLabel, type ExerciseLibraryFilters } from "./features/exercises/exercise-library";
 import { useExerciseSearch } from "./features/exercises/useExerciseSearch";
 
 const ExercisesHome = lazy(() => import("./features/exercises/ExercisesHome"));
+const loadAuthoringDialogs = () => import("./features/authoring/AuthoringDialogs");
+const ExerciseModal = lazy(() => loadAuthoringDialogs().then(({ ExerciseModal: component }) => ({ default: component })));
+const ProgramModal = lazy(() => loadAuthoringDialogs().then(({ ProgramModal: component }) => ({ default: component })));
+const WorkoutModal = lazy(() => loadAuthoringDialogs().then(({ WorkoutModal: component }) => ({ default: component })));
+const WorkoutSettingsModal = lazy(() => loadAuthoringDialogs().then(({ WorkoutSettingsModal: component }) => ({ default: component })));
 const CalendarView = lazy(() => import("./features/calendar/CalendarView"));
 const NextWorkoutsView = lazy(() => import("./features/next-workouts/NextWorkoutsView"));
 const loadProgramView = () => import("./features/programs/ProgramView");
@@ -180,24 +182,6 @@ const ProgramRunWizard = lazy(() =>
 const ProgramRunScheduleWizard = lazy(() =>
   import("./features/program-runs/ProgramRunScheduleWizard"),
 );
-const CoachProgramRuns = lazy(() =>
-  import("./features/program-runs/SelfProgramRuns").then(
-    ({ CoachProgramRuns: component }) => ({ default: component }),
-  ),
-);
-
-const navItems: Array<{
-  id: ViewName;
-  label: string;
-  shortLabel: string;
-  icon: typeof Activity;
-}> = [
-  { id: "today", label: "Next workouts", shortLabel: "Next", icon: LayoutDashboard },
-  { id: "program", label: "Programs", shortLabel: "Programs", icon: Dumbbell },
-  { id: "calendar", label: "Calendar", shortLabel: "Calendar", icon: CalendarDays },
-  { id: "exercises", label: "Exercises", shortLabel: "Exercises", icon: BookOpen },
-  { id: "coaching", label: "Coaching", shortLabel: "Coaching", icon: Users },
-];
 
 type ModalName =
   | "exercise"
@@ -269,11 +253,6 @@ function mergeProgramCatalog(
   };
 }
 
-type ProgramSourceTab = "own" | "coach";
-type ProgramAction = {
-  id: string;
-  kind: "delete" | "save" | "duplicate" | "edit" | "open";
-} | null;
 type CompletedWorkoutViewState = {
   session: CompletedSession;
   detail: CompletedSessionDetail | null;
@@ -333,6 +312,7 @@ function prescriptionEntryVaries(
 function prescriptionLabel(
   item: WorkoutItem,
   weightUnit: OwnProfile["weightUnit"] = "kg",
+  distanceUnit: OwnProfile["distanceUnit"] = "km",
 ) {
   const target = item.prescription;
   const parts: string[] = [];
@@ -356,8 +336,12 @@ function prescriptionLabel(
   } else {
     if (target.durationMinutes !== undefined)
       parts.push(`${target.durationMinutes} min`);
-    if (target.distance !== undefined)
-      parts.push(`${target.distance} ${target.distanceUnit ?? "m"}`);
+    if (target.distance !== undefined) {
+      const distanceKm = target.distanceUnit === "km" ? target.distance : target.distance / 1000;
+      parts.push(distanceUnit === "mi"
+        ? `${formatDistanceKilometres(distanceKm, distanceUnit)} mi`
+        : `${target.distance} ${target.distanceUnit ?? "m"}`);
+    }
     if (target.loadKg !== undefined)
       parts.push(`${formatWeight(target.loadKg, weightUnit)} ${weightUnit}`);
   }
@@ -366,29 +350,6 @@ function prescriptionLabel(
 
 function modeLabel(mode: EntryMode, fields: readonly TrackingField[] = []) {
   return loggingFormatLabel(loggingFormatFor(mode, fields));
-}
-
-function starterSetLogs(
-  workout: PlannedWorkout,
-  activeSession: ActiveSession | null,
-) {
-  if (activeSession?.workoutId === workout.id) return activeSession.setLogs;
-  const logs: Record<string, SetLog[]> = {};
-  workout.sections
-    .flatMap((section) => section.items)
-    .forEach((item) => {
-      if (item.mode === "sets") {
-        const entries = item.prescription.entries?.length
-          ? item.prescription.entries
-          : Array.from({ length: item.prescription.sets ?? 1 }, () => item.prescription);
-        logs[item.id] = entries.map((entry) => ({
-            reps: entry.reps?.split("–")[0] ?? item.prescription.reps?.split("–")[0] ?? "",
-            load: "",
-            rpe: "",
-          }));
-      }
-    });
-  return logs;
 }
 
 async function copyText(value: string) {
@@ -439,6 +400,8 @@ export default function LiftLogApp({
       completedSessions: initialWorkspace.completedSessions,
     });
   const [program, setProgram] = useState<Program | null>(null);
+  const programMetadata = useProgramMetadataDraft(program);
+  const guardProgramNavigation = programMetadata.guard;
   const [viewingProgramRunId, setViewingProgramRunId] = useState<string | null>(
     null,
   );
@@ -477,6 +440,7 @@ export default function LiftLogApp({
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(
     initialWorkspace.activeSession,
   );
+  const demoCompletedSessions = useRef(new Map<string, CompletedSessionDetail>());
   const [workoutStarted, setWorkoutStarted] = useState(
     Boolean(initialWorkspace.activeSession),
   );
@@ -495,13 +459,8 @@ export default function LiftLogApp({
     { id: string; status: "planned" | "skipped" } | null
   >(null);
   const [detail, setDetail] = useState<DetailState>(null);
-  const [sessionRpe, setSessionRpe] = useState(
-    initialWorkspace.activeSession?.sessionRpe ?? "7",
-  );
-  const [sessionNote, setSessionNote] = useState(
-    initialWorkspace.activeSession?.sessionNote ?? "",
-  );
   const [toast, setToast] = useState("");
+  const [coachingDetailsLoaded, setCoachingDetailsLoaded] = useState(!repository);
   const loadedWorkspaceFeaturesRef = useRef(
     new Set<LazyWorkspaceFeature>(
       repository ? [] : ["exercises", "calendar", "coaching"],
@@ -533,6 +492,16 @@ export default function LiftLogApp({
       setToast("");
     }, 2600);
   }, []);
+  const [requestedCoachMode, setCoachMode] = useState<"athlete" | "coach">(
+    "athlete",
+  );
+  const { loadMoreCoachAthletes, loadCoachedAthleteDetail, loadMoreCoachHistory, loadMoreCoachProgramRuns, refreshCoachWorkspace, coachingRefreshing, coachAthleteCursor, setCoachAthleteCursor, coachAthletesLoadingMore, coachAthletesLoadError, setCoachAthletesLoadError, coachingDetailLoadingId, coachingHistoryLoadingId, coachingProgramRunsLoadingId, selectedAthleteId, setSelectedAthleteId } = useCoachingWorkspace({
+    repository, workspace, setWorkspace, notify, requestedCoachMode,
+    initialAthleteId: initialWorkspace.coachedAthletes[0]?.id ?? null,
+  });
+  const [programCursor, setProgramCursor] = useState<ProgramCursor>();
+  const [calendarRangeLoading, setCalendarRangeLoading] = useState(false);
+  const [calendarRangeError, setCalendarRangeError] = useState("");
   const restoreCompletedWorkoutFromHistory = useCallback(
     (history: Extract<AppDetailData, { kind: "workout-log" }>) => {
       const restoreKey = `${history.session.id}:${history.athleteId ?? "self"}`;
@@ -542,7 +511,7 @@ export default function LiftLogApp({
       completedWorkoutRequestRef.current = requestId;
       const pending: CompletedWorkoutViewState = {
         session: history.session,
-        detail: repository ? null : { ...history.session, items: [] },
+        detail: repository ? null : demoCompletedSessions.current.get(history.session.id) ?? { ...history.session, items: [] },
         loading: Boolean(repository),
         error: "",
         returnView: history.returnView,
@@ -591,7 +560,7 @@ export default function LiftLogApp({
           });
         });
     },
-    [repository],
+    [repository, setDetail],
   );
   useEffect(
     () => () => {
@@ -604,17 +573,18 @@ export default function LiftLogApp({
     if (!window.location.hash || parseAppView(window.location.hash) !== activeView) {
       updateAppViewUrl(activeView, "replace");
     }
-    const restoreViewFromHistory = () => {
+    const restoreViewFromHistory = () => guardProgramNavigation(() => {
       const nextView = parseAppView(window.location.hash);
       const nextDetail = appDetailFromHistory();
       setActiveView(nextView);
-      if (!nextDetail) {
+      if (!nextDetail || nextDetail === "coach-athlete") {
         completedWorkoutRequestRef.current += 1;
         completedWorkoutRestoreKeyRef.current = null;
         programHistoryRequestRef.current += 1;
         programHistoryRestoreKeyRef.current = null;
         setDetail(null);
         setActiveWorkoutVisible(false);
+        if (nextDetail === "coach-athlete") setCoachMode("coach");
         if (nextView === "program") {
           setProgram(null);
           setViewingProgramRunId(null);
@@ -641,12 +611,13 @@ export default function LiftLogApp({
         }
       }
       scrollToAppTop();
-    };
+    });
     window.addEventListener("popstate", restoreViewFromHistory);
     window.addEventListener("hashchange", restoreViewFromHistory);
     if (
       appDetailFromHistory() === "workout-log" ||
-      appDetailFromHistory() === "program"
+      appDetailFromHistory() === "program" ||
+      appDetailFromHistory() === "coach-athlete"
     ) {
       restoreViewFromHistory();
     }
@@ -654,7 +625,7 @@ export default function LiftLogApp({
       window.removeEventListener("popstate", restoreViewFromHistory);
       window.removeEventListener("hashchange", restoreViewFromHistory);
     };
-  }, [activeSession, activeView, restoreCompletedWorkoutFromHistory]);
+  }, [activeSession, activeView, restoreCompletedWorkoutFromHistory, guardProgramNavigation]);
   const loadWorkspaceFeature = useCallback(
     (feature: LazyWorkspaceFeature) => {
       if (!repository || loadedWorkspaceFeaturesRef.current.has(feature)) {
@@ -694,6 +665,7 @@ export default function LiftLogApp({
             coachingWorkspace;
           setCoachAthleteCursor(nextCursor);
           setCoachAthletesLoadError("");
+          setCoachingDetailsLoaded(true);
           setWorkspace((previous) => ({ ...previous, ...workspaceData }));
         }
         loadedWorkspaceFeaturesRef.current.add(feature);
@@ -716,7 +688,7 @@ export default function LiftLogApp({
       loadingWorkspaceFeaturesRef.current.set(feature, pending);
       return pending;
     },
-    [repository],
+    [repository, setCoachAthleteCursor, setCoachAthletesLoadError],
   );
   useEffect(() => {
     const feature =
@@ -762,29 +734,6 @@ export default function LiftLogApp({
     sessionRpe: string;
     sessionNote: string;
   } | null>(null);
-  const [requestedCoachMode, setCoachMode] = useState<"athlete" | "coach">(
-    "athlete",
-  );
-  const coachingRefreshRef = useRef(false);
-  const [coachingRefreshing, setCoachingRefreshing] = useState(false);
-  const [coachAthleteCursor, setCoachAthleteCursor] = useState<
-    CoachAthleteCursor | undefined
-  >();
-  const [coachAthletesLoadingMore, setCoachAthletesLoadingMore] =
-    useState(false);
-  const [coachAthletesLoadError, setCoachAthletesLoadError] = useState("");
-  const coachingDetailRequestsRef = useRef(new Set<string>());
-  const [coachingDetailLoadingId, setCoachingDetailLoadingId] = useState<
-    string | null
-  >(null);
-  const [coachingHistoryLoadingId, setCoachingHistoryLoadingId] = useState<
-    string | null
-  >(null);
-  const [coachingProgramRunsLoadingId, setCoachingProgramRunsLoadingId] =
-    useState<string | null>(null);
-  const [selectedAthleteId, setSelectedAthleteId] = useState<string | null>(
-    initialWorkspace.coachedAthletes[0]?.id ?? null,
-  );
   const [openingCoachProgramId, setOpeningCoachProgramId] = useState<
     string | null
   >(null);
@@ -815,18 +764,6 @@ export default function LiftLogApp({
   const [scheduleInitialDate, setScheduleInitialDate] = useState<string | null>(
     null,
   );
-  const [scheduleCandidates, setScheduleCandidates] = useState<
-    SchedulableWorkoutCandidate[]
-  >([]);
-  const [frequentScheduleCandidates, setFrequentScheduleCandidates] = useState<
-    FrequentSchedulableWorkoutCandidate[]
-  >([]);
-  const [scheduleCandidateCursor, setScheduleCandidateCursor] =
-    useState<SchedulableWorkoutCursor>();
-  const [scheduleCandidatesLoading, setScheduleCandidatesLoading] =
-    useState(false);
-  const [scheduleCandidatesError, setScheduleCandidatesError] = useState("");
-  const [programCursor, setProgramCursor] = useState<ProgramCursor>();
   const [programsLoadingMore, setProgramsLoadingMore] = useState(false);
   const [programsLoadError, setProgramsLoadError] = useState("");
   const [coachProgramRunsLoadingMore, setCoachProgramRunsLoadingMore] =
@@ -843,7 +780,7 @@ export default function LiftLogApp({
     cursor: completedHistoryCursor,
     load: loadCompletedHistory,
     invalidate: invalidateCompletedHistory,
-  } = useCompletedHistory(repository, initialWorkspace.completedSessions);
+  } = useCompletedHistory(repository, repository ? initialWorkspace.completedSessions : workspace.completedSessions);
   const upcomingLoadingRef = useRef(false);
   const upcomingInitializedRef = useRef(false);
   const upcomingCursorRef = useRef<CalendarCursor | undefined>(undefined);
@@ -857,8 +794,6 @@ export default function LiftLogApp({
     start: string;
     end: string;
   } | null>(null);
-  const [calendarRangeLoading, setCalendarRangeLoading] = useState(false);
-  const [calendarRangeError, setCalendarRangeError] = useState("");
   const [programOwnerId, setProgramOwnerId] = useState(viewer.id);
   const [requestedProgramSource, setProgramSource] =
     useState<ProgramSourceTab>("own");
@@ -991,7 +926,7 @@ export default function LiftLogApp({
     },
     [repository],
   );
-  upcomingLoaderRef.current = loadUpcomingWorkouts;
+  useLayoutEffect(() => { upcomingLoaderRef.current = loadUpcomingWorkouts; }, [loadUpcomingWorkouts]);
 
   useEffect(() => {
     if (
@@ -1146,9 +1081,13 @@ export default function LiftLogApp({
     [workspace.draftProgram ?? workspace.activeProgram].filter(
       (candidate): candidate is Program => Boolean(candidate),
     );
+  const { scheduleCandidates, frequentScheduleCandidates, scheduleCandidateCursor,
+    scheduleCandidatesLoading, scheduleCandidatesError, loadScheduleCandidates,
+    replaceScheduleCandidates } = useScheduleCandidates({
+    repository, schedulablePrograms, schedules: workspace.scheduledWorkouts,
+  });
   const outgoingCoachInvites = workspace.outgoingCoachInvites ?? [];
-  const coachingDetailsLoaded =
-    loadedWorkspaceFeaturesRef.current.has("coaching");
+
   const hasCoach = coachingDetailsLoaded
     ? workspace.coachConnections.length > 0
     : (workspace.coachingAccess?.hasCoach ?? false);
@@ -1383,26 +1322,11 @@ export default function LiftLogApp({
     );
   }, [viewingProgramRunDetail]);
 
-  const [setLogs, setSetLogs] = useState<Record<string, SetLog[]>>(() =>
-    initialWorkspace.activeSession?.setLogs ??
-    (todayWorkout ? starterSetLogs(todayWorkout, activeSession) : {}),
-  );
-  const [resultLogs, setResultLogs] = useState<
-    Record<string, Record<string, string>>
-  >(initialWorkspace.activeSession?.resultLogs ?? {});
-  const activeWorkoutSnapshot = useMemo<ActiveWorkoutDraftSnapshot>(
-    () => ({ setLogs, resultLogs, sessionRpe, sessionNote }),
-    [resultLogs, sessionNote, sessionRpe, setLogs],
-  );
-  const applyPersistedSnapshot = useCallback(
-    (snapshot: ActiveWorkoutDraftSnapshot) => {
-      setSetLogs(snapshot.setLogs);
-      setResultLogs(snapshot.resultLogs);
-      setSessionRpe(snapshot.sessionRpe);
-      setSessionNote(snapshot.sessionNote);
-    },
-    [],
-  );
+  const {
+    setLogs, setSetLogs, resultLogs, setResultLogs, sessionRpe, setSessionRpe,
+    sessionNote, setSessionNote, snapshot: activeWorkoutSnapshot,
+    applySnapshot: applyPersistedSnapshot, updateSet, addSet, removeSet, updateResult,
+  } = useActiveWorkoutForm(initialWorkspace.activeSession, todayWorkout);
   const activeWorkoutPersistence = useActiveWorkoutPersistence({
     userId: viewer.id,
     session: workoutStarted ? activeSession : null,
@@ -1505,7 +1429,10 @@ export default function LiftLogApp({
         historyData.workoutId ?? "first",
         historyData.returnView,
       ].join(":");
-      pushAppDetailHistory("program", "program", { data: historyData });
+      pushAppDetailHistory("program", "program", {
+        stackOnDetail: returnView === "coaching" && appDetailFromHistory() === "coach-athlete",
+        data: historyData,
+      });
     }
     setSelectedWeek(nextWeek?.index ?? 1);
     setSelectedWorkoutId(nextWorkout?.id ?? "");
@@ -1513,6 +1440,7 @@ export default function LiftLogApp({
     setProgramOwnerId(nextProgram.athleteId);
   }
 
+  useLayoutEffect(() => {
   programHistoryRestoreRef.current = (history) => {
     const restoreKey = [
       history.athleteId,
@@ -1608,8 +1536,10 @@ export default function LiftLogApp({
         );
       });
   };
+  });
 
   async function openProgram(targetProgram: Program) {
+    try { await programMetadata.flush(); } catch { return; }
     void loadProgramView();
     if (!repository || targetProgram.detailsLoaded !== false) {
       selectProgram(targetProgram);
@@ -1736,6 +1666,10 @@ export default function LiftLogApp({
   }
 
   function navigate(view: ViewName) {
+    guardProgramNavigation(() => navigateAfterMetadataSave(view));
+  }
+
+  function navigateAfterMetadataSave(view: ViewName) {
     completedWorkoutRequestRef.current += 1;
     completedWorkoutRestoreKeyRef.current = null;
     programHistoryRequestRef.current += 1;
@@ -1764,6 +1698,10 @@ export default function LiftLogApp({
   }
 
   function leaveDetail(returnView: ViewName) {
+    guardProgramNavigation(() => leaveDetailAfterMetadataSave(returnView));
+  }
+
+  function leaveDetailAfterMetadataSave(returnView: ViewName) {
     programHistoryRequestRef.current += 1;
     setDetail(null);
     setActiveWorkoutVisible(false);
@@ -1778,201 +1716,6 @@ export default function LiftLogApp({
     pushAppDetailHistory("workout", "today");
     setActiveWorkoutVisible(true);
     scrollToAppTop();
-  }
-
-  function applyCoachingWorkspace(nextCoaching: CoachingWorkspaceData) {
-    const { coachAthleteCursor: nextCursor, ...workspaceData } = nextCoaching;
-    setCoachAthleteCursor(nextCursor);
-    setCoachAthletesLoadError("");
-    setWorkspace((previous) => ({ ...previous, ...workspaceData }));
-    setSelectedAthleteId(
-      (previousId) =>
-        nextCoaching.coachedAthletes.find(
-          (athlete) => athlete.id === previousId,
-        )?.id ??
-        nextCoaching.coachedAthletes[0]?.id ??
-        null,
-    );
-  }
-
-  async function loadMoreCoachAthletes() {
-    if (!repository || !coachAthleteCursor || coachAthletesLoadingMore) return;
-    setCoachAthletesLoadingMore(true);
-    setCoachAthletesLoadError("");
-    try {
-      const page = await repository.listCoachAthletes({
-        limit: 25,
-        cursor: coachAthleteCursor,
-      });
-      setWorkspace((previous) => {
-        const athletesById = new Map(
-          previous.coachedAthletes.map((athlete) => [athlete.id, athlete]),
-        );
-        for (const athlete of page.items) {
-          if (!athletesById.has(athlete.id)) athletesById.set(athlete.id, athlete);
-        }
-        return { ...previous, coachedAthletes: [...athletesById.values()] };
-      });
-      setCoachAthleteCursor(page.nextCursor);
-    } catch (error) {
-      setCoachAthletesLoadError(
-        error instanceof Error
-          ? error.message
-          : "More athletes could not be loaded.",
-      );
-    } finally {
-      setCoachAthletesLoadingMore(false);
-    }
-  }
-
-  async function loadCoachedAthleteDetail(
-    athleteId: string,
-    force = false,
-  ): Promise<boolean> {
-    if (!repository) return true;
-    const current = workspace.coachedAthletes.find(
-      (athlete) => athlete.id === athleteId,
-    );
-    if (!force && current?.detailsLoaded !== false) return true;
-    if (coachingDetailRequestsRef.current.has(athleteId)) return false;
-    coachingDetailRequestsRef.current.add(athleteId);
-    setCoachingDetailLoadingId(athleteId);
-    try {
-      const detail = await repository.loadCoachedAthleteDetail(athleteId);
-      if (!detail) throw new Error("This coaching connection is no longer active.");
-      setWorkspace((previous) => ({
-        ...previous,
-        coachedAthletes: previous.coachedAthletes.map((athlete) =>
-          athlete.id === athleteId ? detail : athlete,
-        ),
-      }));
-      return true;
-    } catch (error) {
-      notify(
-        error instanceof Error
-          ? error.message
-          : "The athlete overview could not be loaded",
-      );
-      return false;
-    } finally {
-      coachingDetailRequestsRef.current.delete(athleteId);
-      setCoachingDetailLoadingId((currentId) =>
-        currentId === athleteId ? null : currentId,
-      );
-    }
-  }
-
-  async function loadMoreCoachHistory(athleteId: string) {
-    if (!repository || coachingHistoryLoadingId) return;
-    const athlete = workspace.coachedAthletes.find(
-      (candidate) => candidate.id === athleteId,
-    );
-    if (!athlete?.historyCursor || !athlete.hasMoreHistory) return;
-    setCoachingHistoryLoadingId(athleteId);
-    try {
-      const page = await repository.listCoachCompletedHistory(athleteId, {
-        limit: 25,
-        cursor: athlete.historyCursor,
-      });
-      setWorkspace((previous) => ({
-        ...previous,
-        coachedAthletes: previous.coachedAthletes.map((candidate) => {
-          if (candidate.id !== athleteId) return candidate;
-          const agendaById = new Map(
-            candidate.agenda.map((entry) => [entry.id, entry]),
-          );
-          for (const entry of page.items) agendaById.set(entry.id, entry);
-          const agenda = [...agendaById.values()].sort((left, right) => {
-            if (left.kind !== right.kind) return left.kind === "upcoming" ? -1 : 1;
-            return left.kind === "upcoming"
-              ? left.date.localeCompare(right.date)
-              : right.date.localeCompare(left.date);
-          });
-          return {
-            ...candidate,
-            agenda,
-            historyCursor: page.nextCursor,
-            hasMoreHistory: page.hasMore,
-          };
-        }),
-      }));
-    } catch (error) {
-      notify(
-        error instanceof Error
-          ? error.message
-          : "More workout results could not be loaded.",
-      );
-    } finally {
-      setCoachingHistoryLoadingId(null);
-    }
-  }
-
-  async function loadMoreCoachProgramRuns(athleteId: string) {
-    if (!repository || coachingProgramRunsLoadingId) return;
-    const athlete = workspace.coachedAthletes.find(
-      (candidate) => candidate.id === athleteId,
-    );
-    if (!athlete?.programRunCursor || !athlete.hasMoreProgramRuns) return;
-    setCoachingProgramRunsLoadingId(athleteId);
-    try {
-      const page = await repository.listProgramRuns(athleteId, {
-        limit: 25,
-        cursor: athlete.programRunCursor,
-      });
-      setWorkspace((previous) => ({
-        ...previous,
-        coachedAthletes: previous.coachedAthletes.map((candidate) => {
-          if (candidate.id !== athleteId) return candidate;
-          const runsById = new Map(
-            (candidate.programRuns ?? []).map((run) => [run.id, run]),
-          );
-          for (const run of page.items) runsById.set(run.id, run);
-          return {
-            ...candidate,
-            programRuns: [...runsById.values()],
-            programRunCursor: page.nextCursor,
-            hasMoreProgramRuns: page.hasMore,
-          };
-        }),
-      }));
-    } catch (error) {
-      notify(
-        error instanceof Error
-          ? error.message
-          : "More program history could not be loaded.",
-      );
-    } finally {
-      setCoachingProgramRunsLoadingId(null);
-    }
-  }
-
-  async function refreshCoachWorkspace(): Promise<boolean> {
-    if (!repository) return true;
-    if (coachingRefreshRef.current) return false;
-    coachingRefreshRef.current = true;
-    setCoachingRefreshing(true);
-    try {
-      const nextCoaching = await repository.loadCoachingWorkspace();
-      const nextSelectedId =
-        nextCoaching.coachedAthletes.find(
-          (athlete) => athlete.id === selectedAthleteId,
-        )?.id ?? nextCoaching.coachedAthletes[0]?.id;
-      applyCoachingWorkspace(nextCoaching);
-      if (coachMode === "coach" && nextSelectedId) {
-        await loadCoachedAthleteDetail(nextSelectedId, true);
-      }
-      return true;
-    } catch (error) {
-      notify(
-        error instanceof Error
-          ? error.message
-          : "The coach workspace could not be refreshed",
-      );
-      return false;
-    } finally {
-      coachingRefreshRef.current = false;
-      setCoachingRefreshing(false);
-    }
   }
 
   function changeCoachMode(nextMode: "athlete" | "coach") {
@@ -1992,41 +1735,6 @@ export default function LiftLogApp({
       void loadCoachedAthleteDetail(athlete.id);
     }
   }
-
-  const updateSet = useCallback((
-    itemId: string,
-    index: number,
-    field: keyof SetLog,
-    value: string,
-  ) => {
-    setSetLogs((previous) => ({
-      ...previous,
-      [itemId]: previous[itemId].map((row, rowIndex) =>
-        rowIndex === index ? { ...row, [field]: value } : row,
-      ),
-    }));
-  }, []);
-
-  const addSet = useCallback((itemId: string) => {
-    setSetLogs((previous) => ({
-      ...previous,
-      [itemId]: [...(previous[itemId] ?? []), { reps: "", load: "", rpe: "" }],
-    }));
-  }, []);
-
-  const removeSet = useCallback((itemId: string, index: number) => {
-    setSetLogs((previous) => ({
-      ...previous,
-      [itemId]: previous[itemId].filter((_, rowIndex) => rowIndex !== index),
-    }));
-  }, []);
-
-  const updateResult = useCallback((itemId: string, field: string, value: string) => {
-    setResultLogs((previous) => ({
-      ...previous,
-      [itemId]: { ...(previous[itemId] ?? {}), [field]: value },
-    }));
-  }, []);
 
   async function resolveSessionDraftConflict(keepLocalValues: boolean) {
     if (!sessionDraftConflict) return;
@@ -2077,14 +1785,16 @@ export default function LiftLogApp({
       );
       const detailedSchedule = await ensureScheduledWorkoutDetails(schedule);
       const workout = detailedSchedule.workout;
-      if (!repository) {
-        setWorkoutStarted(true);
-        showActiveWorkout();
-        return;
+      if (!repository && activeSession) {
+        if (activeSession.scheduledWorkoutId === schedule.id) {
+          showActiveWorkout();
+          return;
+        }
+        throw new Error("Finish or reset your current workout before starting another one.");
       }
-      const session = await repository.startOrResumeSession(
-        detailedSchedule.id,
-      );
+      const session = repository
+        ? await repository.startOrResumeSession(detailedSchedule.id)
+        : import.meta.env.DEV ? createDemoWorkoutSession(detailedSchedule) : null;
       if (!session) throw new Error("The workout session was not created.");
       completionTokenRef.current = null;
       setActiveSession(session);
@@ -2138,11 +1848,6 @@ export default function LiftLogApp({
         schedule: detailedSchedule,
         returnView,
       });
-      setSetLogs(starterSetLogs(detailedSchedule.workout, null));
-      setResultLogs({});
-      setSessionRpe("7");
-      setSessionNote("");
-      setWorkoutComplete(false);
       if (recordHistory) pushAppDetailHistory("workout", "today");
       return true;
     } catch (error) {
@@ -2196,19 +1901,19 @@ export default function LiftLogApp({
           completionTokenRef.current?.sessionId === activeSession.id
             ? completionTokenRef.current
             : null;
-        let recoveredRevision: number | null = null;
+        let recovered: Awaited<ReturnType<typeof activeWorkoutPersistence.flushConfirmed>> | null = null;
 
         for (let attempt = 0; attempt < 3; attempt += 1) {
           if (!completion) {
-            const confirmedRevision =
-              recoveredRevision ?? (await activeWorkoutPersistence.flush());
-            recoveredRevision = null;
+            const confirmed =
+              recovered ?? (await activeWorkoutPersistence.flushConfirmed());
+            recovered = null;
             completion = {
               sessionId: activeSession.id,
               token: crypto.randomUUID(),
-              confirmedRevision,
-              sessionRpe,
-              sessionNote,
+              confirmedRevision: confirmed.revision,
+              sessionRpe: confirmed.snapshot.sessionRpe,
+              sessionNote: confirmed.snapshot.sessionNote,
             };
             completionTokenRef.current = completion;
           }
@@ -2231,7 +1936,7 @@ export default function LiftLogApp({
             }
             completionTokenRef.current = null;
             completion = null;
-            recoveredRevision = await activeWorkoutPersistence.recover();
+            recovered = await activeWorkoutPersistence.recoverConfirmed();
           }
         }
 
@@ -2250,10 +1955,14 @@ export default function LiftLogApp({
         return;
       }
 
-      setActiveSession(null);
-      setWorkoutComplete(true);
-      setWorkoutStarted(false);
-      notify("Session saved to your training history");
+      if (import.meta.env.DEV && activeSession && todaySchedule) {
+        const completed = completeDemoWorkout(activeSession, todaySchedule, activeWorkoutSnapshot);
+        await clearConfirmedActiveSession(activeSession, "completed");
+        demoCompletedSessions.current.set(completed.id, completed);
+        setWorkspace((previous) => ({ ...previous, completedSessions: [completed, ...previous.completedSessions] }));
+        setCalendarRangeData((previous) => ({ ...previous, completedSessions: [completed, ...previous.completedSessions] }));
+        notify("Session saved to your demo training history");
+      }
     } catch (error) {
       notify(
         error instanceof Error
@@ -2273,12 +1982,7 @@ export default function LiftLogApp({
       try {
         workout = await repository.addWorkout(program, title);
       } catch (error) {
-        notify(
-          error instanceof Error
-            ? error.message
-            : "The workout could not be added",
-        );
-        return;
+        throw error instanceof Error ? error : new Error("The workout could not be added");
       }
     } else {
       workout = {
@@ -2619,12 +2323,7 @@ export default function LiftLogApp({
           cue,
         });
       } catch (error) {
-        notify(
-          error instanceof Error
-            ? error.message
-            : "The exercise could not be saved",
-        );
-        return;
+        throw error instanceof Error ? error : new Error("The exercise could not be saved");
       }
     } else {
       exercise = {
@@ -2699,9 +2398,7 @@ export default function LiftLogApp({
       retryExerciseSearch();
       notify(`${name} updated`);
     } catch (error) {
-      notify(
-        error instanceof Error ? error.message : "The exercise could not be updated",
-      );
+      throw error instanceof Error ? error : new Error("The exercise could not be updated");
     }
   }
 
@@ -2767,57 +2464,33 @@ export default function LiftLogApp({
     }
   }
 
-  async function saveProgram(title: string, description: string) {
-    if (!program || programAction) return;
-    const nextTitle = title.trim();
-    const nextDescription = description.trim();
-    if (!nextTitle) return;
-    if (!repository) {
-      notify("Program saved for the local demo");
-      return;
+  async function persistProgramMetadata(targetProgram: Program, metadata: ProgramMetadata) {
+    requireCapability(capabilitiesForProgram(targetProgram), "save");
+    const { title, description } = metadata;
+    const quickWorkout = targetProgram.contentType === "quick_workout" ? programWorkouts(targetProgram)[0] : undefined;
+    if (repository) {
+      if (quickWorkout) await repository.updateWorkout(quickWorkout.id, title, quickWorkout.durationMinutes);
+      await repository.updateProgramTitle(targetProgram.id, title);
+      await repository.updateProgramDescription(targetProgram.id, description);
     }
-    setProgramAction({ id: program.id, kind: "save" });
-    try {
-      requireCapability(capabilitiesForProgram(program), "save");
-      if (
-        program.contentType === "quick_workout" &&
-        selectedWorkout &&
-        nextTitle !== selectedWorkout.title
-      ) {
-        await repository.updateWorkout(
-          selectedWorkout.id,
-          nextTitle,
-          selectedWorkout.durationMinutes,
-        );
-      }
-      if (nextTitle !== program.title) {
-        await repository.updateProgramTitle(program.id, nextTitle);
-      }
-      if (nextDescription !== program.description) {
-        await repository.updateProgramDescription(program.id, nextDescription);
-      }
-      await refreshProgramWorkspace(program.id);
-      setProgram(null);
-      setProgramOwnerId(viewer.id);
-      notify(
-        program.contentType === "quick_workout"
-          ? "Workout saved for future uses."
-          : program.sourceType === "coach"
-          ? "Coach program saved."
-          : "Program saved for future runs.",
-      );
-    } catch (error) {
-      notify(
-        error instanceof Error
-          ? error.message
-          : "The program could not be updated",
-      );
-    } finally {
-      setProgramAction(null);
-    }
+    const patch = (candidate: Program): Program => candidate.versionId !== targetProgram.versionId ? candidate : {
+      ...candidate, title, description,
+      weeks: quickWorkout ? candidate.weeks.map((week) => ({ ...week, workouts: week.workouts.map((workout) => workout.id === quickWorkout.id ? { ...workout, title } : workout) })) : candidate.weeks,
+    };
+    setProgram((current) => current ? patch(current) : current);
+    setWorkspace((previous) => ({
+      ...previous,
+      programCatalog: previous.programCatalog.map(patch),
+      schedulablePrograms: previous.schedulablePrograms.map(patch),
+      draftProgram: previous.draftProgram ? patch(previous.draftProgram) : null,
+      activeProgram: previous.activeProgram ? patch(previous.activeProgram) : null,
+    }));
   }
 
+  useEffect(() => { programMetadata.configure(persistProgramMetadata); });
+
   async function editProgram(targetProgram: Program) {
+    try { await programMetadata.flush(); } catch { return; }
     if (!repository) {
       selectProgram(targetProgram);
       return;
@@ -3084,6 +2757,7 @@ export default function LiftLogApp({
     athleteIds?: string[];
     repeatRun?: ProgramRunSummary;
   }) {
+    try { await programMetadata.flush(); } catch { return; }
     if (repository) {
       const requiredFeatures: LazyWorkspaceFeature[] = ["programs"];
       if (seed.mode === "coach") requiredFeatures.push("coaching");
@@ -3159,11 +2833,12 @@ export default function LiftLogApp({
         sourceProgram.createdById !== viewer.id ||
         sourceProgram.sourceType !== "self"
       ) {
-        throw new Error("Only your own reusable training can be started.");
+        throw new Error("Only your own reusable training can be used to create a training plan.");
       }
     }
 
     if (!repository) {
+      if (!import.meta.env.DEV) throw new Error("Sign in before starting a program.");
       const createdAt = new Date().toISOString();
       const demoRuns = athleteIds.map((athleteId, index) => ({
         id: `run-${Date.now()}-${index}`,
@@ -3235,7 +2910,7 @@ export default function LiftLogApp({
       repeatRun
         ? `${sourceProgram.title} added as a new run`
         : isSelfRun
-          ? `${sourceProgram.title} started${scheduledCount ? ` · ${scheduledCount} workouts scheduled` : ""}`
+          ? `${sourceProgram.title} added to your training${scheduledCount ? ` · ${scheduledCount} workouts scheduled` : ""}`
           : `${sourceProgram.title} assigned to ${athleteIds.length} ${athleteIds.length === 1 ? "athlete" : "athletes"}${scheduledCount ? " and scheduled" : ""}`;
     notify(
       refreshFailed
@@ -3293,6 +2968,7 @@ export default function LiftLogApp({
           { returnView: target.id === viewer.id ? "program" : "coaching" },
         );
       } else {
+        if (!import.meta.env.DEV) throw new Error("Sign in before creating training.");
         const emptyProgram: Program = {
           id: `program-${Date.now()}`,
           athleteId: target.id,
@@ -3349,6 +3025,7 @@ export default function LiftLogApp({
         await refreshProgramWorkspace(workoutId);
         selectProgram(await repository.loadEditableProgram(viewer.id, workoutId));
       } else {
+        if (!import.meta.env.DEV) throw new Error("Sign in before creating training.");
         const now = Date.now();
         selectProgram({
           id: `quick-workout-${now}`,
@@ -3384,7 +3061,7 @@ export default function LiftLogApp({
       setModal(null);
       setActiveView("program");
       setProgramSource("own");
-      notify("Quick workout created");
+      notify(`${trainingContentUi("quick_workout").label} created`);
     } catch (error) {
       throw error instanceof Error
         ? error
@@ -3493,121 +3170,6 @@ export default function LiftLogApp({
     await performProgramDeletion(target.program);
   }
 
-  async function loadScheduleCandidates(reset = false) {
-    if (scheduleCandidatesLoading) return;
-    setScheduleCandidatesLoading(true);
-    setScheduleCandidatesError("");
-    try {
-      if (repository) {
-        const [page, frequent] = await Promise.all([
-          repository.listSchedulableWorkouts({
-            limit: 50,
-            ...(reset || !scheduleCandidateCursor
-              ? {}
-              : { cursor: scheduleCandidateCursor }),
-          }),
-          reset
-            ? repository.listFrequentSchedulableWorkouts(6).catch(() => [])
-            : Promise.resolve(null),
-        ]);
-        if (frequent) setFrequentScheduleCandidates(frequent);
-        const quickWorkoutItems = page.items.filter(
-          (candidate) => candidate.isQuickWorkout,
-        );
-        setScheduleCandidates((current) =>
-          reset
-            ? quickWorkoutItems
-            : [
-                ...current,
-                ...quickWorkoutItems.filter(
-                  (item) =>
-                    !current.some(
-                      (existing) =>
-                        existing.programVersionId === item.programVersionId &&
-                        existing.workoutId === item.workoutId &&
-                        existing.assignmentId === item.assignmentId,
-                    ),
-                ),
-              ],
-        );
-        setScheduleCandidateCursor(page.nextCursor);
-        return;
-      }
-
-      const demoCandidates = schedulablePrograms
-        .filter((candidate) => candidate.contentType === "quick_workout")
-        .flatMap((candidate) =>
-        candidate.weeks.flatMap((week) =>
-          week.workouts.map((workout, position) => {
-            const occurrences = workspace.scheduledWorkouts.filter(
-              (occurrence) =>
-                occurrence.programVersionId === candidate.versionId &&
-                occurrence.workoutId === workout.id,
-            );
-            const latest = occurrences.sort(
-              (left, right) => right.sequenceNumber - left.sequenceNumber,
-            )[0];
-            return {
-              kind: "program" as const,
-              programId: candidate.id,
-              programVersionId: candidate.versionId,
-              workoutId: workout.id,
-              programTitle: candidate.title,
-              workoutTitle: workout.title,
-              contentType: candidate.contentType ?? "program",
-              isQuickWorkout: candidate.contentType === "quick_workout",
-              weekIndex: week.index,
-              weekLabel: week.label,
-              workoutPosition: position,
-              scheduleLabel: workout.dayLabel,
-              estimatedMinutes: workout.durationMinutes,
-              ...(latest
-                ? {
-                    latestOccurrence: {
-                      id: latest.id,
-                      plannedDate: latest.plannedDate,
-                      status: latest.status,
-                      sequenceNumber: latest.sequenceNumber,
-                    },
-                  }
-                : {}),
-            } satisfies SchedulableWorkoutCandidate;
-          }),
-        ),
-        );
-      setScheduleCandidates(demoCandidates);
-      setFrequentScheduleCandidates(
-        demoCandidates
-          .filter(
-            (candidate) =>
-              candidate.isQuickWorkout &&
-              (candidate.latestOccurrence?.sequenceNumber ?? 0) > 0,
-          )
-          .sort(
-            (left, right) =>
-              (right.latestOccurrence?.sequenceNumber ?? 0) -
-                (left.latestOccurrence?.sequenceNumber ?? 0) ||
-              left.workoutTitle.localeCompare(right.workoutTitle),
-          )
-          .slice(0, 6)
-          .map((candidate) => ({
-            ...candidate,
-            usageCount: candidate.latestOccurrence?.sequenceNumber ?? 1,
-            lastUsedAt: candidate.latestOccurrence?.plannedDate ?? "1970-01-01",
-          })),
-      );
-      setScheduleCandidateCursor(undefined);
-    } catch (error) {
-      setScheduleCandidatesError(
-        error instanceof Error
-          ? error.message
-          : "Workouts available to schedule could not be loaded.",
-      );
-    } finally {
-      setScheduleCandidatesLoading(false);
-    }
-  }
-
   function openSchedule(scheduleId?: string, initialDate?: string) {
     setScheduleEditingId(scheduleId ?? null);
     setScheduleInitialDate(initialDate ?? null);
@@ -3663,10 +3225,7 @@ export default function LiftLogApp({
           } satisfies SchedulableWorkoutCandidate;
         }),
       );
-      setScheduleCandidates(candidates);
-      setFrequentScheduleCandidates([]);
-      setScheduleCandidateCursor(undefined);
-      setScheduleCandidatesError("");
+      replaceScheduleCandidates(candidates);
       setScheduleEditingId(null);
       setScheduleInitialDate(null);
       setModal("schedule");
@@ -3771,7 +3330,7 @@ export default function LiftLogApp({
           date,
           idempotencyKey,
         )
-      : {
+      : import.meta.env.DEV ? {
           id: demoScheduleId,
           programRunId: demoRunId,
           programRunWorkoutId: demoRunWorkoutId,
@@ -3797,10 +3356,11 @@ export default function LiftLogApp({
             plannedDate: date,
           },
           detailsLoaded: false,
-        };
+        } : null;
+    if (!created) throw new Error("Sign in before scheduling a workout.");
     setWorkspace((previous) => ({
       ...previous,
-      ...(!repository && !candidate.assignmentId
+      ...(import.meta.env.DEV && !repository && !candidate.assignmentId
         ? {
             programRuns: [
               {
@@ -3868,6 +3428,7 @@ export default function LiftLogApp({
     scheduleId: string,
     status: "planned" | "skipped",
   ) {
+    if (workoutActionRef.current) return;
     if (activeSession?.scheduledWorkoutId === scheduleId && !activeWorkoutPersistence.editable) return;
     if (scheduleStatusAction) return;
     setScheduleStatusAction({ id: scheduleId, status });
@@ -3929,7 +3490,7 @@ export default function LiftLogApp({
       setDetail(null);
       notify(
         status === "planned"
-          ? "Workout set back to planned"
+          ? "Workout set back to scheduled"
           : "Workout skipped",
       );
     } catch (error) {
@@ -4182,8 +3743,8 @@ export default function LiftLogApp({
         onNavigate={navigate}
         viewer={viewer}
         profile={workspace.profile}
-        onAccount={() => setModal("account")}
-        onSignOut={onSignOut}
+        onAccount={() => guardProgramNavigation(() => setModal("account"))}
+        onSignOut={() => guardProgramNavigation(onSignOut)}
         coachingRequestCount={workspace.pendingCoachInvites.length}
       />
 
@@ -4206,7 +3767,7 @@ export default function LiftLogApp({
             className="avatar mobile-avatar"
             aria-label="Open my account"
             title="My account"
-            onClick={() => setModal("account")}
+            onClick={() => guardProgramNavigation(() => setModal("account"))}
           >
             {getInitials(workspace.profile.displayName)}
           </button>
@@ -4240,6 +3801,7 @@ export default function LiftLogApp({
             state={completedWorkoutView}
             viewerId={viewer.id}
             weightUnit={workspace.profile.weightUnit}
+            distanceUnit={workspace.profile.distanceUnit}
             exerciseCategoryForName={exerciseCategoryForName}
             program={
               programCatalog.find(
@@ -4277,6 +3839,7 @@ export default function LiftLogApp({
             weightUnit={workspace.profile.weightUnit}
             exerciseCategoryForItem={exerciseCategoryForItem}
             timing={showingWorkoutPreview ? "future" : workoutFocus!.timing}
+            distanceUnit={workspace.profile.distanceUnit}
             plannedDate={
               showingWorkoutPreview
                 ? workoutPreviewSchedule!.plannedDate
@@ -4285,8 +3848,8 @@ export default function LiftLogApp({
             workoutStarted={!showingWorkoutPreview && workoutStarted}
             workoutComplete={!showingWorkoutPreview && workoutComplete}
             workoutAction={showingWorkoutPreview ? null : workoutAction}
-            setLogs={setLogs}
-            resultLogs={resultLogs}
+            setLogs={showingWorkoutPreview ? starterSetLogs(workoutPreviewSchedule!.workout, null) : setLogs}
+            resultLogs={showingWorkoutPreview ? {} : resultLogs}
             sessionRpe={sessionRpe}
             sessionNote={sessionNote}
             sessionSaveStatus={sessionSaveStatus}
@@ -4343,11 +3906,7 @@ export default function LiftLogApp({
                 ? () => leaveDetail("today")
                 : undefined
             }
-            backLabel={
-              workoutPreviewReturnView === "calendar"
-                ? "Calendar"
-                : "Next workouts"
-            }
+            backLabel={destinationLabel(workoutPreviewReturnView)}
             onReschedule={
               workoutPreviewReturnView === "calendar" && workoutPreviewSchedule
                 ? () => {
@@ -4469,6 +4028,8 @@ export default function LiftLogApp({
             <ProgramView
             key={`${program.id}:${program.versionId}`}
             program={program}
+            metadata={programMetadata.value ?? { title: program.title, description: program.description, status: "saved", error: "" }}
+            onMetadataChange={programMetadata.change}
             programRun={viewingProgramRun}
             action={
               programAction?.id === program.id ? programAction.kind : null
@@ -4476,15 +4037,7 @@ export default function LiftLogApp({
             mutationPending={builderMutationPending}
             viewerId={viewer.id}
             capabilities={capabilitiesForViewedProgram(program)}
-            backLabel={
-              programReturnView === "coaching"
-                ? "Coaching"
-                : programReturnView === "calendar"
-                  ? "Calendar"
-                  : programReturnView === "today"
-                    ? "Next"
-                    : "Programs"
-            }
+            backLabel={destinationLabel(programReturnView)}
             workouts={programWorkoutSequence}
             selectedWorkout={selectedWorkout}
             runWorkouts={viewingProgramRunDetail?.workouts ?? []}
@@ -4498,7 +4051,7 @@ export default function LiftLogApp({
               if (workoutWeek) setSelectedWeek(workoutWeek.index);
               setSelectedSectionId(workout?.sections[0]?.id ?? "");
             }}
-            onAddWorkout={() => setModal("workout")}
+            onAddWorkout={() => guardProgramNavigation(() => setModal("workout"))}
             onDeleteWorkout={deleteSelectedWorkout}
             onReorderWorkouts={reorderWorkouts}
             onAddExercise={addExerciseToWorkout}
@@ -4509,9 +4062,7 @@ export default function LiftLogApp({
             }}
             onRemoveItem={removeWorkoutItem}
             onReorderItems={reorderWorkoutItems}
-            onSave={(title, description) =>
-              void saveProgram(title, description)
-            }
+            onSave={() => { void programMetadata.flush().catch(() => undefined); }}
             onDuplicate={
               capabilitiesForViewedProgram(program).copyToOwn
                 ? () =>
@@ -4521,7 +4072,7 @@ export default function LiftLogApp({
                     )
                 : undefined
             }
-            onBack={() => {
+            onBack={() => guardProgramNavigation(() => {
               const returnView = programReturnView;
               setProgram(null);
               setViewingProgramRunId(null);
@@ -4530,7 +4081,7 @@ export default function LiftLogApp({
                 setCoachMode("coach");
               }
               leaveDetail(returnView);
-            }}
+            })}
             onAssignProgram={
               !viewingProgramRunId && capabilitiesForProgram(program).assign
                 ? () => void openProgramRunWizard({
@@ -4539,7 +4090,7 @@ export default function LiftLogApp({
                   })
                 : undefined
             }
-            onEditWorkout={() => setModal("workout-settings")}
+            onEditWorkout={() => guardProgramNavigation(() => setModal("workout-settings"))}
             onSchedule={
               !viewingProgramRunId && capabilitiesForProgram(program).schedule
                 ? () =>
@@ -4560,6 +4111,7 @@ export default function LiftLogApp({
                 weightUnit={workspace.profile.weightUnit}
                 showSetControls={false}
                 builderPreview
+                distanceUnit={workspace.profile.distanceUnit}
                 setLogs={programPreviewSetLogs(item)}
                 resultLog={programPreviewResultLog(item)}
                 onUpdateSet={() => undefined}
@@ -4882,6 +4434,7 @@ export default function LiftLogApp({
         )}
       </section>
 
+      <Suspense fallback={<ModalShell title="Opening editor" description="Loading the form…" onClose={() => setModal(null)}><p role="status">Loading…</p></ModalShell>}>
       {modal === "exercise" && (
         <ExerciseModal
           exercise={exerciseEditing}
@@ -5136,7 +4689,7 @@ export default function LiftLogApp({
           email={viewer.email}
           onClose={() => setModal(null)}
           onSave={saveProfile}
-          onSignOut={onSignOut}
+          onSignOut={() => guardProgramNavigation(onSignOut)}
         />
       )}
       {sessionDraftConflict && (
@@ -5168,6 +4721,7 @@ export default function LiftLogApp({
           </div>
         </ModalShell>
       )}
+      </Suspense>
       {toast && <Toast message={toast} />}
     </main>
   );
@@ -5201,7 +4755,7 @@ function Sidebar({
         </span>
       </button>
       <nav className="main-nav" aria-label="Main navigation">
-        {navItems.map((item) => {
+        {navigationItems.map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -5259,6 +4813,7 @@ function TodayView({
   viewerId,
   workout,
   weightUnit,
+  distanceUnit,
   exerciseCategoryForItem,
   timing,
   plannedDate,
@@ -5298,6 +4853,7 @@ function TodayView({
   viewerId: string;
   workout: PlannedWorkout;
   weightUnit: OwnProfile["weightUnit"];
+  distanceUnit: OwnProfile["distanceUnit"];
   exerciseCategoryForItem: (item: WorkoutItem) => string;
   timing: "active" | "overdue" | "today" | "future";
   plannedDate?: string;
@@ -5371,6 +4927,26 @@ function TodayView({
         : timing === "today"
           ? "Next workout · Today"
           : `Next workout · ${dateLabel}`;
+  const workoutActions: ObjectAction[] = [];
+  const actionPending = statusAction !== null || workoutAction !== null || (workoutStarted && !editable);
+  if (viewMode && onReschedule) workoutActions.push({
+    label: actionUi.reschedule.label, accessibleLabel: "Reschedule workout",
+    icon: actionUi.reschedule.icon, onClick: onReschedule, disabled: actionPending,
+  });
+  if (viewMode && onRemoveFromCalendar) workoutActions.push({
+    label: "Remove from calendar", accessibleLabel: "Remove workout from calendar",
+    icon: CalendarMinus, onClick: onRemoveFromCalendar, disabled: actionPending,
+  });
+  if (workoutStarted && onSetPlanned) workoutActions.push({
+    label: statusAction === "planned" ? "Restoring…" : "Set back to scheduled",
+    accessibleLabel: "Set back to scheduled", icon: RefreshCw, onClick: onSetPlanned,
+    loading: statusAction === "planned", disabled: actionPending,
+  });
+  if ((viewMode || workoutStarted) && onSkip) workoutActions.push({
+    label: statusAction === "skipped" ? "Skipping…" : "Skip workout",
+    accessibleLabel: "Skip workout", icon: X, onClick: onSkip,
+    loading: statusAction === "skipped", disabled: actionPending, destructive: true,
+  });
   return (
     <>
       {onBack && (
@@ -5399,86 +4975,7 @@ function TodayView({
             presentation={presentProgramProvenance(program, viewerId)}
           />
         )}
-        {onBack && (
-          <button className="button secondary workout-back-action desktop-detail-action" onClick={onBack}>
-            <ArrowLeft size={15} />
-            <span className="workout-action-full">{backLabel}</span>
-            <span className="workout-action-compact">Workouts</span>
-          </button>
-        )}
-        {viewMode && onReschedule && (
-          <button
-            className="icon-button"
-            onClick={onReschedule}
-            aria-label="Reschedule workout"
-            title="Reschedule"
-          >
-            <CalendarPlus size={15} />
-          </button>
-        )}
-        {viewMode && onRemoveFromCalendar && (
-          <button
-            className="icon-button"
-            onClick={onRemoveFromCalendar}
-            aria-label="Remove workout from calendar"
-            title="Remove from calendar"
-          >
-            <CalendarMinus size={15} />
-          </button>
-        )}
-        {workoutStarted && onSetPlanned && onSkip && (
-          <>
-            <button
-              className="button secondary workout-back-action"
-              disabled={statusAction !== null || !editable}
-              onClick={onSetPlanned}
-              aria-label="Set back to planned"
-            >
-              {statusAction === "planned" ? (
-                <>
-                  <LoaderCircle className="button-spinner" size={15} />
-                  Restoring…
-                </>
-              ) : (
-                <>
-                  <RefreshCw size={15} />
-                  <span className="workout-action-full">Set back to planned</span>
-                  <span className="workout-action-compact">Planned</span>
-                </>
-              )}
-            </button>
-            <button
-              className="button danger"
-              disabled={statusAction !== null || !editable}
-              onClick={onSkip}
-            >
-              {statusAction === "skipped" ? (
-                <>
-                  <LoaderCircle className="button-spinner" size={15} />
-                  Skipping…
-                </>
-              ) : (
-                "Skip"
-              )}
-            </button>
-          </>
-        )}
-        {viewMode && onSkip && (
-          <button
-            className="button danger"
-            disabled={statusAction !== null}
-            onClick={onSkip}
-          >
-            {statusAction === "skipped" ? (
-              <>
-                <LoaderCircle className="button-spinner" size={15} />
-                Skipping…
-              </>
-            ) : (
-              "Skip"
-            )}
-          </button>
-        )}
+        <ObjectActionMenu title={workout.title} actions={workoutActions} />
         </div>
       </PageHeader>
       {workoutStarted && !editable && (
@@ -5504,7 +5001,7 @@ function TodayView({
         </div>
       )}
       <div className="today-layout">
-        <fieldset className="workout-card" aria-label="Workout log" disabled={workoutStarted && !editable}>
+        <fieldset className="workout-card" aria-label="Workout log" disabled={workoutStarted && (!editable || workoutAction === "finishing" || statusAction !== null)}>
           <div className="workout-heading">
             <div>
               {!isQuickWorkout && (
@@ -5536,6 +5033,7 @@ function TodayView({
                   category={exerciseCategoryForItem(item)}
                   active={workoutStarted}
                   weightUnit={weightUnit}
+                  distanceUnit={distanceUnit}
                   setLogs={setLogs[item.id] ?? emptySetLogs}
                   resultLog={resultLogs[item.id] ?? emptyResultLog}
                   onUpdateSet={onUpdateSet}
@@ -5600,209 +5098,6 @@ function TodayView({
   );
 }
 
-const rpeOptions = [
-  { value: "5", label: "Light", detail: "5+ left" },
-  { value: "6", label: "Easy", detail: "4+ left" },
-  { value: "7", label: "Moderate", detail: "3 left" },
-  { value: "8", label: "Hard", detail: "2 left" },
-  { value: "9", label: "Very hard", detail: "1 left" },
-  { value: "10", label: "Max", detail: "None left" },
-] as const;
-
-function wholeRpe(value: string) {
-  const values = value
-    .split(/[–-]/)
-    .map((part) => Number(part.trim()))
-    .filter((part) => Number.isFinite(part));
-  const selected = values.at(-1);
-  return selected && selected >= 5 && selected <= 10 ? String(selected) : "";
-}
-
-function rpeTone(value: string) {
-  const rpe = Number(wholeRpe(value));
-  if (rpe <= 6) return "easy";
-  if (rpe === 7) return "moderate";
-  if (rpe === 8) return "hard";
-  return "very-hard";
-}
-
-function RpeLegend() {
-  return (
-    <details className="rpe-legend">
-      <summary><Gauge size={14} /> RPE guide</summary>
-      <div>
-        {rpeOptions.map((option) => (
-          <span key={option.value}>
-            <strong>{option.value}</strong>
-            <b>{option.label}</b>
-            <small>{option.detail}</small>
-          </span>
-        ))}
-      </div>
-    </details>
-  );
-}
-
-export function RpeChoiceButtons({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="rpe-selector" aria-label="Select session RPE">
-      {rpeOptions.map((option) => (
-        <button
-          type="button"
-          key={option.value}
-          className={cn(value === option.value && "selected", `rpe-${rpeTone(option.value)}`)}
-          onClick={() => onChange(option.value)}
-          aria-label={`RPE ${option.value}: ${option.label}, ${option.detail}`}
-          aria-pressed={value === option.value}
-        >
-          <strong>{option.value}</strong>
-          <span>{option.label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-export function PlannedRpeSelect({
-  value,
-  onChange,
-  disabled = false,
-  ariaLabel = "Planned RPE",
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  disabled?: boolean;
-  ariaLabel?: string;
-}) {
-  return (
-    <div className="planned-rpe-select">
-      <RpeSelect
-        disabled={disabled}
-        ariaLabel={ariaLabel}
-        value={value}
-        emptyLabel="No target"
-        intent="planned"
-        onChange={onChange}
-      />
-    </div>
-  );
-}
-
-export function RpeSelect({
-  disabled,
-  value,
-  onChange,
-  ariaLabel = "Actual RPE",
-  emptyLabel = "Not logged",
-  intent = "actual",
-}: {
-  disabled: boolean;
-  value: string;
-  onChange: (value: string) => void;
-  ariaLabel?: string;
-  emptyLabel?: string;
-  intent?: "actual" | "planned";
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const helpId = useId();
-  const selected = rpeOptions.find((option) => option.value === value);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOutside = (event: PointerEvent) => {
-      if (
-        event.target instanceof Node &&
-        !rootRef.current?.contains(event.target)
-      ) {
-        setOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOutside);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOutside);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
-  return (
-    <div className={cn("rpe-select", open && "open")} ref={rootRef}>
-      <button
-        type="button"
-        disabled={disabled}
-        className={cn("rpe-select-trigger", value && "selected", value && `rpe-${rpeTone(value)}`)}
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <strong>{selected?.value ?? "—"}</strong>
-        <ChevronDown size={14} aria-hidden />
-      </button>
-      {open && !disabled && (
-        <div className="rpe-select-menu">
-          <p className="rpe-select-help" id={helpId}>
-            <strong>RPE</strong>{" "}
-            {intent === "planned"
-              ? "sets the intended difficulty by how many good reps should remain."
-              : "shows how hard the set felt by how many good reps you had left."}
-          </p>
-          <div
-            className="rpe-select-options"
-            role="listbox"
-            aria-label={`${ariaLabel} options`}
-            aria-describedby={helpId}
-          >
-            <button
-              type="button"
-              role="option"
-              aria-selected={!value}
-              className={!value ? "selected" : undefined}
-              onClick={() => {
-                onChange("");
-                setOpen(false);
-              }}
-            >
-              <strong>—</strong>
-              <span>{emptyLabel}</span>
-            </button>
-            {rpeOptions.map((option) => (
-              <button
-                type="button"
-                role="option"
-                key={option.value}
-                aria-label={`RPE ${option.value}: ${option.detail}`}
-                aria-selected={value === option.value}
-                className={cn(
-                  value === option.value && "selected",
-                  `rpe-${rpeTone(option.value)}`,
-                )}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-              >
-                <strong>{option.value}</strong>
-                <span>{option.detail}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function TargetRpeBadge({ value }: { value: string }) {
   const normalizedValue = wholeRpe(value) || value;
   return (
@@ -5823,6 +5118,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
   category,
   active,
   weightUnit = "kg",
+  distanceUnit = "km",
   showSetControls = true,
   builderPreview = false,
   setLogs,
@@ -5836,6 +5132,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
   category?: string;
   active: boolean;
   weightUnit?: OwnProfile["weightUnit"];
+  distanceUnit?: OwnProfile["distanceUnit"];
   showSetControls?: boolean;
   builderPreview?: boolean;
   setLogs: SetLog[];
@@ -5855,7 +5152,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
   const plannedRpeVaries = prescriptionEntryVaries(item, "targetRpe");
   const prescriptionSummary = (
     <div className="exercise-prescription">
-      <span>{prescriptionLabel(item, weightUnit)}</span>
+      <span>{prescriptionLabel(item, weightUnit, distanceUnit)}</span>
       {plannedRpeVaries ? (
         <span className="per-entry-rpe">Planned RPE per {item.mode === "intervals" ? "round" : "set"}</span>
       ) : item.prescription.targetRpe ? (
@@ -5931,19 +5228,13 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
                 />
               )}
               {fields.includes("load") && (
-                <input
+                <MeasurementInput
                   aria-label={`${item.title}, set ${index + 1}, load in ${weightUnit}`}
                   disabled={!active}
-                  inputMode="decimal"
-                  value={weightInputValue(row.load, weightUnit)}
-                  onChange={(event) =>
-                    onUpdateSet(
-                      item.id,
-                      index,
-                      "load",
-                      weightKgValue(event.target.value, weightUnit),
-                    )
-                  }
+                  quantity="weight"
+                  unit={weightUnit}
+                  value={row.load}
+                  onChange={(value) => onUpdateSet(item.id, index, "load", value)}
                   placeholder="—"
                 />
               )}
@@ -5980,6 +5271,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
         <IntervalLogTable
           item={item}
           active={active}
+          distanceUnit={distanceUnit}
           resultLog={resultLog}
           onUpdate={(field, value) => onUpdateResult(item.id, field, value)}
         />
@@ -5998,10 +5290,11 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
           {fields.includes("distance") && (
             <ResultInput
               label="Distance"
-              unit="km"
+              unit={distanceUnit}
               disabled={!active}
               value={resultLog.distance ?? ""}
               onChange={(value) => onUpdateResult(item.id, "distance", value)}
+              measurement={{ quantity: "distance", unit: distanceUnit }}
             />
           )}
           {fields.includes("load") && (
@@ -6009,10 +5302,9 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
               label="Load"
               unit={weightUnit}
               disabled={!active}
-              value={weightInputValue(resultLog.load ?? "", weightUnit)}
-              onChange={(value) =>
-                onUpdateResult(item.id, "load", weightKgValue(value, weightUnit))
-              }
+              value={resultLog.load ?? ""}
+              onChange={(value) => onUpdateResult(item.id, "load", value)}
+              measurement={{ quantity: "weight", unit: weightUnit }}
             />
           )}
           {fields.includes("heartRate") && (
@@ -6043,11 +5335,13 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
 function IntervalLogTable({
   item,
   active,
+  distanceUnit,
   resultLog,
   onUpdate,
 }: {
   item: WorkoutItem;
   active: boolean;
+  distanceUnit: OwnProfile["distanceUnit"];
   resultLog: Record<string, string>;
   onUpdate: (field: string, value: string) => void;
 }) {
@@ -6116,14 +5410,15 @@ function IntervalLogTable({
               />
             )}
             {fields.includes("distance") && (
-              <input
-                aria-label={`${item.title}, round ${index + 1}, distance in kilometres`}
+              <MeasurementInput
+                aria-label={`${item.title}, round ${index + 1}, distance in ${distanceUnit === "mi" ? "miles" : "kilometres"}`}
                 disabled={!active}
-                inputMode="decimal"
-                placeholder="km"
+                quantity="distance"
+                unit={distanceUnit}
+                placeholder={distanceUnit}
                 value={resultLog[`round.${index}.distance`] ?? ""}
-                onChange={(event) =>
-                  onUpdate(`round.${index}.distance`, event.target.value)
+                onChange={(value) =>
+                  onUpdate(`round.${index}.distance`, value)
                 }
               />
             )}
@@ -6153,7 +5448,7 @@ function IntervalLogTable({
       <div className="interval-log-summary">
         <span>{completedRounds}/{rounds.length} rounds completed</span>
         <span>{Math.round(plannedSeconds / 60)} min planned</span>
-        {totalDistance > 0 && <span>{totalDistance.toFixed(2)} km total</span>}
+        {totalDistance > 0 && <span>{formatDistanceKilometres(totalDistance, distanceUnit)} {distanceUnit} total</span>}
       </div>
     </div>
   );
@@ -6184,24 +5479,26 @@ function ResultInput({
   disabled,
   value,
   onChange,
+  measurement,
 }: {
   label: string;
   unit: string;
   disabled: boolean;
   value: string;
   onChange: (value: string) => void;
+  measurement?: { quantity: "weight"; unit: OwnProfile["weightUnit"] } | { quantity: "distance"; unit: OwnProfile["distanceUnit"] };
 }) {
   return (
     <label className="result-input">
       <span>{label}</span>
       <div>
-        <input
+        {measurement ? <MeasurementInput {...measurement} disabled={disabled} value={value} onChange={onChange} placeholder="—" /> : <input
           disabled={disabled}
           inputMode="decimal"
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder="—"
-        />
+        />}
         <small>{unit}</small>
       </div>
     </label>
@@ -6225,595 +5522,18 @@ function programPreviewResultLog(item: WorkoutItem): Record<string, string> {
   return {
     rounds: prescription.rounds?.toString() ?? "",
     duration: prescription.durationMinutes?.toString() ?? "",
-    distance: prescription.distance?.toString() ?? "",
+    distance: prescription.distance === undefined ? "" : String(prescription.distanceUnit === "km" ? prescription.distance : prescription.distance / 1000),
     load: prescription.loadKg?.toString() ?? "",
     rpe: "",
   };
 }
 
-function ProgramRow({
-  program,
-  activeRun,
-  viewerId,
-  canEdit,
-  canDuplicate,
-  canDelete,
-  action,
-  onOpen,
-  onEdit,
-  onDuplicate,
-  onDelete,
-  deleteLabel = "Delete",
-  onSchedule,
-  onOpenActiveRun,
-}: {
-  program: Program;
-  activeRun?: ProgramRunSummary;
-  viewerId: string;
-  canEdit: boolean;
-  canDuplicate: boolean;
-  canDelete: boolean;
-  action: Exclude<ProgramAction, null>["kind"] | null;
-  onOpen: () => void;
-  onEdit: () => void;
-  onDuplicate?: () => void;
-  onDelete?: () => void;
-  deleteLabel?: "Delete" | "Unassign";
-  onSchedule?: () => void;
-  onOpenActiveRun?: () => void;
-}) {
-  const isQuickWorkout = program.contentType === "quick_workout";
-  const objectLabel = isQuickWorkout ? "Workout" : "Program";
-  const workoutCount = programWorkoutCount(program);
-  const estimatedMinutes = program.weeks[0]?.workouts[0]?.durationMinutes;
-  return (
-    <article className="program-catalog-card panel">
-      <button
-        className="program-card-main"
-        disabled={Boolean(action)}
-        onClick={onOpen}
-      >
-        <span className="program-card-heading">
-          <span className="program-icon">
-            {isQuickWorkout ? <Activity size={18} /> : <Layers3 size={18} />}
-          </span>
-          <span>
-            <strong>{program.title}</strong>
-            {program.sourceType !== "self" && (
-              <SourceTag
-                presentation={presentProgramProvenance(program, viewerId)}
-                compact
-              />
-            )}
-          </span>
-          {action === "open" && (
-            <span className="program-card-loading" aria-label={`Opening ${objectLabel.toLowerCase()}`}>
-              <LoaderCircle className="button-spinner" size={16} />
-            </span>
-          )}
-        </span>
-        {program.description && (
-          <span className="program-card-description">{program.description}</span>
-        )}
-      </button>
-      <div className="program-card-footer">
-        <div className="program-card-status-row">
-          <span className="program-card-meta">
-            {isQuickWorkout ? (
-              estimatedMinutes ? <span>~{estimatedMinutes} min</span> : null
-            ) : (
-              <span>{formatWorkoutCount(workoutCount)}</span>
-            )}
-          </span>
-          {activeRun ? (
-            <button
-              type="button"
-              className="program-card-active-run"
-              onClick={onOpenActiveRun}
-              aria-label={`Open active ${program.title} training`}
-            >
-              {isQuickWorkout ? <Activity size={13} /> : <CalendarPlus size={13} />}
-              {isQuickWorkout
-                ? "In use"
-                : `In use · ${activeRun.completedWorkouts}/${activeRun.totalWorkouts} completed`}
-              <ChevronRight size={13} />
-            </button>
-          ) : program.versionStatus === "draft" ? (
-            <StatusBadge status="editable" label="Editable template" />
-          ) : program.sourceType === "coach" ? (
-            <StatusBadge status="planned" label="Assigned to you" />
-          ) : (
-            <span className="program-card-ready">Ready to use</span>
-          )}
-        </div>
-        <div className="program-card-actions">
-          {canEdit && (
-            <button
-              className="icon-button program-card-action-edit"
-              disabled={Boolean(action)}
-              onClick={onEdit}
-              aria-label={`Edit ${program.title} ${objectLabel.toLowerCase()}`}
-              title={`Edit ${objectLabel.toLowerCase()}`}
-            >
-              {action === "edit" ? (
-                <LoaderCircle className="button-spinner" size={15} />
-              ) : (
-                <Pencil size={15} />
-              )}
-            </button>
-          )}
-          {canDuplicate && onDuplicate && (
-            <button
-              className="icon-button program-card-action-copy"
-              disabled={Boolean(action)}
-              onClick={onDuplicate}
-              aria-label={`Duplicate ${program.title} ${objectLabel.toLowerCase()}`}
-              title={`Duplicate ${objectLabel.toLowerCase()}`}
-            >
-              {action === "duplicate" ? (
-                <LoaderCircle className="button-spinner" size={15} />
-              ) : (
-                <Copy size={15} />
-              )}
-            </button>
-          )}
-          {onSchedule && (
-            <button
-              className="icon-button program-card-action-schedule"
-              disabled={Boolean(action)}
-              onClick={onSchedule}
-              aria-label={`${program.sourceType === "coach" ? "Schedule" : "Start"} ${program.title}`}
-              title={program.sourceType === "coach" ? "Schedule workout" : `Start ${objectLabel.toLowerCase()}`}
-            >
-              <CalendarPlus size={15} />
-            </button>
-          )}
-          {canDelete && onDelete && (
-            <button
-              className="icon-button danger program-card-action-delete"
-              disabled={Boolean(action)}
-              onClick={onDelete}
-              aria-label={`${deleteLabel} ${program.title}`}
-              title={deleteLabel === "Unassign" ? "Unassign program" : `Delete ${objectLabel.toLowerCase()}`}
-            >
-              {action === "delete" ? (
-                <LoaderCircle className="button-spinner" size={15} />
-              ) : (
-                <Trash2 size={15} />
-              )}
-            </button>
-          )}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function ProgramsHome({
-  programs,
-  programRuns,
-  hasMoreProgramRuns,
-  programRunsLoadingMore,
-  programRunsLoadError,
-  viewerId,
-  source,
-  hasCoach,
-  hasMore,
-  loadingMore,
-  loadError,
-  action,
-  capabilitiesForProgram,
-  onOpen,
-  onEdit,
-  onDuplicate,
-  onDelete,
-  onUnassign,
-  onSource,
-  onCreate,
-  onCreateWorkout,
-  onSchedule,
-  onOpenRun,
-  onScheduleRun,
-  onEndRun,
-  onRepeatRun,
-  onLoadMore,
-  onLoadMoreProgramRuns,
-}: {
-  programs: Program[];
-  programRuns: ProgramRunSummary[];
-  hasMoreProgramRuns: boolean;
-  programRunsLoadingMore: boolean;
-  programRunsLoadError: string;
-  viewerId: string;
-  source: ProgramSourceTab;
-  hasCoach: boolean;
-  hasMore: boolean;
-  loadingMore: boolean;
-  loadError: string;
-  action: ProgramAction;
-  capabilitiesForProgram: (program: Program) => TrainingContentCapabilities;
-  onOpen: (program: Program) => void;
-  onEdit: (program: Program) => void;
-  onDuplicate: (program: Program) => void;
-  onDelete: (program: Program) => void;
-  onUnassign: (program: Program) => void;
-  onSource: (source: ProgramSourceTab) => void;
-  onCreate: () => void;
-  onCreateWorkout: () => void;
-  onSchedule: (program: Program) => void;
-  onOpenRun: (run: ProgramRunSummary) => void;
-  onScheduleRun: (run: ProgramRunSummary) => void;
-  onEndRun: (run: ProgramRunSummary) => void;
-  onRepeatRun: (run: ProgramRunSummary) => void;
-  onLoadMore: () => void;
-  onLoadMoreProgramRuns: () => void;
-}) {
-  const [contentQuery, setContentQuery] = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [selectedTypes, setSelectedTypes] = useState<
-    Array<"program" | "quick_workout">
-  >([]);
-  const [page, setPage] = useState(0);
-  const pageSize = 20;
-  const own = programs.filter((program) => program.sourceType === "self");
-  const content = source === "own" ? own : [];
-  const normalizedQuery = contentQuery.trim().toLowerCase();
-  const coachRuns = programRuns.filter(
-    (run) => run.athleteId === viewerId && run.createdById !== viewerId,
-  );
-  const activeSelfRuns = programRuns.filter(
-    (run) =>
-      run.athleteId === viewerId &&
-      run.createdById === viewerId &&
-      (run.status === "not_started" || run.status === "in_progress"),
-  );
-  const activeRunByProgramId = new Map<string, ProgramRunSummary>();
-  for (const run of activeSelfRuns) {
-    if (!activeRunByProgramId.has(run.programId)) {
-      activeRunByProgramId.set(run.programId, run);
-    }
-  }
-  const filteredCoachRuns = coachRuns.filter((run) => {
-    const contentType = run.contentType ?? "program";
-    return (
-      run.title.toLowerCase().includes(normalizedQuery) &&
-      (!selectedTypes.length || selectedTypes.includes(contentType))
-    );
-  });
-  const filteredContent = content.filter((item) => {
-    const contentType = item.contentType ?? "program";
-    return (
-      `${item.title} ${item.description}`
-        .toLowerCase()
-        .includes(normalizedQuery) &&
-      (!selectedTypes.length || selectedTypes.includes(contentType))
-    );
-  });
-  const activeFilterCount = selectedTypes.length;
-  function toggleProgramType(value: "program" | "quick_workout") {
-    setPage(0);
-    setSelectedTypes((current) =>
-      current.includes(value)
-        ? current.filter((candidate) => candidate !== value)
-        : [...current, value],
-    );
-  }
-  function resetProgramFilters() {
-    setPage(0);
-    setSelectedTypes([]);
-    setContentQuery("");
-  }
-  const sortDraftsFirst = (items: Program[]) =>
-    [...items].sort(
-      (left, right) =>
-        Number(left.versionStatus !== "draft") -
-        Number(right.versionStatus !== "draft"),
-    );
-  const programItems = sortDraftsFirst(
-    filteredContent.filter((item) => item.contentType !== "quick_workout"),
-  );
-  const workoutItems = sortDraftsFirst(
-    filteredContent.filter((item) => item.contentType === "quick_workout"),
-  );
-  const orderedContent = [...programItems, ...workoutItems];
-  const pageCount = Math.max(1, Math.ceil(orderedContent.length / pageSize));
-  const currentPage = Math.min(page, pageCount - 1);
-  const visibleIds = new Set(
-    orderedContent
-      .slice(currentPage * pageSize, currentPage * pageSize + pageSize)
-      .map((item) => item.id),
-  );
-  const visibleProgramItems = programItems.filter((item) => visibleIds.has(item.id));
-  const visibleWorkoutItems = workoutItems.filter((item) => visibleIds.has(item.id));
-  const renderRow = (item: Program) => {
-    const activeRun = activeRunByProgramId.get(item.id);
-    return (
-      <ProgramRow
-      key={item.id}
-      program={item}
-      activeRun={activeRun}
-      viewerId={viewerId}
-      canEdit={!activeRun && capabilitiesForProgram(item).edit}
-      canDuplicate={capabilitiesForProgram(item).copyToOwn}
-      canDelete={!activeRun && (
-        capabilitiesForProgram(item).deleteOwn ||
-        (item.sourceType === "coach" && Boolean(item.assignmentId))
-      )}
-      action={action?.id === item.id ? action.kind : null}
-      onOpen={() => onOpen(item)}
-      onEdit={() => onEdit(item)}
-      onDuplicate={capabilitiesForProgram(item).copyToOwn ? () => onDuplicate(item) : undefined}
-      onDelete={
-        capabilitiesForProgram(item).deleteOwn
-          ? () => onDelete(item)
-          : item.sourceType === "coach" && item.assignmentId
-            ? () => onUnassign(item)
-            : undefined
-      }
-      deleteLabel={item.sourceType === "coach" ? "Unassign" : "Delete"}
-      onSchedule={capabilitiesForProgram(item).schedule ? () => onSchedule(item) : undefined}
-      onOpenActiveRun={activeRun ? () => onOpenRun(activeRun) : undefined}
-    />
-    );
-  };
-  return (
-    <>
-      <PageHeader
-        eyebrow="Your training"
-        title="Programs"
-        description="Build reusable training. Changes are saved for future uses without altering active or completed plans."
-      >
-        <details className="program-create-menu">
-          <summary className="button primary small"><Plus size={15} />New</summary>
-          <div>
-            <button type="button" onClick={onCreate}><Layers3 size={15} /><span><strong>Program</strong><small>Multiple ordered workouts</small></span></button>
-            <button type="button" onClick={onCreateWorkout}><Activity size={15} /><span><strong>Workout</strong><small>One reusable session</small></span></button>
-          </div>
-        </details>
-      </PageHeader>
-      <section className="program-source-browser panel">
-        <SegmentedTabs
-          className="program-source-tabs"
-          label="Program sources"
-          panelId="program-source-panel"
-          value={source}
-          onChange={(nextSource) => {
-            setPage(0);
-            onSource(nextSource);
-          }}
-          tabs={[
-            { value: "own", label: "Mine", icon: CircleUserRound },
-            ...(hasCoach ? [{ value: "coach" as const, label: "From coach", icon: Users }] : []),
-          ]}
-        />
-        <div className="library-toolbar program-filter-toolbar">
-          <div className="library-filter-actions">
-            <label className="search-field library-search">
-              <Search size={17} />
-              <input
-                aria-label="Search programs and workouts"
-                value={contentQuery}
-                onChange={(event) => {
-                  setPage(0);
-                  setContentQuery(event.target.value);
-                }}
-                placeholder="Search programs and workouts"
-              />
-            </label>
-            <button
-              className={cn(
-                "button secondary small library-filter-trigger",
-                filtersOpen && "active",
-              )}
-              aria-expanded={filtersOpen}
-              aria-controls="program-filter-panel"
-              onClick={() => setFiltersOpen((open) => !open)}
-            >
-              <Settings2 size={15} />
-              Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}
-            </button>
-          </div>
-          {activeFilterCount > 0 && (
-            <div className="library-active-filters" aria-label="Active program filters">
-              {selectedTypes.map((type) => (
-                <button
-                  className="program-filter-type"
-                  key={type}
-                  onClick={() => toggleProgramType(type)}
-                >
-                  {type === "program" ? "Programs" : "Single workouts"} <X size={12} />
-                </button>
-              ))}
-              <button className="clear" onClick={resetProgramFilters}>Clear</button>
-            </div>
-          )}
-          {filtersOpen && (
-            <div className="library-filter-panel program-filter-panel" id="program-filter-panel">
-              <div>
-                <span>Type</span>
-                <div className="library-filter-chip-row">
-                  {([
-                    ["program", "Programs"],
-                    ["quick_workout", "Single workouts"],
-                  ] as const).map(([type, label]) => (
-                    <button
-                      className={cn(
-                        "program-filter-type",
-                        selectedTypes.includes(type) && "active",
-                      )}
-                      key={type}
-                      onClick={() => toggleProgramType(type)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="program-compact-list" id="program-source-panel" role="tabpanel">
-          {source === "coach" ? (
-            coachRuns.length > 0 && !filteredCoachRuns.length ? (
-              <div className="empty-state compact">
-                <Search size={24} />
-                <h3>No matching training</h3>
-                <p>Adjust the search or filters to see assigned programs and workouts.</p>
-                <button className="button secondary small" onClick={resetProgramFilters}>
-                  Clear filters
-                </button>
-                {programRunsLoadError ? (
-                  <div className="feature-load-status error" role="alert">
-                    <span>{programRunsLoadError}</span>
-                    <button className="text-button" onClick={onLoadMoreProgramRuns}>
-                      Try again
-                    </button>
-                  </div>
-                ) : hasMoreProgramRuns ? (
-                  <button
-                    className="button secondary small library-load-more"
-                    disabled={programRunsLoadingMore}
-                    onClick={onLoadMoreProgramRuns}
-                  >
-                    {programRunsLoadingMore && (
-                      <LoaderCircle className="button-spinner" size={14} />
-                    )}
-                    {programRunsLoadingMore ? "Loading…" : "Search older training"}
-                  </button>
-                ) : null}
-              </div>
-            ) : (
-              <Suspense fallback={null}>
-                <CoachProgramRuns
-                  viewerId={viewerId}
-                  runs={filteredCoachRuns}
-                  hasMore={hasMoreProgramRuns}
-                  loadingMore={programRunsLoadingMore}
-                  loadError={programRunsLoadError}
-                  onLoadMore={onLoadMoreProgramRuns}
-                  onOpen={onOpenRun}
-                  onSchedule={onScheduleRun}
-                  onEnd={onEndRun}
-                  onRepeat={onRepeatRun}
-                />
-              </Suspense>
-            )
-          ) : filteredContent.length ? (
-            <>
-              {visibleProgramItems.length > 0 && (
-                <section className="program-content-section" aria-labelledby="program-list-heading">
-                  <div className="program-content-heading">
-                    <span><Layers3 size={15} /><strong id="program-list-heading">Programs</strong></span>
-                    <small>{programItems.length}</small>
-                  </div>
-                  <div className="program-content-cards">{visibleProgramItems.map(renderRow)}</div>
-                </section>
-              )}
-              {visibleWorkoutItems.length > 0 && (
-                <section className="program-content-section" aria-labelledby="workout-list-heading">
-                  <div className="program-content-heading">
-                    <span><Activity size={15} /><strong id="workout-list-heading">Single workouts</strong></span>
-                    <small>{workoutItems.length}</small>
-                  </div>
-                  <div className="program-content-cards">{visibleWorkoutItems.map(renderRow)}</div>
-                </section>
-              )}
-              {pageCount > 1 && (
-                <nav className="library-pagination" aria-label="Program pages">
-                  <button
-                    className="button secondary small"
-                    disabled={currentPage === 0}
-                    onClick={() => setPage((current) => Math.max(0, current - 1))}
-                  >
-                    <ArrowLeft size={14} /> Previous
-                  </button>
-                  <span>Page {currentPage + 1} of {pageCount}</span>
-                  <button
-                    className="button secondary small"
-                    disabled={currentPage >= pageCount - 1}
-                    onClick={() =>
-                      setPage((current) => Math.min(pageCount - 1, current + 1))
-                    }
-                  >
-                    Next <ArrowRight size={14} />
-                  </button>
-                </nav>
-              )}
-              {loadError && <InlineError>{loadError}</InlineError>}
-              {hasMore && (
-                <button
-                  className="button secondary small library-load-more"
-                  disabled={loadingMore}
-                  onClick={onLoadMore}
-                >
-                  {loadingMore && (
-                    <LoaderCircle className="button-spinner" size={14} />
-                  )}
-                  {loadingMore ? "Loading…" : "Load more programs"}
-                </button>
-              )}
-            </>
-          ) : content.length ? (
-            <div className="empty-state compact">
-              <Search size={24} />
-              <h3>No matching training content</h3>
-              <p>{hasMore ? "No matches in the programs loaded so far. Search older programs or adjust your filters." : "Adjust the search or filters to see more programs and workouts."}</p>
-              <button className="button secondary small" onClick={resetProgramFilters}>
-                Clear filters
-              </button>
-              {loadError && <InlineError>{loadError}</InlineError>}
-              {hasMore && (
-                <AsyncButton className="button secondary small library-load-more" loading={loadingMore} loadingLabel="Loading…" onClick={onLoadMore}>
-                  Search older programs
-                </AsyncButton>
-              )}
-            </div>
-          ) : (
-            <div className="empty-state compact">
-              <Dumbbell size={24} />
-              <h3>No training content yet</h3>
-              <p>Create a program or a one-off workout when you are ready to plan training.</p>
-            </div>
-          )}
-        </div>
-      </section>
-    </>
-  );
-}
-
-function CoachProgramEmpty({
-  athlete,
-  onCreate,
-}: {
-  athlete: AthleteSummary;
-  onCreate: () => void;
-}) {
-  return (
-    <>
-      <PageHeader
-        eyebrow="My athletes"
-        title={`${athlete.name} has no program`}
-        description="Create the training content and order. The athlete will decide when each workout appears on their calendar."
-      />
-      <section className="panel empty-state coach-program-empty">
-        <Users size={28} />
-        <h3>Create a future plan</h3>
-        <p>
-          No program is created merely by opening this athlete. Start only when
-          you are ready to assign one.
-        </p>
-        <button className="button primary" onClick={onCreate}>
-          <Layers3 size={15} />
-          Create program for {athlete.name.split(" ")[0]}
-        </button>
-      </section>
-    </>
-  );
-}
+// Extracted authoring: app/features/programs/ProgramsHome.tsx
 
 function completedEntryLabel(
   entry: CompletedSessionDetail["items"][number]["entries"][number],
   weightUnit: OwnProfile["weightUnit"] = "kg",
+  distanceUnit: OwnProfile["distanceUnit"] = "km",
 ) {
   const parts: string[] = [];
   if (entry.reps !== undefined) parts.push(`${entry.reps} reps`);
@@ -6821,7 +5541,7 @@ function completedEntryLabel(
     parts.push(`${formatWeight(entry.loadKg, weightUnit)} ${weightUnit}`);
   if (entry.durationMinutes !== undefined)
     parts.push(`${entry.durationMinutes} min`);
-  if (entry.distanceKm !== undefined) parts.push(`${entry.distanceKm} km`);
+  if (entry.distanceKm !== undefined) parts.push(`${formatDistanceKilometres(entry.distanceKm, distanceUnit)} ${distanceUnit}`);
   if (entry.rounds !== undefined) parts.push(`${entry.rounds} rounds`);
   if (entry.heartRate !== undefined) parts.push(`${entry.heartRate} bpm`);
   if (entry.rpe !== undefined) parts.push(`RPE ${entry.rpe}`);
@@ -6831,11 +5551,12 @@ function completedEntryLabel(
 function completedFieldLabel(
   field: TrackingField,
   weightUnit: OwnProfile["weightUnit"],
+  distanceUnit: OwnProfile["distanceUnit"],
 ) {
   if (field === "reps") return "Reps";
   if (field === "load") return `Load ${weightUnit}`;
   if (field === "duration") return "Duration";
-  if (field === "distance") return "Distance";
+  if (field === "distance") return `Distance ${distanceUnit}`;
   if (field === "rounds") return "Rounds";
   if (field === "heartRate") return "Avg HR";
   return "RPE";
@@ -6845,6 +5566,7 @@ function completedFieldValue(
   entry: CompletedSessionDetail["items"][number]["entries"][number],
   field: TrackingField,
   weightUnit: OwnProfile["weightUnit"],
+  distanceUnit: OwnProfile["distanceUnit"],
 ) {
   if (field === "reps") return entry.reps;
   if (field === "load")
@@ -6852,7 +5574,7 @@ function completedFieldValue(
       ? undefined
       : formatWeight(entry.loadKg, weightUnit);
   if (field === "duration") return entry.durationMinutes;
-  if (field === "distance") return entry.distanceKm;
+  if (field === "distance") return entry.distanceKm === undefined ? undefined : formatDistanceKilometres(entry.distanceKm, distanceUnit);
   if (field === "rounds") return entry.rounds;
   if (field === "heartRate") return entry.heartRate;
   return entry.rpe;
@@ -6863,6 +5585,7 @@ function CompletedWorkoutView({
   program,
   viewerId,
   weightUnit,
+  distanceUnit,
   exerciseCategoryForName,
   onBack,
 }: {
@@ -6870,6 +5593,7 @@ function CompletedWorkoutView({
   program?: Program;
   viewerId: string;
   weightUnit: OwnProfile["weightUnit"];
+  distanceUnit: OwnProfile["distanceUnit"];
   exerciseCategoryForName: (name: string) => string;
   onBack: () => void;
 }) {
@@ -6877,19 +5601,12 @@ function CompletedWorkoutView({
     "en",
     { weekday: "long", month: "long", day: "numeric" },
   );
-  const returnLabel =
-    state.returnView === "today"
-      ? "Next workouts"
-      : state.returnView === "calendar"
-      ? "Calendar"
-      : state.returnView === "program"
-        ? "Program"
-        : "Coaching";
+  const returnLabel = destinationLabel(state.returnView);
   return (
     <>
       <DetailNavigation
         backLabel={returnLabel}
-        title="Workout log"
+        title="Workout results"
         onBack={onBack}
       />
       <PageHeader
@@ -6903,10 +5620,6 @@ function CompletedWorkoutView({
           />
         )}
         <StatusBadge status="completed" />
-        <button className="button secondary desktop-detail-action" onClick={onBack}>
-          <ArrowLeft size={15} />
-          {returnLabel}
-        </button>
       </PageHeader>
       <div className="today-layout">
         <article className="workout-card completed-workout-card">
@@ -6983,7 +5696,7 @@ function CompletedWorkoutView({
                         <span>{item.entries.length > 1 ? "Set" : "Result"}</span>
                         {item.fields.map((field) => (
                           <span key={field}>
-                            {completedFieldLabel(field, weightUnit)}
+                            {completedFieldLabel(field, weightUnit, distanceUnit)}
                           </span>
                         ))}
                       </div>
@@ -6991,7 +5704,7 @@ function CompletedWorkoutView({
                         <div
                           className="completed-log-entry"
                           key={entry.position}
-                          aria-label={completedEntryLabel(entry, weightUnit)}
+                          aria-label={completedEntryLabel(entry, weightUnit, distanceUnit)}
                         >
                           <span className="completed-log-position">
                             {item.entries.length > 1 ? entry.position + 1 : "—"}
@@ -7001,6 +5714,7 @@ function CompletedWorkoutView({
                               entry,
                               field,
                               weightUnit,
+                              distanceUnit,
                             );
                             return (
                               <span
@@ -7049,72 +5763,7 @@ function CompletedWorkoutView({
   );
 }
 
-function FormatTrackingFields({
-  format,
-  value,
-  onChange,
-}: {
-  format: LoggingFormat;
-  value: TrackingField[];
-  onChange: (fields: TrackingField[]) => void;
-}) {
-  const required = requiredTrackingFieldsForLoggingFormat(format);
-  const optional = optionalTrackingFieldsForLoggingFormat(format);
-  const available = [...required, ...optional];
-  if (!available.length) {
-    return (
-      <div className="format-tracking-empty full">
-        No values to enter—show instructions only.
-      </div>
-    );
-  }
-  return (
-    <fieldset className="format-tracking-field full">
-      <legend>
-        Track during workout <em>choose only what matters</em>
-      </legend>
-      <div
-        className={cn(
-          "format-tracking-options",
-          `tracking-${available.length}`,
-        )}
-      >
-        {available.map((field) => {
-          const isRequired = required.includes(field);
-          const checked = isRequired || value.includes(field);
-          return (
-            <label
-              className={cn(
-                "format-tracking-option",
-                checked && "selected",
-                isRequired && "required",
-              )}
-              key={field}
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={isRequired}
-                onChange={(event) =>
-                  onChange(
-                    trackingFieldsForLoggingFormat(
-                      format,
-                      event.target.checked
-                        ? [...value, field]
-                        : value.filter((candidate) => candidate !== field),
-                    ),
-                  )
-                }
-              />
-              <span>{trackingFieldLabel(field)}</span>
-              {isRequired && <small>Required</small>}
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
+// Extracted authoring: app/features/authoring/FormatTrackingFields.tsx
 
 function CoachingView({
   mode,
@@ -7224,11 +5873,8 @@ function CoachingView({
               { value: "athlete", label: "My coaches" },
               {
                 value: "coach",
-                label: refreshing ? (
-                  <><LoaderCircle className="button-spinner" size={14} /> Refreshing…</>
-                ) : (
-                  "My athletes"
-                ),
+                label: "My athletes",
+                loading: refreshing,
                 badge: pendingInvites.length,
               },
             ]}
@@ -7297,7 +5943,8 @@ function CoachingView({
             ...(hasAthleteWorkspace
               ? [{
                   value: "coach" as const,
-                  label: refreshing ? <><LoaderCircle className="button-spinner" size={14} /> Refreshing…</> : "My athletes",
+                  label: "My athletes",
+                  loading: refreshing,
                   badge: pendingInvites.length,
                 }]
               : []),
@@ -7440,145 +6087,7 @@ function CoachingView({
   );
 }
 
-function ExerciseModal({
-  exercise,
-  onClose,
-  onSave,
-}: {
-  exercise: Exercise | null;
-  onClose: () => void;
-  onSave: (
-    name: string,
-    discipline: ExerciseDiscipline,
-    category: string,
-    mode: EntryMode,
-    fields: TrackingField[],
-    cue: string,
-  ) => void;
-}) {
-  const [name, setName] = useState(exercise?.name ?? "");
-  const [discipline, setDiscipline] = useState<ExerciseDiscipline>(
-    exercise ? inferredExerciseDiscipline(exercise) : "gym",
-  );
-  const [category, setCategory] = useState(exercise?.category ?? "General");
-  const initialFormat = exercise
-    ? loggingFormatFor(exercise.defaultMode, exercise.defaultFields)
-    : "repetitions";
-  const [format, setFormat] = useState<LoggingFormat>(initialFormat);
-  const [trackingFields, setTrackingFields] = useState<TrackingField[]>(() =>
-    exercise
-      ? trackingFieldsForLoggingFormat(initialFormat, exercise.defaultFields)
-      : trackingFieldsForLoggingFormat(initialFormat),
-  );
-  const [cue, setCue] = useState(exercise?.cue ?? "");
-  const hasLegacyCategory = !exerciseCategories.some(
-    (candidate) => candidate === category,
-  );
-  return (
-    <ModalShell
-      title={exercise ? "Edit exercise" : "Create an exercise"}
-      description={
-        exercise
-          ? "Update the defaults used when you add this exercise to future workouts."
-          : "Save it once, then reuse it in any program you build."
-      }
-      onClose={onClose}
-    >
-      <div className="form-grid">
-        <label className="form-field full">
-          <span>Exercise name</span>
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="e.g. Tall clean + front squat"
-          />
-        </label>
-        <label className="form-field">
-          <span>Training style</span>
-          <select
-            aria-label="Training style"
-            value={discipline}
-            onChange={(event) =>
-              setDiscipline(event.target.value as ExerciseDiscipline)
-            }
-          >
-            {exerciseTrainingStyles.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="form-field">
-          <span>Category <em>icon and search</em></span>
-          <select
-            aria-label="Category"
-            value={category}
-            onChange={(event) => setCategory(event.target.value)}
-          >
-            {hasLegacyCategory && <option value={category}>{category}</option>}
-            {exerciseCategories.map((candidate) => (
-              <option key={candidate} value={candidate}>
-                {candidate}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="form-field full">
-          <span>Format</span>
-          <select
-            value={format}
-            onChange={(event) => {
-              const nextFormat = event.target.value as LoggingFormat;
-              setFormat(nextFormat);
-              setTrackingFields(trackingFieldsForLoggingFormat(nextFormat));
-            }}
-          >
-            <option value="repetitions">Repetitions</option>
-            <option value="duration">Duration</option>
-            <option value="distance">Distance</option>
-            <option value="intervals">Intervals</option>
-            <option value="instructions">Instructions only</option>
-          </select>
-        </label>
-        <FormatTrackingFields
-          format={format}
-          value={trackingFields}
-          onChange={setTrackingFields}
-        />
-        <label className="form-field full">
-          <span>Default cue</span>
-          <textarea
-            value={cue}
-            onChange={(event) => setCue(event.target.value)}
-            placeholder="Short instruction shown in the workout"
-          />
-        </label>
-      </div>
-      <div className="modal-actions">
-        <button className="button secondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="button primary"
-          disabled={!name.trim()}
-          onClick={() =>
-            onSave(
-              name.trim(),
-              discipline,
-              category,
-              entryModeForLoggingFormat(format),
-              trackingFieldsForLoggingFormat(format, trackingFields),
-              cue.trim(),
-            )
-          }
-        >
-          {exercise ? "Save changes" : "Save exercise"}
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
+// Extracted authoring: app/features/authoring/ExerciseModal.tsx
 
 function ExerciseDetailsModal({
   exercise,
@@ -7676,146 +6185,7 @@ function ExerciseDetailsModal({
   );
 }
 
-function WorkoutModal({
-  onClose,
-  onSave,
-}: {
-  onClose: () => void;
-  onSave: (title: string) => void;
-}) {
-  const [title, setTitle] = useState("");
-  return (
-    <ModalShell
-      title="Add a workout"
-      description="Create the next session in this program. The athlete chooses its calendar date separately."
-      onClose={onClose}
-    >
-      <div className="form-grid">
-        <label className="form-field full">
-          <span>Workout name</span>
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="e.g. Upper body"
-          />
-        </label>
-        <div className="form-info full">
-          <CalendarDays size={16} />
-          <span>
-            This workout is ordered in the plan, not tied to a weekday.
-          </span>
-        </div>
-      </div>
-      <div className="modal-actions">
-        <button className="button secondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="button primary"
-          disabled={!title.trim()}
-          onClick={() => onSave(title.trim())}
-        >
-          Add workout
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
-
-function WorkoutSettingsModal({
-  workout,
-  description,
-  onClose,
-  onSave,
-}: {
-  workout: PlannedWorkout;
-  description?: string;
-  onClose: () => void;
-  onSave: (
-    title: string,
-    durationMinutes: number,
-    description: string,
-  ) => Promise<void>;
-}) {
-  const [title, setTitle] = useState(workout.title);
-  const [duration, setDuration] = useState(String(workout.durationMinutes));
-  const [nextDescription, setNextDescription] = useState(description ?? "");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const durationMinutes = Number(duration);
-  async function save() {
-    setSaving(true);
-    setError("");
-    try {
-      await onSave(title.trim(), durationMinutes, nextDescription.trim());
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "The workout could not be updated.",
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <ModalShell
-      title="Workout details"
-      description="Update the name, description and expected duration shown throughout the plan."
-      onClose={onClose}
-    >
-      <div className="form-grid">
-        <label className="form-field full">
-          <span>Workout name</span>
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </label>
-        <label className="form-field full">
-          <span>Estimated duration in minutes</span>
-          <input
-            type="number"
-            min="5"
-            max="600"
-            step="5"
-            value={duration}
-            onChange={(event) => setDuration(event.target.value)}
-          />
-        </label>
-        {description !== undefined && (
-          <label className="form-field full">
-            <span>Description <em>optional</em></span>
-            <textarea
-              value={nextDescription}
-              placeholder="What is this workout for?"
-              onChange={(event) => setNextDescription(event.target.value)}
-            />
-          </label>
-        )}
-      </div>
-      {error && <InlineError>{error}</InlineError>}
-      <div className="modal-actions">
-        <button className="button secondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="button primary"
-          disabled={
-            !title.trim() ||
-            !Number.isInteger(durationMinutes) ||
-            durationMinutes < 5 ||
-            durationMinutes > 600 ||
-            saving
-          }
-          onClick={save}
-        >
-          {saving ? "Saving…" : "Save workout"}
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
+// Extracted authoring: app/features/authoring/WorkoutDialogs.tsx
 
 function DeleteExerciseModal({
   exercise,
@@ -7919,7 +6289,7 @@ function DeleteContentModal({
     const quickWorkout = target.program.contentType === "quick_workout";
     return {
       title: `Delete ${target.program.title}?`,
-      description: `The reusable ${quickWorkout ? "workout" : "program"} will disappear from Mine. Training plans already created from it—including calendar dates and completed results—will stay unchanged.`,
+      description: `The reusable ${quickWorkout ? "workout" : "program"} will disappear from My training. Training plans already created from it—including calendar dates and completed results—will stay unchanged.`,
       label: quickWorkout ? "Delete workout" : "Delete program",
     };
   })();
@@ -9094,83 +7464,7 @@ export function AssignProgramModal({
   );
 }
 
-function ProgramModal({
-  targetName,
-  kind = "program",
-  onClose,
-  onSave,
-}: {
-  targetName: string;
-  kind?: "program" | "workout";
-  onClose: () => void;
-  onSave: (title: string) => Promise<void>;
-}) {
-  const [title, setTitle] = useState("");
-  const [saving, setSaving] = useState(false);
-  const savingRef = useRef(false);
-  const [error, setError] = useState("");
-  async function save() {
-    if (savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
-    setError("");
-    try {
-      await onSave(title.trim());
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "The program could not be created.",
-      );
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
-  }
-  return (
-    <ModalShell
-      title={
-        kind === "workout"
-          ? "Create a quick workout"
-          : `Create a program for ${targetName}`
-      }
-      description={
-        kind === "workout"
-          ? "Create one session, then schedule it for yourself or assign it to athletes."
-          : "Add workouts in training order. Choose dates when you start or assign the program."
-      }
-      onClose={onClose}
-    >
-      <div className="form-grid">
-        <label className="form-field full">
-          <span>{kind === "workout" ? "Workout name" : "Program name"}</span>
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder={
-              kind === "workout"
-                ? "e.g. Friday conditioning"
-                : "e.g. Two-day general fitness"
-            }
-          />
-        </label>
-      </div>
-      {error && <InlineError>{error}</InlineError>}
-      <div className="modal-actions">
-        <button className="button secondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="button primary"
-          disabled={!title.trim() || saving}
-          onClick={save}
-        >
-          {saving ? "Creating…" : kind === "workout" ? "Create workout" : "Create program"}
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
+// Extracted authoring: app/features/authoring/ProgramModal.tsx
 
 function ScheduleModal({
   candidates,
@@ -9458,7 +7752,7 @@ function ScheduleModal({
                         <div className="schedule-workout-choice-group">
                           <div className="schedule-workout-choice-heading">
                             <span>Most used</span>
-                            <small>Quick workouts</small>
+                            <small>{trainingContentUi("quick_workout").pluralLabel}</small>
                           </div>
                           {frequentChoices.map(workoutChoice)}
                         </div>

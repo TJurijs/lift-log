@@ -3,7 +3,6 @@ import {
   CalendarDays,
   Check,
   ChevronRight,
-  Dumbbell,
   LoaderCircle,
   Search,
   UserRound,
@@ -18,6 +17,9 @@ import {
 } from "../../../lib/program-run-schedule";
 import { programWorkoutCount, programWorkouts } from "../../../lib/program-tree";
 import { InlineError, ModalShell, PersonAvatar } from "../../ui-primitives";
+import { trainingContentUi } from "../../ui-semantics";
+
+const ProgramIcon = trainingContentUi("program").icon;
 
 type WizardStep = "training" | "athletes" | "delivery" | "review";
 
@@ -336,18 +338,17 @@ export default function ProgramRunWizard({
         : selectedNames.length > 1
           ? `${selectedNames.length} athletes`
           : "selected athletes";
-  const selectedObjectLabel =
-    selectedSummary?.contentType === "quick_workout" ? "workout" : "program";
+  const selectedObjectLabel = trainingContentUi(selectedSummary?.contentType).label.toLowerCase();
   const finalAction =
     mode === "self"
-      ? `${delivery === "scheduled" ? "Start and schedule" : "Start"} ${selectedObjectLabel}`
+      ? `Use ${selectedObjectLabel}`
       : `${delivery === "scheduled" ? "Assign and schedule" : "Assign"} ${selectedObjectLabel}`;
 
   return (
     <ModalShell
       title={
         mode === "self"
-          ? `Start a ${selectedObjectLabel}`
+          ? `Use ${selectedObjectLabel}`
           : selectedNames.length
             ? `Assign to ${targetLabel}`
             : "Assign training"
@@ -371,7 +372,7 @@ export default function ProgramRunWizard({
         {step === "training" && (
           <section className="program-run-step" aria-labelledby="run-training-heading">
             <div className="program-run-step-heading">
-              <Dumbbell size={20} />
+              <ProgramIcon size={20} />
               <div>
                 <h3 id="run-training-heading">Choose training</h3>
                 <p>Select a program or a standalone workout.</p>
@@ -387,31 +388,34 @@ export default function ProgramRunWizard({
               />
             </label>
             <div className="program-run-choice-list">
-              {visiblePrograms.map((candidate) => (
+              {visiblePrograms.map((candidate) => {
+                const ObjectIcon = trainingContentUi(candidate.contentType).icon;
+                return (
                 <button
                   type="button"
                   key={candidate.id}
                   className={candidate.id === programId ? "selected" : ""}
+                  aria-pressed={candidate.id === programId}
                   onClick={() => chooseProgram(candidate)}
                 >
-                  <span className="program-run-choice-icon"><Dumbbell size={17} /></span>
+                  <span className="program-run-choice-icon"><ObjectIcon size={17} /></span>
                   <span>
                     <strong>{candidate.title}</strong>
                     <small>{programWorkoutCount(candidate)} {programWorkoutCount(candidate) === 1 ? "workout" : "workouts"}</small>
                   </span>
                   {candidate.id === programId ? <Check size={18} /> : <ChevronRight size={18} />}
                 </button>
-              ))}
+              );})}
               {!visiblePrograms.length && (
                 <div className="program-run-empty-state">
-                  <Dumbbell size={22} />
+                  <ProgramIcon size={22} />
                   <strong>
                     {programs.length ? "No matching training" : "No reusable training yet"}
                   </strong>
                   <p>
                     {programs.length
                       ? "Try a different search."
-                      : "Create a program or quick workout before assigning it."}
+                      : "Create a program or workout before using or assigning it."}
                   </p>
                 </div>
               )}
@@ -511,7 +515,7 @@ export default function ProgramRunWizard({
                 onClick={() => setDelivery("scheduled")}
               >
                 <span>
-                  <strong>{mode === "self" ? "Start and schedule" : "Assign and schedule"}</strong>
+                  <strong>{mode === "self" ? "Schedule now" : "Assign and schedule"}</strong>
                   <small>Generate dates for every workout</small>
                 </span>
                 {delivery === "scheduled" && <Check size={18} />}

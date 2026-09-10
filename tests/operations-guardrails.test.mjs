@@ -110,10 +110,11 @@ test("CI gates static quality and isolated local database/runtime performance", 
   assert.match(source, /npm run seed:test-population:local/u);
   assert.match(source, /npm run perf:measure:local/u);
   assert.match(source, /npm run perf:runtime:check/u);
-  assert.match(
-    packageSource,
-    /"ci:local-supabase": "npm run db:reset && npm run db:lint && npm run test:integration && npm run test:v1:database-smoke && npm run test:authoring:database-smoke && npm run perf:database:local:report"/u,
-  );
+  const databaseChecks = JSON.parse(packageSource).scripts["ci:local-supabase"].split(" && ");
+  assert.deepEqual(databaseChecks.slice(0, 3), ["npm run db:reset", "npm run db:lint", "npm run test:integration"]);
+  for (const required of ["test:v1:database-smoke", "test:authoring:database-smoke", "test:review:database-smoke", "test:telemetry:database-smoke", "test:migrations:portable", "db:recovery:rehearse", "perf:database:local:report"]) {
+    assert.ok(databaseChecks.includes(`npm run ${required}`), `CI must run ${required}`);
+  }
   assert.match(
     packageSource,
     /"preview:ci": "vite preview --host 127\.0\.0\.1 --port 3000"/u,

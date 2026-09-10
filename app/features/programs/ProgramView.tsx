@@ -1,15 +1,8 @@
 import {
-  Activity,
-  ArrowLeft,
-  CalendarPlus,
   ChevronRight,
-  Copy,
-  Dumbbell,
-  Layers3,
   LoaderCircle,
   Pencil,
   Plus,
-  Save,
   Search,
   Trash2,
   UserPlus,
@@ -35,8 +28,12 @@ import { programRunLifecycleLabel } from "../../../lib/program-progress";
 import { presentProgramProvenance } from "../../../lib/provenance";
 import { ExerciseCategoryMark } from "../../exercise-category-icons";
 import { ExerciseVideoLink } from "../../exercise-video-link";
+import type { ProgramMetadata, ProgramMetadataState } from "./useProgramMetadataDraft";
+import { actionUi, destinationLabel, trainingContentUi } from "../../ui-semantics";
+const WorkoutIcon = trainingContentUi("quick_workout").icon;
 import {
   DetailNavigation,
+  InlineError,
   ModalShell,
   PageHeader,
   SourceTag,
@@ -47,6 +44,8 @@ type ProgramActionKind = "delete" | "save" | "duplicate" | "edit" | "open";
 
 export interface ProgramViewProps {
   program: Program;
+  metadata: ProgramMetadataState;
+  onMetadataChange: (field: keyof ProgramMetadata, value: string) => void;
   programRun?: ProgramRunSummary;
   action: ProgramActionKind | null;
   mutationPending: boolean;
@@ -81,6 +80,8 @@ export interface ProgramViewProps {
 
 export default function ProgramView({
   program,
+  metadata,
+  onMetadataChange,
   programRun,
   action,
   mutationPending,
@@ -119,18 +120,19 @@ export default function ProgramView({
   const [reorderingExercises, setReorderingExercises] = useState(false);
   const isEditable = program.versionStatus === "draft";
   const isQuickWorkout = program.contentType === "quick_workout";
+  const { label: objectLabel, icon: ObjectIcon } = trainingContentUi(program.contentType);
+  const UseIcon = program.sourceType === "self" ? actionUi.use.icon : actionUi.schedule.icon;
   const backLabel = explicitBackLabel ?? (
     program.programRunId
       ? program.athleteId === viewerId
-        ? "Next"
-        : "Coaching"
-      : "Programs"
+        ? destinationLabel("today")
+        : destinationLabel("coaching")
+      : destinationLabel("program")
   );
   const headerTitle = isQuickWorkout
     ? (selectedWorkout?.title ?? program.title)
     : program.title;
-  const [title, setTitle] = useState(headerTitle);
-  const [description, setDescription] = useState(program.description);
+  const { title, description } = metadata;
   const editable = isEditable && capabilities.edit;
   const reorderEnabled = editable && !mutationPending;
   const exerciseReorderEnabled = reorderEnabled && reorderingExercises;
@@ -286,15 +288,10 @@ export default function ProgramView({
   ) : (
     <div className="empty-inline">This workout is not ready for exercises.</div>
   );
-  const mobileSaveAction = editable ? (
-    <button
-      type="button"
-      className="detail-navigation-primary"
-      disabled={Boolean(action) || !title.trim()}
-      onClick={() => onSave(title, description)}
-    >
-      {action === "save" ? "Saving…" : "Save"}
-    </button>
+  const detailAction = editable ? (
+    <span className="program-save-status" role="status">
+      {metadata.status === "saving" ? "Saving…" : metadata.status === "unsaved" ? "Unsaved" : metadata.status === "error" ? "Couldn't save" : "Saved"}
+    </span>
   ) : canDuplicate ? (
     <button
       type="button"
@@ -309,9 +306,9 @@ export default function ProgramView({
     <>
       <DetailNavigation
         backLabel={backLabel}
-        title={isQuickWorkout ? "Workout" : "Program"}
+        title={objectLabel}
         onBack={onBack}
-        action={mobileSaveAction}
+        action={detailAction}
       />
       <PageHeader
         eyebrow={
@@ -328,21 +325,24 @@ export default function ProgramView({
         title={
           <>
             <span className="program-editor-heading-icon" aria-hidden="true">
-              {isQuickWorkout ? <Activity size={24} /> : <Layers3 size={24} />}
+              <ObjectIcon size={24} />
             </span>
             {editable ? (
-              <textarea
-                className="program-editor-title-input"
-                aria-label={`${isQuickWorkout ? "Workout" : "Program"} name`}
-                value={title}
-                rows={1}
-                onChange={(event) =>
-                  setTitle(event.target.value.replace(/[\r\n]+/g, " "))
-                }
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.preventDefault();
-                }}
-              />
+              <label className="program-editor-title-field">
+                <span><Pencil size={12} />Edit {objectLabel.toLowerCase()} name</span>
+                <textarea
+                  className="program-editor-title-input"
+                  aria-label={`${objectLabel} name`}
+                  value={title}
+                  rows={1}
+                  onChange={(event) =>
+                    onMetadataChange("title", event.target.value.replace(/[\r\n]+/g, " "))
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.preventDefault();
+                  }}
+                />
+              </label>
             ) : (
               <h1>{headerTitle}</h1>
             )}
@@ -351,26 +351,19 @@ export default function ProgramView({
         description={!editable ? program.description : undefined}
       >
         <div className="program-editor-header-actions">
-          <button
-            className="button secondary small program-editor-back desktop-detail-action"
-            onClick={onBack}
-          >
-            <ArrowLeft size={15} />
-            {backLabel}
-          </button>
           <SourceTag
             presentation={presentProgramProvenance(program, viewerId)}
           />
           <StatusBadge
             status={runStatus?.status ?? (isEditable ? "editable" : "locked")}
-            label={runStatus?.label ?? (isEditable ? "Editable template" : "Saved revision")}
+            label={runStatus?.label ?? (isEditable ? "Template" : "Saved version")}
           />
           {(onSchedule || onAssignProgram) && (
             <div className="program-editor-secondary-actions">
               {onSchedule && (
                 <button className="button secondary small" onClick={onSchedule}>
-                  <CalendarPlus size={15} />
-                  {program.sourceType === "self" ? "Start" : "Schedule"}
+                  <UseIcon size={15} />
+                  {program.sourceType === "self" ? `Use ${objectLabel.toLowerCase()}` : "Schedule"}
                 </button>
               )}
               {onAssignProgram && (
@@ -385,52 +378,13 @@ export default function ProgramView({
               )}
             </div>
           )}
-          {editable ? (
-            <button
-              className="button primary small program-editor-primary-action desktop-detail-action"
-              disabled={Boolean(action) || !title.trim()}
-              onClick={() => onSave(title, description)}
-            >
-              {action === "save" ? (
-                <>
-                  <LoaderCircle className="button-spinner" size={15} />
-                  Saving…
-                </>
-              ) : (
-                <>
-                  <Save size={15} />
-                  {isQuickWorkout ? "Save workout" : "Save program"}
-                </>
-              )}
-            </button>
-          ) : (
-            canDuplicate && (
-              <button
-                className="button primary small program-editor-primary-action desktop-detail-action"
-                disabled={Boolean(action)}
-                onClick={onDuplicate}
-              >
-                {action === "duplicate" ? (
-                  <>
-                    <LoaderCircle className="button-spinner" size={15} />
-                    Duplicating…
-                  </>
-                ) : (
-                  <>
-                    <Copy size={15} />
-                    Duplicate
-                  </>
-                )}
-              </button>
-            )
-          )}
         </div>
       </PageHeader>
       {programRun && (
         <section className="program-run-context" aria-label="Training plan progress">
           <div className="program-run-context-copy">
             <span className="program-run-context-icon" aria-hidden="true">
-              {isQuickWorkout ? <Activity size={18} /> : <Layers3 size={18} />}
+              <ObjectIcon size={18} />
             </span>
             <div>
               <strong>{runContextLabel}</strong>
@@ -472,9 +426,15 @@ export default function ProgramView({
           <textarea
             value={description}
             placeholder={`What is this ${isQuickWorkout ? "workout" : "program"} for?`}
-            onChange={(event) => setDescription(event.target.value)}
+            onChange={(event) => onMetadataChange("description", event.target.value)}
           />
         </label>
+      )}
+      {editable && (
+        <div className="program-metadata-status">
+          <p>Changes save automatically.</p>
+          {metadata.error && <InlineError>{metadata.error} <button type="button" className="text-button" onClick={() => onSave(title, description)}>Try again</button></InlineError>}
+        </div>
       )}
       <div
         className={`builder-layout${isQuickWorkout ? " quick-workout-builder" : ""}`}
@@ -577,12 +537,12 @@ export default function ProgramView({
                       <h2>{selectedWorkout.title}</h2>
                       {editable && !isQuickWorkout && (
                         <button
-                          className="title-edit-button"
+                          className="button secondary small"
                           onClick={onEditWorkout}
-                          aria-label="Rename workout"
-                          title="Rename workout"
+                          aria-label={`Edit details for ${selectedWorkout.title}`}
                         >
                           <Pencil size={14} />
+                          Edit details
                         </button>
                       )}
                     </div>
@@ -682,9 +642,9 @@ export default function ProgramView({
               </>
             ) : (
               <div className="empty-state">
-                <Dumbbell size={28} />
+                <WorkoutIcon size={28} />
                 <h3>Select a workout</h3>
-                <p>Choose a session from the left to start editing.</p>
+                <p>Choose a session to view its exercises.</p>
               </div>
           )}
         </section>

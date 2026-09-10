@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import LiftLogApp from "../../app/LiftLogApp";
@@ -113,6 +114,114 @@ afterEach(() => {
 });
 
 describe("active workout reload recovery", () => {
+  it("displays miles in result and interval logs while saving canonical kilometres", async () => {
+    const fixture = activeWorkoutFixture();
+    const schedule = fixture.workspace.scheduledWorkouts[0];
+    const resultItem = { ...fixture.item, id: "distance-result", title: "Run distance", mode: "result" as const, fields: ["distance"] as const };
+    const intervalItem = { ...fixture.item, id: "distance-interval", title: "Run intervals", mode: "intervals" as const, fields: ["rounds", "distance"] as const, prescription: { rounds: 1, workSeconds: 60, restSeconds: 30 } };
+    const workout = { ...schedule.workout, sections: [{ ...schedule.workout.sections[0], items: [{ ...resultItem, fields: [...resultItem.fields] }, { ...intervalItem, fields: [...intervalItem.fields] }] }] };
+    const activeSession: ActiveSession = { ...fixture.activeSession, setLogs: {}, resultLogs: { [resultItem.id]: { distance: "1.609344" }, [intervalItem.id]: { "round.0.distance": "3.218688" } }, itemLogIds: { [resultItem.id]: "result-log", [intervalItem.id]: "interval-log" } };
+    const workspace = { ...fixture.workspace, profile: { ...fixture.workspace.profile, distanceUnit: "mi" as const }, activeSession, scheduledWorkouts: [{ ...schedule, workout }] };
+    const { repository, saveSessionDraft } = repositoryFor(activeSession);
+    renderWorkout(workspace, repository);
+    await waitForWorkoutEditing();
+    const user = userEvent.setup();
+    const result = screen.getByRole("textbox", { name: "Distance mi" });
+    const round = screen.getByRole("textbox", { name: "Run intervals, round 1, distance in miles" });
+    expect(result).toHaveValue("1");
+    expect(round).toHaveValue("2");
+    await user.clear(result);
+    await user.type(result, "2.5");
+    await user.clear(round);
+    await user.type(round, "3.25");
+    expect(screen.getByText("3.25 mi total")).toBeVisible();
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); });
+    await waitFor(() => expect(saveSessionDraft).toHaveBeenCalled());
+    expect(saveSessionDraft.mock.calls.at(-1)?.[2]).toMatchObject({ [resultItem.id]: { distance: "4.02336" }, [intervalItem.id]: { "round.0.distance": "5.230368" } });
+  });
+
+  it("preserves active entries through preview, resume, and offline reload", async () => {
+    const { activeSession, workspace, item } = activeWorkoutFixture();
+    const other = { ...workspace.scheduledWorkouts[0], id: "preview-other", workoutId: "preview-workout", workoutTitle: "Other preview workout", status: "planned" as const, workout: { ...workspace.scheduledWorkouts[0].workout, id: "preview-workout", title: "Other preview workout" } };
+    const { repository, saveSessionDraft } = repositoryFor(activeSession);
+    const first = renderWorkout({ ...workspace, scheduledWorkouts: [...workspace.scheduledWorkouts, other] }, repository);
+    await waitForWorkoutEditing();
+    fireEvent.change(screen.getByRole("textbox", { name: "Session notes optional" }), { target: { value: "Keep my active workout note" } });
+    fireEvent.change(screen.getByLabelText(`${item.title}, set 1, load in kg`), { target: { value: "100" } });
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); });
+    await waitFor(() => expect(saveSessionDraft).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getAllByRole("button", { name: "Next workouts" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: /Other preview workout/ }));
+    await screen.findByRole("heading", { name: "Workout preview" });
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); });
+    fireEvent.click(screen.getAllByRole("button", { name: "Next workouts" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume workout" }));
+    expect(screen.getByRole("textbox", { name: "Session notes optional" })).toHaveValue("Keep my active workout note");
+    expect(screen.getByLabelText(`${item.title}, set 1, load in kg`)).toHaveValue("100");
+    first.unmount();
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    const cached = await loadCachedActiveWorkoutWorkspace(demoViewer);
+    renderWorkout(cached!, repository);
+    await waitForWorkoutEditing();
+    expect(screen.getByRole("textbox", { name: "Session notes optional" })).toHaveValue("Keep my active workout note");
+    expect(screen.getByLabelText(`${item.title}, set 1, load in kg`)).toHaveValue("100");
+    expect(saveSessionDraft.mock.calls.at(-1)?.[4]).toBe("Keep my active workout note");
+  });
+
+  it("autosaves a decimal load typed character by character without losing its separator", async () => {
+    const { activeSession, workspace, item } = activeWorkoutFixture();
+    const { repository, saveSessionDraft } = repositoryFor(activeSession);
+    renderWorkout(workspace, repository);
+    await waitForWorkoutEditing();
+    const user = userEvent.setup();
+    const input = screen.getByLabelText(`${item.title}, set 1, load in kg`);
+    await user.clear(input);
+    await user.type(input, "72.5");
+    expect(input).toHaveValue("72.5");
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); });
+    await waitFor(() => expect(saveSessionDraft).toHaveBeenCalled());
+    expect(saveSessionDraft.mock.calls.at(-1)?.[1][item.id][0].load).toBe("72.5");
+  });
+
+  it("completes with the exact note and RPE merged during its flush", async () => {
+    const { activeSession, workspace, item } = activeWorkoutFixture();
+    const { repository, saveSessionDraft } = repositoryFor(activeSession);
+    saveSessionDraft.mockRejectedValueOnce(new SessionRevisionConflictError());
+    vi.mocked(repository.reloadActiveSession).mockResolvedValue({ ...activeSession, draftRevision: activeSession.draftRevision + 1, sessionNote: "Note saved from phone", sessionRpe: "8" });
+    const completeSession = vi.fn(async (_id: string, rpe: string, note: string) => {
+      // Match the database completion contract, which rejects stale metadata.
+      if (rpe !== "8" || note !== "Note saved from phone") throw new Error("Completion values must match the confirmed workout draft");
+    });
+    Object.assign(repository, { completeSession });
+    renderWorkout(workspace, repository);
+    await waitForWorkoutEditing();
+    fireEvent.change(screen.getByLabelText(`${item.title}, set 1, load in kg`), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Finish and save session" }));
+    await waitFor(() => expect(completeSession).toHaveBeenCalledOnce());
+    expect(saveSessionDraft.mock.calls.at(-1)?.[4]).toBe("Note saved from phone");
+    expect(completeSession).toHaveBeenCalledWith(activeSession.id, "8", "Note saved from phone", 9, expect.any(String));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Finish and save session" })).not.toBeInTheDocument());
+  });
+
+  it("freezes logging and competing actions while finishing and unlocks after a failed response", async () => {
+    const { activeSession, workspace } = activeWorkoutFixture();
+    const { repository } = repositoryFor(activeSession);
+    let rejectCompletion!: (error: Error) => void;
+    const completeSession = vi.fn().mockReturnValue(new Promise<void>((_resolve, reject) => { rejectCompletion = reject; }));
+    Object.assign(repository, { completeSession });
+    renderWorkout(workspace, repository);
+    await waitForWorkoutEditing();
+    fireEvent.click(screen.getByRole("button", { name: "Finish and save session" }));
+    await waitFor(() => expect(completeSession).toHaveBeenCalled());
+    expect(screen.getByRole("textbox", { name: "Session notes optional" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/^More actions for /));
+    expect(screen.getByRole("button", { name: "Set back to scheduled" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Skip workout" })).toBeDisabled();
+    await act(async () => { rejectCompletion(new Error("The server could not complete the workout")); });
+    await waitForWorkoutEditing();
+    expect(screen.getByRole("button", { name: "Finish and save session" })).toBeEnabled();
+  });
+
   it("opens an editable cached workspace offline and restores its unconfirmed entries", async () => {
     Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
     const { activeSession, workspace } = activeWorkoutFixture();
@@ -444,8 +553,9 @@ describe("active workout reload recovery", () => {
     } as unknown as LiftLogRepository;
     renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
+    fireEvent.click(screen.getByLabelText(/^More actions for /));
     fireEvent.click(
-      screen.getByRole("button", { name: "Set back to planned" }),
+      screen.getByRole("button", { name: "Set back to scheduled" }),
     );
 
     await waitFor(() =>

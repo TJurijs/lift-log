@@ -106,3 +106,12 @@ Performance budgets, exact environment checks, alert thresholds, staged capacity
 ## Production gate
 
 Production receives a fresh `npm run build:prod` output. Do not copy the nonprod build or its mutable local `dist/` directory. Before switching `app.liftlog.cc`, configure the production Auth URL and Google client independently, issue production TLS certificates, run the same smoke checks, and retain the maintenance release for rollback.
+
+Use the [portable database promotion procedure](DATABASE_MIGRATIONS_AND_CONTRACT.md)
+before deploying schema-dependent frontend changes. It preserves applied history
+and deliberately skips hash-pinned historical personal-data operations when they
+are pending on another environment. The same guide covers effective schema/RPC
+inventories, local restore rehearsal and read-only diagnostic alerts. Enable
+`VITE_ENABLE_REMOTE_TELEMETRY=true` only after the collector migration and its
+retention job have been verified on the selected target. No hosted backup or
+production readiness claim follows from the local rehearsal alone.

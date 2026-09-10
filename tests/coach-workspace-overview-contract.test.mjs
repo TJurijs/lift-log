@@ -91,11 +91,13 @@ test("coach master and detail screens do not stack on mobile", async () => {
     readFile(coachWorkspaceUrl, "utf8"),
   ]);
 
-  assert.match(coachWorkspace, /className="coach-mobile-back"/);
+  assert.match(coachWorkspace, /<DetailNavigation[\s\S]*className="coach-athlete-navigation"[\s\S]*backLabel="My athletes"/);
   assert.match(coachWorkspace, /className="[^"]*coach-athlete-directory[^"]*"/);
   assert.match(coachWorkspace, /className="coach-athlete-detail"/);
   assert.match(
     styles,
-    /@media \(max-width: 700px\)[\s\S]*\.coach-athlete-detail\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-directory\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-detail\s*\{[^}]*display:\s*block/,
+    /@media \(max-width: 700px\)[\s\S]*\.coach-athlete-detail(?:\s*,[^{}]*)?\s*\{[^}]*display:\s*none/,
   );
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-directory\s*\{[^}]*display:\s*none/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-detail\s*\{[^}]*display:\s*block/);
 });

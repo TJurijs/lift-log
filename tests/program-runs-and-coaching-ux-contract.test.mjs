@@ -1,9 +1,9 @@
+import { readAppSource as readAuthoringSource } from "./helpers/app-source.mjs";
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const migrationsUrl = new URL("../supabase/migrations/", import.meta.url);
-const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
 const domainUrl = new URL("../lib/domain.ts", import.meta.url);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
@@ -176,7 +176,7 @@ test("creating a run atomically materializes every workout and optionally schedu
 test("first use snapshots a revision without permanently locking the reusable program", async () => {
   const [sql, app] = await Promise.all([
     readMigrationHistory(),
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
   ]);
   const snapshot = sqlFunction(sql, "snapshot_program_for_run", "private");
   const canEdit = sqlFunction(sql, "can_edit_program");
@@ -251,7 +251,7 @@ test("run progress comes from the complete materialized run, never the bounded N
     readMigrationHistory(),
     readFile(domainUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
   ]);
   const summaries = sqlFunction(sql, "list_program_run_summaries");
   const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
@@ -277,7 +277,7 @@ test("run progress comes from the complete materialized run, never the bounded N
 });
 
 test("self run progress is attached to its template while Next stays schedule-focused", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const app = await readAuthoringSource();
   const nextWorkouts = await readFile(new URL("../app/features/next-workouts/NextWorkoutsView.tsx", import.meta.url), "utf8");
   const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
 
@@ -300,7 +300,7 @@ test("coach-assigned history pages independently from self-created runs", async 
   const [domain, repository, app] = await Promise.all([
     readFile(domainUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
   ]);
 
   assert.match(domain, /coachProgramRunCursor\?: ProgramRunCursor/);
@@ -316,7 +316,7 @@ test("coach-assigned history pages independently from self-created runs", async 
 });
 
 test("opening either self or coach run targets the next incomplete run workout", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const app = await readAuthoringSource();
   const selfOpen = sourceBetween(
     app,
     "async function openOwnProgramRun",
@@ -341,13 +341,13 @@ test("opening either self or coach run targets the next incomplete run workout",
 
 test("run detail keeps its launch surface and opens completed results", async () => {
   const [app, programView] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(programViewUrl, "utf8"),
   ]);
 
   assert.match(app, /openOwnProgramRun\(run, "program"\)/);
   assert.match(app, /const returnView = programReturnView/);
-  assert.match(app, /backLabel=\{[\s\S]*programReturnView === "coaching"[\s\S]*programReturnView === "today"/);
+  assert.match(app, /backLabel=\{destinationLabel\(programReturnView\)\}/);
   assert.match(
     app,
     /function openProgramRunActivity[\s\S]*entry\.kind !== "completed"[\s\S]*openCalendarResults\([\s\S]*"program"/,
@@ -359,7 +359,7 @@ test("run detail keeps its launch surface and opens completed results", async ()
 });
 
 test("athletes and assigning coaches can copy an exact superseded run revision", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const app = await readAuthoringSource();
 
   assert.match(
     app,
@@ -373,7 +373,7 @@ test("athletes and assigning coaches can copy an exact superseded run revision",
 
 test("run progress is invalidated and refreshed after every occurrence transition", async () => {
   const [app, repository] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(repositoryUrl, "utf8"),
   ]);
 
@@ -400,7 +400,7 @@ test("run progress is invalidated and refreshed after every occurrence transitio
 
 test("self and coach entry points use one assignment-and-scheduling flow", async () => {
   const [app, wizard] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(runWizardUrl, "utf8"),
   ]);
 
@@ -408,7 +408,7 @@ test("self and coach entry points use one assignment-and-scheduling flow", async
   assert.match(wizard, /mode === "self"\s*\? \[viewerId\]/);
   assert.match(wizard, /Assign and schedule/);
   assert.match(wizard, /Set full schedule later/);
-  assert.match(wizard, /`Start a \$\{selectedObjectLabel\}`/);
+  assert.match(wizard, /`Use \$\{selectedObjectLabel\}`/);
   assert.match(wizard, /Training days/);
   assert.match(wizard, /step === "review"/);
   assert.match(
@@ -443,7 +443,7 @@ test("self and coach entry points use one assignment-and-scheduling flow", async
 
 test("mobile coaching drills into one athlete and uses full-screen run workflows", async () => {
   const [app, coachWorkspace, styles, wizardStyles, scheduleStyles] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(coachWorkspaceUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
     readFile(runWizardStylesUrl, "utf8"),
@@ -452,7 +452,7 @@ test("mobile coaching drills into one athlete and uses full-screen run workflows
 
   assert.match(
     coachWorkspace,
-    /className="coach-mobile-back"[\s\S]*aria-label="Back to athletes"/,
+    /<DetailNavigation[\s\S]*className="coach-athlete-navigation"[\s\S]*backLabel="My athletes"/,
     "the selected athlete must be a navigable detail screen, not a second stacked panel",
   );
   assert.match(coachWorkspace, /value: "plan"[\s\S]*label: "Plan"/);
@@ -487,7 +487,7 @@ test("mobile coaching drills into one athlete and uses full-screen run workflows
   );
   assert.match(
     styles,
-    /@media \(max-width: 700px\)[\s\S]*\.coach-athlete-detail\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-detail\s*\{[^}]*display:\s*block/,
+    /@media \(max-width: 700px\)[\s\S]*\.coach-athlete-detail(?:\s*,[^{}]*)?\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-detail\s*\{[^}]*display:\s*block/,
   );
   assert.match(
     wizardStyles,

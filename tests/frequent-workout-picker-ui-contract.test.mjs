@@ -15,11 +15,7 @@ function sourceBetween(source, start, end) {
 
 test("the schedule picker puts fail-soft frequent choices before searchable deduplicated results", async () => {
   const app = await readFile(appUrl, "utf8");
-  const loader = sourceBetween(
-    app,
-    "async function loadScheduleCandidates(",
-    "function openSchedule(",
-  );
+  const loader = await readFile(new URL("../app/features/scheduling/useScheduleCandidates.ts", import.meta.url), "utf8");
   const picker = sourceBetween(app, "function ScheduleModal(", "function AccountModal(");
 
   assert.match(

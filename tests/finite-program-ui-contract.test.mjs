@@ -1,15 +1,15 @@
+import { readAppSource as readAuthoringSource } from "./helpers/app-source.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const programViewPath = new URL(
   "../app/features/programs/ProgramView.tsx",
   import.meta.url,
 );
 async function readAppSource() {
   const [app, programView] = await Promise.all([
-    readFile(appPath, "utf8"),
+    readAuthoringSource(),
     readFile(programViewPath, "utf8"),
   ]);
   return `${app}\n${programView}`;
@@ -33,7 +33,7 @@ test("program creation presents an ordered workout sequence instead of a week pl
   );
   assert.match(
     programModal,
-    /Add workouts in training order\. Choose dates when you start or assign the program\./,
+    /Add workouts in training order\. Choose dates when you use or assign the program\./,
   );
   assert.doesNotMatch(programModal, /Week 1|week as many times|Duplicate week/);
 });

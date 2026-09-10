@@ -26,6 +26,12 @@ const mobilePreview = devMobilePreviewEnabled && getDevMobilePreviewState(
   window.location.search,
 );
 document.documentElement.classList.toggle("dev-mobile-preview-frame", Boolean(mobilePreview && mobilePreview.isFrame));
+// Keep the environment check inline so Vite excludes preview styles from production.
+if (import.meta.env.DEV || import.meta.env.MODE === "nonprod" || import.meta.env.MODE === "localdev") {
+  if (mobilePreview && (mobilePreview.isPreview || mobilePreview.isFrame)) {
+    void import("./app/dev-mobile-preview.css");
+  }
+}
 
 const app = (
   <StrictMode>

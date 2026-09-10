@@ -1,13 +1,8 @@
-import {
-  Activity,
-  CalendarPlus,
-  ChevronRight,
-  Layers3,
-  LoaderCircle,
-  Trash2,
-} from "lucide-react";
+import { ObjectActionMenu } from "../../object-action-menu";
+import { ChevronRight, LoaderCircle } from "lucide-react";
 import type { ProgramRunSummary } from "../../../lib/domain";
 import { formatDateOnly } from "../../../lib/date-only";
+import { actionUi, trainingContentUi } from "../../ui-semantics";
 
 function assignmentDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
@@ -42,6 +37,7 @@ export function ProgramRunCompactCard({
   onEnd: () => void;
 }) {
   const quickWorkout = run.contentType === "quick_workout";
+  const { label: objectLabel, icon: ObjectIcon } = trainingContentUi(run.contentType);
   const unscheduled = Math.max(0, run.totalWorkouts - run.scheduledWorkouts);
   const progress = run.status === "in_progress"
     ? quickWorkout
@@ -58,22 +54,23 @@ export function ProgramRunCompactCard({
       <button
         type="button"
         className="program-card-main"
+        aria-label={`Open ${run.title}`}
         disabled={openingDisabled}
         onClick={onOpen}
       >
         <span className="program-card-heading">
           <span className="program-icon">
-            {quickWorkout ? <Activity size={18} /> : <Layers3 size={18} />}
+            <ObjectIcon size={18} />
           </span>
           <span>
             <strong>{run.title}</strong>
-            <small>{sourceLabel ? `${sourceLabel} · ` : ""}{run.createdById === run.athleteId ? "Started" : "Assigned"} {assignmentDate(run.createdAt)}</small>
+            <small>{sourceLabel ? `${sourceLabel} · ` : ""}{run.createdById === run.athleteId ? "Created" : "Assigned"} {assignmentDate(run.createdAt)}</small>
           </span>
-          {opening && (
+          {opening ? (
             <span className="program-card-loading" aria-label="Opening training">
               <LoaderCircle className="button-spinner" size={16} />
             </span>
-          )}
+          ) : <ChevronRight size={16} aria-hidden="true" />}
         </span>
       </button>
       <div className="program-card-footer">
@@ -81,40 +78,12 @@ export function ProgramRunCompactCard({
           <span className="program-card-meta">
             <span>{quickWorkout ? "1 workout" : `${run.totalWorkouts} workouts`}</span>
           </span>
-          <button
-            type="button"
-            className="program-card-active-run"
-            disabled={openingDisabled}
-            onClick={onOpen}
-            aria-label={`Open active ${run.title} training`}
-          >
-            {quickWorkout ? <Activity size={13} /> : <CalendarPlus size={13} />}
-            {progress}
-            <ChevronRight size={13} />
-          </button>
+          <span className="program-card-ready">{progress}</span>
         </div>
-        <div className="program-card-actions">
-          {unscheduled > 0 && onSchedule && (
-            <button
-              type="button"
-              className="icon-button program-card-action-schedule"
-              onClick={onSchedule}
-              aria-label={`Schedule ${run.title}`}
-              title={quickWorkout ? "Schedule workout" : "Schedule program"}
-            >
-              <CalendarPlus size={15} />
-            </button>
-          )}
-          <button
-            type="button"
-            className="icon-button danger program-card-action-delete"
-            onClick={onEnd}
-            aria-label={`End ${run.title}`}
-            title={quickWorkout ? "End workout" : "End program"}
-          >
-            <Trash2 size={15} />
-          </button>
-        </div>
+        <ObjectActionMenu title={run.title}
+          primary={unscheduled > 0 && onSchedule ? { ...actionUi.schedule, accessibleLabel: `Schedule ${run.title}`, onClick: onSchedule, disabled: openingDisabled } : undefined}
+          actions={[{ ...actionUi.end, label: `End ${objectLabel.toLowerCase()}`, accessibleLabel: `End ${run.title}`, onClick: onEnd, destructive: true, disabled: openingDisabled }]}
+        />
       </div>
     </article>
   );

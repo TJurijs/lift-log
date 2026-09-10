@@ -4,12 +4,15 @@ import test from "node:test";
 
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
+const rpeUrl = new URL("../app/features/active-workout/RpeInputs.tsx", import.meta.url);
 
 test("planned and actual RPE remain distinct and guided", async () => {
-  const [app, styles] = await Promise.all([
+  const [shell, styles, rpe] = await Promise.all([
     readFile(appUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
+    readFile(rpeUrl, "utf8"),
   ]);
+  const app = `${shell}\n${rpe}`;
 
   assert.match(app, /function TargetRpeBadge/);
   assert.match(app, /<small>Target<\/small>/);

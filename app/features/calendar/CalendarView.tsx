@@ -3,10 +3,8 @@ import {
   ArrowLeft,
   ArrowRight,
   CalendarMinus,
-  CalendarPlus,
   Check,
   ChevronRight,
-  Dumbbell,
   TrendingUp,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -18,6 +16,10 @@ import type {
 import { formatDateOnly, localDateOnly } from "../../../lib/date-only";
 import { cn } from "../../../lib/presentation";
 import { PageHeader } from "../../ui-primitives";
+import { actionUi, trainingContentUi } from "../../ui-semantics";
+
+const ScheduleIcon = actionUi.schedule.icon;
+const ProgramIcon = trainingContentUi("program").icon;
 
 export interface CalendarViewProps {
   sessions: CompletedSession[];
@@ -143,20 +145,20 @@ export default function CalendarView({
       >
         {canSchedule ? (
           <button className="button primary" onClick={onSchedule}>
-            <CalendarPlus size={15} />
+            <ScheduleIcon size={15} />
             Schedule workout
           </button>
         ) : (
           <button className="button primary" onClick={() => onNavigate("program")}>
-            <Dumbbell size={15} />
+            <ProgramIcon size={15} />
             Choose a program
           </button>
         )}
       </PageHeader>
       <div className="calendar-stats">
         <div className="panel">
-          <span><CalendarPlus size={18} /></span>
-          <div><small>Planned this month</small><strong>{monthSchedules.length}</strong></div>
+          <span><ScheduleIcon size={18} /></span>
+          <div><small>Scheduled this month</small><strong>{monthSchedules.length}</strong></div>
           <em>Upcoming and overdue</em>
         </div>
         <div className="panel">
@@ -250,7 +252,7 @@ export default function CalendarView({
                             setDraggingScheduleId(schedule.id);
                           }}
                           onDragEnd={() => setDraggingScheduleId(null)}
-                        >{schedule.status === "in_progress" ? <Activity size={12} /> : <CalendarPlus size={12} />}<span>{schedule.workoutTitle}</span></button>
+                        >{schedule.status === "in_progress" ? <Activity size={12} /> : <ScheduleIcon size={12} />}<span>{schedule.workoutTitle}</span></button>
                         {schedule.status === "planned" && <button
                           className="calendar-event-remove"
                           aria-label={`Remove ${schedule.workoutTitle} from the calendar`}
@@ -270,7 +272,7 @@ export default function CalendarView({
               <div><small>Selected day</small><h3 id="calendar-selected-date-title" aria-live="polite">{selectedDateLabel}</h3></div>
               {canSchedule && (
                 <button type="button" className="button secondary small" onClick={() => onScheduleDay(selectedDate)}>
-                  <CalendarPlus size={15} />Schedule workout
+                  <ScheduleIcon size={15} />Schedule workout
                 </button>
               )}
             </div>
@@ -279,8 +281,8 @@ export default function CalendarView({
                 {selectedSchedules.map((schedule) => (
                   <div className="calendar-day-agenda-row" key={schedule.id}>
                     <button type="button" className={cn("calendar-day-agenda-main planned", schedule.status === "in_progress" && "in-progress")} onClick={() => onOpenPlan(schedule)}>
-                      {schedule.status === "in_progress" ? <Activity size={16} /> : <CalendarPlus size={16} />}
-                      <span><strong>{schedule.workoutTitle}</strong><small>{schedule.programTitle} · {schedule.status === "in_progress" ? "In progress" : "Planned"}</small></span>
+                      {schedule.status === "in_progress" ? <Activity size={16} /> : <ScheduleIcon size={16} />}
+                      <span><strong>{schedule.workoutTitle}</strong><small>{schedule.programTitle} · {schedule.status === "in_progress" ? "In progress" : "Scheduled"}</small></span>
                       <ChevronRight size={16} />
                     </button>
                     {schedule.status === "planned" && <button type="button" className="icon-button" aria-label={`Remove ${schedule.workoutTitle} from the calendar`} title="Remove from calendar" onClick={() => onRemoveSchedule(schedule.id)}>

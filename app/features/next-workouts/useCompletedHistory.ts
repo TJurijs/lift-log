@@ -104,7 +104,7 @@ export function useCompletedHistory(
   }, [repository, scope]);
 
   return {
-    sessions: state.scope === scope ? state.sessions : initialSessions,
+    sessions: !repository ? initialSessions : state.scope === scope ? state.sessions : initialSessions,
     cursor: state.scope === scope ? state.cursor : undefined,
     loading: state.scope === scope && state.loading,
     error: state.scope === scope ? state.error : "",

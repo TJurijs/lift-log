@@ -1,8 +1,8 @@
+import { readAppSource as readAuthoringSource } from "./helpers/app-source.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const programViewPath = new URL(
   "../app/features/programs/ProgramView.tsx",
   import.meta.url,
@@ -13,7 +13,7 @@ const categoryIconsPath = new URL(
 );
 async function readAppSource() {
   const [app, programView, categoryIcons, exercises, exerciseModel, exerciseSearch] = await Promise.all([
-    readFile(appPath, "utf8"),
+    readAuthoringSource(),
     readFile(programViewPath, "utf8"),
     readFile(categoryIconsPath, "utf8"),
     readFile(new URL("../app/features/exercises/ExercisesHome.tsx", import.meta.url), "utf8"),
@@ -74,7 +74,7 @@ test("exercise browsing uses three primary disciplines with compact rows and tag
   assert.doesNotMatch(app, /const filtered = useMemo\(\(\) =>/);
   assert.match(app, /Copy \$\{exercise\.name\} to My exercises/);
   assert.match(app, /function ExerciseDetailsModal/);
-  assert.match(app, /Edit \$\{exercise\.name\}[\s\S]*?onClick=\{\(\) => onEdit\(exercise\)\}/);
+  assert.match(app, /accessibleLabel: `Edit \$\{exercise\.name\}`, onClick: \(\) => onEdit\(exercise\)/);
   assert.match(app, /Training style[\s\S]*Category/);
   assert.match(app, /<span>Format<\/span>/);
   assert.match(app, /Track during workout/);
@@ -97,7 +97,7 @@ test("exercise editing keeps training style and category as separate controlled 
   );
   assert.match(
     app,
-    /onSave\([\s\S]*name\.trim\(\),[\s\S]*discipline,[\s\S]*category,[\s\S]*entryModeForLoggingFormat\(format\),[\s\S]*trackingFieldsForLoggingFormat\(format, trackingFields\),[\s\S]*cue\.trim\(\),/,
+    /onSave\([\s\S]*name\.trim\(\),[\s\S]*discipline,[\s\S]*category,[\s\S]*entryModeForLoggingFormat\(format\),[\s\S]*trackingFieldsForLoggingFormat\(format, trackingFields\),[\s\S]*cue\.trim\(\)/,
   );
   assert.match(app, /discipline: ExerciseDiscipline/);
   assert.doesNotMatch(app, /placeholder="e\.g\. Weightlifting"/);

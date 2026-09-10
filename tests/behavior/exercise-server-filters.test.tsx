@@ -153,5 +153,84 @@ describe("server-backed exercise filters", () => {
         cursor,
       }),
     );
+
+    searchExercises.mockResolvedValue({ items: [], nextCursor: undefined });
+    await user.type(screen.getByRole("textbox", { name: "Search exercises" }), "press");
+    await screen.findByRole("heading", { name: "No exercises match" });
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByRole("textbox", { name: "Search exercises" })).toHaveValue("press");
+    await waitFor(() =>
+      expect(searchExercises).toHaveBeenLastCalledWith(expect.objectContaining({
+        query: "press", disciplines: [], categories: [], modes: [], tracking: [],
+      })),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Clear search and filters" }));
+    expect(screen.getByRole("textbox", { name: "Search exercises" })).toHaveValue("");
+    await waitFor(() =>
+      expect(searchExercises).toHaveBeenLastCalledWith(expect.objectContaining({
+        query: "", disciplines: [], categories: [], modes: [], tracking: [],
+      })),
+    );
+  });
+});
+
+describe("exercise collection actions", () => {
+  const props = {
+    query: "",
+    filters: { disciplines: [], categories: [], formats: [], tracking: [] },
+    global: [],
+    personal: [],
+    copyingExerciseId: null,
+    loading: false,
+    hasMore: false,
+    onQuery: vi.fn(),
+    onFilters: vi.fn(),
+    onLoadMore: vi.fn(),
+  };
+
+  it("opens the identity by keyboard and keeps secondary actions in a dismissible menu", async () => {
+    const user = userEvent.setup();
+    const exercise: Exercise = { ...backSquat, scope: "personal" };
+    const onOpen = vi.fn(), onEdit = vi.fn(), onDelete = vi.fn();
+    render(<ExercisesView {...props} scope="personal" personal={[exercise]} onOpen={onOpen} onCopy={vi.fn()} onEdit={onEdit} onDelete={onDelete} />);
+
+    const identity = screen.getByRole("button", { name: "Open Back squat" });
+    identity.focus();
+    await user.keyboard("{Enter}");
+    expect(onOpen).toHaveBeenCalledWith(exercise);
+
+    const more = screen.getByLabelText("More actions for Back squat");
+    await user.click(more);
+    await user.keyboard("{Escape}");
+    expect(more).toHaveFocus();
+    expect(more.closest("details")).not.toHaveAttribute("open");
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+
+    await user.click(more);
+    await user.click(screen.getByRole("button", { name: "Edit Back squat" }));
+    expect(onEdit).toHaveBeenCalledWith(exercise);
+    expect(more.closest("details")).not.toHaveAttribute("open");
+    expect(more).toHaveFocus();
+
+    await user.click(more);
+    await user.click(screen.getByRole("button", { name: "Delete Back squat" }));
+    expect(onDelete).toHaveBeenCalledWith(exercise);
+    expect(more.closest("details")).not.toHaveAttribute("open");
+  });
+
+  it("keeps copying a library exercise visible and prevents another click while copying", async () => {
+    const user = userEvent.setup();
+    const onCopy = vi.fn();
+    const callbacks = { onCopy, onOpen: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn() };
+    const view = render(<ExercisesView {...props} {...callbacks} scope="global" global={[backSquat]} />);
+    const copy = screen.getByRole("button", { name: "Copy Back squat to My exercises" });
+    await user.click(copy);
+    expect(onCopy).toHaveBeenCalledWith(backSquat);
+    view.rerender(<ExercisesView {...props} {...callbacks} scope="global" global={[backSquat]} copyingExerciseId={backSquat.id} />);
+    expect(copy).toBeDisabled();
+    await user.click(copy);
+    expect(onCopy).toHaveBeenCalledOnce();
   });
 });

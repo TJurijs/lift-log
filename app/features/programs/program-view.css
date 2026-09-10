@@ -39,11 +39,11 @@
 }
 
 .exercise-picker-modal .picker-results strong {
-  font-size: 10px;
+  font-size: var(--font-control);
 }
 
 .exercise-picker-modal .picker-results small {
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 
 .exercise-reorder-row {
@@ -100,7 +100,7 @@
 }
 
 .workout-activity-heading span {
-  font-size: 10px;
+  font-size: var(--font-caption);
   color: var(--muted);
 }
 
@@ -134,7 +134,7 @@
 .workout-activity-rpe {
   padding: 4px 7px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .workout-activity-rpe.low {
@@ -196,15 +196,6 @@
 
   .exercise-picker-modal .picker-result-main {
     padding: 8px 10px;
-    grid-template-columns: 34px minmax(0,1fr) 20px;
-  }
-
-  .exercise-picker-modal .picker-results strong {
-    font-size: 12px;
-  }
-
-  .exercise-picker-modal .picker-results small {
-    font-size: 10px;
   }
 
   .exercise-picker-modal .picker-help {
@@ -220,4 +211,21 @@
   }
 
 }
+
+.program-metadata-status { margin: -6px 0 18px; font-size: var(--font-caption); color: var(--muted); }
+.program-metadata-status p { margin: 4px 0; }
+.program-save-status { color: var(--muted); font-size: var(--font-caption); }
+.program-editor-title-field { display: grid; min-width: 0; }
+.program-editor-title-field > span { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: var(--font-caption); }
+.program-editor-title-field .program-editor-title-input { max-width: 100%; }
+.editor-title-row { flex-wrap: wrap; }
+.authoring-fields { margin: 0; padding: 0; border: 0; min-width: 0; }
+.program-card-more { position: relative; min-width: 0; max-width: 100%; }
+.program-card-actions { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: flex-end; gap: 8px; }
+.program-card-actions > .program-card-action-schedule { min-height: 44px; }
+.program-card-more > summary { min-height: 44px; list-style: none; }
+.program-card-more > summary::-webkit-details-marker { display: none; }
+.program-card-more-actions { display: grid; gap: 4px; padding-top: 8px; }
+.program-card-more-actions > button { min-width: 0; width: 100%; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-soft); color: var(--text); cursor: pointer; }
+.program-card-more-actions > .danger-text { color: var(--orange); }
 

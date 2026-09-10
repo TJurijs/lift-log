@@ -37,7 +37,7 @@ npm run dev
 
 Nonprod can contain nine isolated fictional accounts based on Latvian presidents. They cover self-coached athletes, ordinary coach relationships, one athlete with two coaches, a coach who is also an athlete, first-login onboarding, and a coach with no athletes.
 
-The login screen and signed-in sidebar expose a **Test population** switcher only when all three safeguards match: the `nonprod` build mode, the exact `liftlog-dev` Supabase project, and `VITE_ENABLE_TEST_PERSONAS=true`. The shared password is entered once and kept only in page memory; it belongs in ignored `.env.test-personas`, never in a `VITE_` variable.
+Browser test helpers sign into these seeded accounts using the shared password from ignored `.env.test-personas`. Local browser tests require the loopback Supabase instance. Fixture credentials belong only in this ignored file, never in a `VITE_` variable or the product UI.
 
 After applying migrations, reset and rebuild the fixture with:
 
@@ -60,13 +60,12 @@ npm run dev:demo
 Use this mode to test real account switching, invitations, coach access, and scheduling without touching the hosted development database:
 
 ```bash
-npm run db:start
-npm run db:reset
-npm run seed:test-population:local
 npm run dev:local
 ```
 
-The frontend runs at `http://localhost:3000` and talks only to Supabase on `127.0.0.1`. The shared password still comes from ignored `.env.test-personas`. Local data is disposable; `npm run db:reset` rebuilds it from migrations.
+This validates the local environment, starts Docker Desktop when needed on Windows, waits for its Linux engine, starts Supabase, and then serves the frontend. Existing local data is retained. Use `npm run db:start` for the same dependency startup without the frontend. See [local startup and Docker recovery](docs/LOCAL_DEVELOPMENT.md).
+
+The frontend runs at `http://localhost:3000` and talks only to Supabase on `127.0.0.1`. The shared password still comes from ignored `.env.test-personas`. For a fresh fixture database, deliberately run `npm run db:reset` and then `npm run seed:test-population:local` after dependency startup. Reset rebuilds local data from migrations; it is not part of normal startup or Docker repair.
 
 ## Delivery workflow
 

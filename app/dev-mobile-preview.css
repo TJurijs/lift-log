@@ -1,0 +1,98 @@
+/* Development-only visible device frame. The app itself renders in an iframe
+   so its existing viewport media queries behave exactly as they do on mobile. */
+.dev-mobile-preview {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 24px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 20px;
+  background: #070a0d;
+}
+.dev-mobile-preview-toolbar {
+  width: min(100%, 680px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.dev-mobile-preview-toolbar .eyebrow {
+  margin: 0 0 4px;
+}
+.dev-mobile-preview-toolbar strong {
+  font-size: 18px;
+}
+.dev-mobile-preview-toolbar label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: var(--font-caption);
+}
+.dev-mobile-preview-toolbar select {
+  color-scheme: dark;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line-light);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--panel-raised);
+}
+.dev-mobile-preview-stage {
+  min-height: 0;
+  display: grid;
+  place-items: start center;
+  overflow: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  padding: 10px 20px 40px;
+}
+.dev-mobile-preview-stage::-webkit-scrollbar {
+  display: none;
+}
+iframe.dev-mobile-preview-frame {
+  box-sizing: content-box;
+  width: var(--mobile-preview-width);
+  height: var(--mobile-preview-height);
+  flex: 0 0 auto;
+  border: 10px solid #202a30;
+  border-radius: 36px;
+  background: var(--bg);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+/* Keep scrolling natural in the framed application, without desktop scrollbar chrome. */
+html.dev-mobile-preview-frame,
+html.dev-mobile-preview-frame body {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+html.dev-mobile-preview-frame::-webkit-scrollbar,
+html.dev-mobile-preview-frame body::-webkit-scrollbar {
+  display: none;
+}
+html.dev-mobile-preview-frame .modal {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+html.dev-mobile-preview-frame .modal::-webkit-scrollbar {
+  display: none;
+}
+@media (max-width: 520px) {
+  .dev-mobile-preview {
+    padding: 14px;
+  }
+  .dev-mobile-preview-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .dev-mobile-preview-toolbar label,
+  .dev-mobile-preview-toolbar select {
+    width: 100%;
+  }
+  .dev-mobile-preview-stage {
+    padding-left: 0;
+    padding-right: 0;
+    justify-content: start;
+  }
+}
+

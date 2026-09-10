@@ -4,12 +4,15 @@ import test from "node:test";
 
 const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const unitsUrl = new URL("../lib/units.ts", import.meta.url);
+const rpeUrl = new URL("../app/features/active-workout/RpeInputs.tsx", import.meta.url);
 
 test("weight targets respect the account unit and retain planned-effort guidance", async () => {
-  const [app, units] = await Promise.all([
+  const [shell, units, rpe] = await Promise.all([
     readFile(appUrl, "utf8"),
     readFile(unitsUrl, "utf8"),
+    readFile(rpeUrl, "utf8"),
   ]);
+  const app = `${shell}\n${rpe}`;
 
   assert.match(units, /export const KG_PER_LB = 0\.45359237/);
   assert.match(units, /export function formatWeight\(/);
@@ -18,7 +21,7 @@ test("weight targets respect the account unit and retain planned-effort guidance
   assert.match(app, /label=\{`Weight \(\$\{weightUnit\}\)`\}/);
   assert.match(app, /sets the intended difficulty by how many good reps should remain\./);
   assert.match(app, /Load \{weightUnit\}/);
-  assert.match(app, /completedEntryLabel\(entry, weightUnit\)/);
+  assert.match(app, /completedEntryLabel\(entry, weightUnit, distanceUnit\)/);
   assert.match(app, /targetRpe: nextFields\.includes\("rpe"\)[\s\S]*wholeRpe\(entry\.rpe\) \|\| undefined/);
   assert.doesNotMatch(app, /% of max/i);
 });

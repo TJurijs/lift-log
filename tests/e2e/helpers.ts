@@ -1,8 +1,18 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { loadEnv } from "vite";
 import { signInSeededPersona } from "../../scripts/lib/test-persona-browser-auth.mjs";
 
 let personaPassword: string | undefined;
+const localBrowserHosts = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+export async function installLocalRequestGuard(context: BrowserContext) {
+  await context.route((url) =>
+    ["http:", "https:"].includes(url.protocol) && !localBrowserHosts.has(url.hostname), async (route) => {
+    const url = new URL(route.request().url());
+    await route.abort("blockedbyclient");
+    throw new Error(`Local browser test blocked an external request to ${url.origin}.`);
+  });
+}
 
 function getPersonaPassword() {
   if (!personaPassword) {
@@ -27,18 +37,10 @@ export async function signInAsTestPersona(page: Page, personaName: string) {
   const local = (process.env.PLAYWRIGHT_DATA_ENVIRONMENT ?? "local") === "local";
   const environment = loadEnv(local ? "localdev" : "nonprod", process.cwd(), "");
   if (local) {
-    const allowedHosts = new Set(["127.0.0.1", "localhost", "[::1]"]);
-    if (!allowedHosts.has(new URL(environment.VITE_SUPABASE_URL).hostname)) {
+    if (!localBrowserHosts.has(new URL(environment.VITE_SUPABASE_URL).hostname)) {
       throw new Error("Local browser tests require a loopback Supabase URL.");
     }
-    await page.context().route("**/*", async (route) => {
-      const url = new URL(route.request().url());
-      if (["http:", "https:"].includes(url.protocol) && !allowedHosts.has(url.hostname)) {
-        await route.abort("blockedbyclient");
-        throw new Error(`Local browser test blocked an external request to ${url.origin}.`);
-      }
-      await route.continue();
-    });
+    await installLocalRequestGuard(page.context());
   }
   await signInSeededPersona(page, {
     personaName,

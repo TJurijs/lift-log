@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Exercise, ExerciseCursor } from "../../../lib/domain";
-import type { LiftLogRepository } from "../../../lib/repository";
+import type { ExerciseSearchRepository } from "../../../lib/repository-contracts";
 import { entryModesForFormats, trackingFiltersForExerciseSearch, type ExerciseLibraryFilters } from "./exercise-library";
 
-type ExerciseSearchRepository = Pick<LiftLogRepository, "searchExercises">;
 type Scope = "global" | "personal";
 
 /** Keeps a cursor attached to the exact search that produced it. */

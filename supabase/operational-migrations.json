@@ -1,0 +1,121 @@
+[
+  {
+    "file": "202608300010_apply_upcoming_jerk_preference.sql",
+    "sha256": "2241ea4c9331e96698ab94883e64887095a835406fa5afb7b3124082e1b7f045",
+    "reason": "Personal upcoming jerk preference, selected by workout title and current date.",
+    "prerequisites": [
+      "public.programs",
+      "public.program_versions",
+      "public.workout_items",
+      "public.exercises"
+    ]
+  },
+  {
+    "file": "202608300011_refresh_next_week_video_program.sql",
+    "sha256": "027cbaf57accbe4def79abccbe4ec945e2add4ff2d45b2d96c98ed4313d5c0cc",
+    "reason": "Personal upcoming video program rewrite, selected by workout titles and current date.",
+    "prerequisites": [
+      "public.programs",
+      "public.program_versions",
+      "public.workout_items",
+      "public.exercises"
+    ]
+  },
+  {
+    "file": "202608300013_replace_space_and_impact_movements.sql",
+    "sha256": "f963562ab2a194f57a69cc2d30fb1db71b8531b9904d5cecea25056848dc26c5",
+    "reason": "Personal space/equipment substitutions, selected by workout titles and current date.",
+    "prerequisites": [
+      "public.programs",
+      "public.program_versions",
+      "public.workout_items",
+      "public.exercises"
+    ]
+  },
+  {
+    "file": "202609030002_remove_pre_v1_test_runs.sql",
+    "sha256": "81e8b9b3f1a3c585361183e66d666e13a4a20840170dce58d150785ee217575d",
+    "reason": "One-time deletion of exactly twelve hosted-development test runs.",
+    "prerequisites": [
+      "public.program_runs",
+      "public.program_run_workouts",
+      "public.workout_sessions"
+    ]
+  },
+  {
+    "file": "202609030003_remove_pre_v1_test_programs.sql",
+    "sha256": "3206d8218467680511142e533b7e5b5cb1d6b621cd7e72e7295d02f38582ed70",
+    "reason": "One-time deletion of exactly twenty-three hosted-development test programs.",
+    "prerequisites": [
+      "public.program_runs",
+      "public.program_run_workouts",
+      "public.workout_sessions"
+    ]
+  },
+  {
+    "file": "202609030005_create_elina_general_fitness_workout.sql",
+    "sha256": "ffa95e174acaf74ed1aabba2a2435d4319d717829c9311274c54f538edee8371",
+    "reason": "Creation of a specific real account’s personal Elina workout.",
+    "prerequisites": [
+      "public.programs",
+      "public.program_versions",
+      "public.workout_items",
+      "public.exercises"
+    ]
+  },
+  {
+    "file": "202609030006_use_back_squat_in_elina_workout.sql",
+    "sha256": "ddc9a3013fc713799d3be034ac308ac368d33696f24e105a5df266b675336cd2",
+    "reason": "Personal Elina workout squat substitution.",
+    "prerequisites": [
+      "public.programs",
+      "public.program_versions",
+      "public.workout_items",
+      "public.exercises"
+    ]
+  },
+  {
+    "file": "202609030007_make_elina_workout_more_classical.sql",
+    "sha256": "c14937834d17f0dd99dbb7cd8f0568bb578c404093dd7c41f51cd6bf2dbd91a4",
+    "reason": "Personal Elina workout movement substitutions.",
+    "prerequisites": [
+      "public.programs",
+      "public.program_versions",
+      "public.workout_items",
+      "public.exercises"
+    ]
+  },
+  {
+    "file": "202609030008_use_conventional_deadlift_in_elina_workout.sql",
+    "sha256": "7da944c60be0577b6fbb6056214d2474b80e931bbab1b13e6571e9517a0f86d2",
+    "reason": "Personal Elina workout deadlift substitution.",
+    "prerequisites": [
+      "public.programs",
+      "public.program_versions",
+      "public.workout_items",
+      "public.exercises"
+    ]
+  },
+  {
+    "file": "202609030009_simplify_elina_mobility_movements.sql",
+    "sha256": "3f1ef8caa4016b804eb059fdd644cd54077b8f152d05ac83d4841462706e05df",
+    "reason": "Personal Elina workout mobility substitutions.",
+    "prerequisites": [
+      "public.programs",
+      "public.program_versions",
+      "public.workout_items",
+      "public.exercises"
+    ]
+  },
+  {
+    "file": "202609030010_use_dead_bug_in_elina_workout.sql",
+    "sha256": "a61e121995d9eca6064c72d80b04382cdbf876793026e68011c996e18547642f",
+    "reason": "Personal Elina workout dead-bug substitution.",
+    "prerequisites": [
+      "public.programs",
+      "public.program_versions",
+      "public.workout_items",
+      "public.exercises"
+    ]
+  }
+]

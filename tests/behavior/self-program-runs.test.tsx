@@ -56,8 +56,9 @@ describe("SelfProgramRuns", () => {
     expect(screen.getByText("In progress · 11/40 completed")).toBeVisible();
     expect(screen.getByText("40 workouts")).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Open active Ten-week plan training" }));
+    await user.click(screen.getByRole("button", { name: "Open Ten-week plan" }));
     await user.click(screen.getByRole("button", { name: "Schedule Ten-week plan" }));
+    await user.click(screen.getByText("More"));
     await user.click(screen.getByRole("button", { name: "End Ten-week plan" }));
 
     expect(callbacks.onOpen).toHaveBeenCalledWith(activeRun);
@@ -94,8 +95,9 @@ describe("CoachProgramRuns", () => {
     expect(screen.queryByText("Ten-week plan")).not.toBeInTheDocument();
     expect(screen.getByText(/Coach assigned/)).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Open active Coach-assigned strength training" }));
+    await user.click(screen.getByRole("button", { name: "Open Coach-assigned strength" }));
     await user.click(screen.getByRole("button", { name: "Schedule Coach-assigned strength" }));
+    await user.click(screen.getByText("More"));
     await user.click(screen.getByRole("button", { name: "End Coach-assigned strength" }));
 
 
@@ -126,9 +128,9 @@ describe("CoachProgramRuns", () => {
     const user = userEvent.setup();
     const { callbacks } = renderRuns([endedRun]);
 
-    await user.click(screen.getByText("Recent training"));
+    await user.click(screen.getByText("History"));
     expect(screen.getByText("Ended", { exact: false })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "View Ten-week plan" }));
+    await user.click(screen.getByRole("button", { name: "Open Ten-week plan" }));
     await user.click(screen.getByRole("button", { name: "Repeat Ten-week plan" }));
 
     expect(callbacks.onOpen).toHaveBeenCalledWith(endedRun);
@@ -157,8 +159,8 @@ describe("CoachProgramRuns", () => {
       />,
     );
 
-    await user.click(screen.getByText("Recent training"));
-    expect(screen.getAllByRole("button", { name: /^View Finished plan/ })).toHaveLength(12);
+    await user.click(screen.getByText("History"));
+    expect(screen.getAllByRole("button", { name: /^Open Finished plan/ })).toHaveLength(12);
     await user.click(screen.getByRole("button", { name: "Load more training" }));
     expect(onLoadMore).toHaveBeenCalledOnce();
   });

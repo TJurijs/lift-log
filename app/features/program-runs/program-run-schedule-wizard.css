@@ -90,7 +90,7 @@
 .program-run-generator-heading small,
 .program-run-date-heading small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .program-run-generator-fields {
@@ -118,7 +118,7 @@
   border-radius: 999px;
   color: var(--muted);
   background: var(--panel-soft);
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 
 .program-run-date-list article {
@@ -141,7 +141,7 @@
   place-items: center;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.035);
-  font-size: 9px;
+  font-size: var(--font-caption);
   font-weight: 800;
 }
 
@@ -153,14 +153,14 @@
 
 .program-run-date-list article strong {
   overflow: hidden;
-  font-size: 11px;
+  font-size: var(--font-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .program-run-date-list article small {
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 
 .program-run-date-list input {

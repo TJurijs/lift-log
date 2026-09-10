@@ -14,7 +14,7 @@
   align-items: center;
   gap: 12px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .program-run-progress > div {
@@ -71,7 +71,7 @@
 .program-run-review-heading p {
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .program-run-search {
@@ -130,7 +130,7 @@
 .program-run-choice-list small,
 .program-run-delivery-options small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .program-run-choice-list svg:last-child,
@@ -164,13 +164,13 @@
 
 .program-run-empty-state strong {
   color: var(--text-soft);
-  font-size: 11px;
+  font-size: var(--font-caption);
 }
 
 .program-run-empty-state p {
   margin: 0;
   max-width: 290px;
-  font-size: 9px;
+  font-size: var(--font-caption);
   line-height: 1.5;
 }
 
@@ -212,7 +212,7 @@
 .program-run-weekdays legend {
   margin-bottom: 8px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--font-caption);
   font-weight: 750;
 }
 
@@ -230,7 +230,7 @@
   border-radius: 9px;
   color: var(--muted);
   background: var(--panel-soft);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .program-run-weekdays button.selected {
@@ -258,7 +258,7 @@
   border-radius: 999px;
   color: var(--accent);
   background: rgba(197, 243, 107, 0.075);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .program-run-review-list article {
@@ -281,7 +281,7 @@
   place-items: center;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.035);
-  font-size: 9px;
+  font-size: var(--font-caption);
   font-weight: 800;
 }
 
@@ -293,7 +293,7 @@
 
 .program-run-review-list strong {
   overflow: hidden;
-  font-size: 11px;
+  font-size: var(--font-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -301,7 +301,7 @@
 .program-run-review-list small,
 .program-run-review-list em {
   color: var(--muted);
-  font-size: 8.5px;
+  font-size: var(--font-caption);
   font-style: normal;
 }
 
@@ -315,7 +315,7 @@
   place-items: center;
   color: var(--text-soft);
   background: rgba(255, 255, 255, 0.025);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .program-run-review-list label input {

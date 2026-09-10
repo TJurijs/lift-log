@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CircleUserRound, Copy, LoaderCircle, Pencil, Plus, Search, Settings2, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, ChevronRight, CircleUserRound, LoaderCircle, Plus, Search, Settings2, X } from "lucide-react";
 import { useState } from "react";
 import type { Exercise, ExerciseDiscipline, LoggingFormat, TrackingField } from "../../../lib/domain";
 import { loggingFormatLabel } from "../../../lib/domain";
@@ -6,6 +6,8 @@ import { cn } from "../../../lib/presentation";
 import { PageHeader, SegmentedTabs } from "../../ui-primitives";
 import { ExerciseCategoryIcon, ExerciseCategoryMark } from "../../exercise-category-icons";
 import { ExerciseVideoLink } from "../../exercise-video-link";
+import { ObjectActionMenu } from "../../object-action-menu";
+import { actionUi } from "../../ui-semantics";
 import { emptyExerciseLibraryFilters, exerciseFilterCategories, exerciseFormatOptions, exerciseTrackingOptions, exerciseTrainingStyles, exerciseTrainingStyleLabel, inferredExerciseDiscipline, modeLabel, toggleExerciseFilterValue, trackingFieldLabel, type ExerciseLibraryFilters } from "./exercise-library";
 
 export default function ExercisesHome({
@@ -233,7 +235,7 @@ export function ExercisesView({
             {filters.tracking.map((field) => (
               <button className="filter-tag-tracking" key={field} onClick={() => toggleTracking(field)}>Tracking: {trackingFieldLabel(field)} <X size={12} /></button>
             ))}
-            <button className="clear" onClick={resetFilters}>Clear</button>
+            <button className="clear" onClick={resetFilters}>Clear filters</button>
           </div>
         )}
         {filtersOpen && (
@@ -316,6 +318,7 @@ export function ExercisesView({
               <span className="exercise-list-identity">
                 <ExerciseCategoryMark category={exercise.category} />
                 <strong>{exercise.name}</strong>
+                <ChevronRight size={16} aria-hidden="true" />
               </span>
               <span className="exercise-list-parameters">
                 {!(style === "weightlifting" && exercise.category === "Weightlifting") && (
@@ -334,40 +337,28 @@ export function ExercisesView({
                 url={exercise.videoUrl}
                 exerciseName={exercise.name}
                 size={15}
+                label="Video"
               />
               {exercise.scope === "global" ? (
-                <button
-                  className="icon-button"
-                  disabled={copyingExerciseId === exercise.id}
-                  aria-label={`Copy ${exercise.name} to My exercises`}
-                  title="Copy to My exercises"
-                  onClick={() => onCopy(exercise)}
-                >
-                  {copyingExerciseId === exercise.id ? (
-                    <LoaderCircle className="button-spinner" size={15} />
-                  ) : (
-                    <Copy size={15} />
-                  )}
-                </button>
+                <ObjectActionMenu
+                  title={exercise.name}
+                  primary={{
+                    label: copyingExerciseId === exercise.id ? "Copying…" : "Copy",
+                    accessibleLabel: `Copy ${exercise.name} to My exercises`,
+                    icon: actionUi.duplicate.icon,
+                    loading: copyingExerciseId === exercise.id,
+                    onClick: () => onCopy(exercise),
+                  }}
+                  actions={[]}
+                />
               ) : (
-                <>
-                  <button
-                    className="icon-button"
-                    aria-label={`Edit ${exercise.name}`}
-                    title="Edit exercise"
-                    onClick={() => onEdit(exercise)}
-                  >
-                    <Pencil size={15} />
-                  </button>
-                  <button
-                    className="icon-button danger"
-                    aria-label={`Delete ${exercise.name}`}
-                    title="Delete exercise"
-                    onClick={() => onDelete(exercise)}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </>
+                <ObjectActionMenu
+                  title={exercise.name}
+                  actions={[
+                    { ...actionUi.edit, accessibleLabel: `Edit ${exercise.name}`, onClick: () => onEdit(exercise) },
+                    { ...actionUi.delete, accessibleLabel: `Delete ${exercise.name}`, destructive: true, onClick: () => onDelete(exercise) },
+                  ]}
+                />
               )}
             </div>
           </article>

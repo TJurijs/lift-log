@@ -48,6 +48,19 @@ function testPersonas(mode: string): Plugin {
   };
 }
 
+function developmentFixtures(): Plugin {
+  return {
+    name: "liftlog-development-fixtures",
+    transform(code, id) {
+      // These fixtures only construct local values. When the DEV-only demo is
+      // removed, Array.from/Date calls must not retain its entire training tree.
+      if (id.replaceAll("\\", "/").endsWith("/lib/demo-data.ts")) {
+        return { code, map: null, moduleSideEffects: false };
+      }
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const environment = loadEnv(mode, process.cwd(), "");
   const fallbackSiteUrl = mode === "production"
@@ -68,14 +81,46 @@ export default defineConfig(({ mode }) => {
     : "local";
 
   return {
+    cacheDir: `node_modules/.vite/${mode}`,
     plugins: [
       react(),
       testPersonas(mode),
+      developmentFixtures(),
       siteMetadata(siteUrl, releaseSha),
       offlineAppShell(releaseSha),
     ],
     define: {
       __LIFTLOG_RELEASE_SHA__: JSON.stringify(releaseSha),
+    },
+    build: {
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            // Keep shared dependencies at their existing loading boundary by
+            // default; only the ordered data/workspace groups below opt in.
+            includeDependenciesRecursively: false,
+            groups: [
+              // These modules already load for the entry page; one compressed
+              // response avoids a separate shared React runtime request.
+              { name: "initial", tags: ["$initial"], priority: 100 },
+              // Preserve independently loaded data boundaries before grouping
+              // workspace dependencies. The entry group keeps React/auth eager.
+              { name: "repository", test: /lib[\\/]repository\.ts$/, priority: 40, includeDependenciesRecursively: true },
+              { name: "workout-persistence", test: /app[\\/]features[\\/]active-workout[\\/]useActiveWorkoutPersistence\.ts$/, priority: 30, includeDependenciesRecursively: true },
+              // Keep the shared catalog filters separate to bound the workspace
+              // response; both workspace and exercise catalog already use them.
+              { name: "exercise-library", test: /app[\\/]features[\\/]exercises[\\/]exercise-library\.ts$/, priority: 10 },
+              {
+                name: "program-authoring",
+                test: /(?:app[\\/]features[\\/](?:program-runs[\\/]ProgramRun(?:Schedule)?Wizard\.tsx|programs[\\/]ProgramView\.tsx|authoring[\\/](?:AuthoringDialogs\.ts|ProgramModal\.tsx|WorkoutDialogs\.tsx|ExerciseModal\.tsx))|lib[\\/]program-run-schedule\.ts)$/,
+              },
+              // Combine only the workspace's static dependencies after earlier
+              // groups claim theirs. Dynamic feature imports remain lazy.
+              { name: "workspace", test: /app[\\/]LiftLogApp\.tsx$/, includeDependenciesRecursively: true },
+            ],
+          },
+        },
+      },
     },
     resolve: {
       alias: mode === "nonprod" || mode === "localdev" ? [] : [{

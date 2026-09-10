@@ -1,8 +1,8 @@
+import { readAppSource as readAuthoringSource } from "./helpers/app-source.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const programViewPath = new URL(
   "../app/features/programs/ProgramView.tsx",
   import.meta.url,
@@ -16,7 +16,7 @@ const runMigrationPath = new URL(
 
 async function readAppSource() {
   const [app, programView] = await Promise.all([
-    readFile(appPath, "utf8"),
+    readAuthoringSource(),
     readFile(programViewPath, "utf8"),
   ]);
   return `${app}\n${programView}`;
@@ -58,7 +58,7 @@ test("one run owns every ordered workout and dates remain optional", async () =>
   );
 });
 
-test("starting a program freezes only its assigned revision", async () => {
+test("using a program freezes only its assigned revision", async () => {
   const [app, migration] = await Promise.all([
     readAppSource(),
     readFile(runMigrationPath, "utf8"),
@@ -77,8 +77,8 @@ test("starting a program freezes only its assigned revision", async () => {
   assert.match(app, /saved for future (?:runs|uses)/i);
   assert.match(
     app,
-    /<Save size=\{15\} \/>[\s\S]*?Save program/,
-    "the editor must continue to use consistent save language",
+    /className="program-save-status" role="status"[\s\S]*?"Saving…"[\s\S]*?"Couldn't save"[\s\S]*?"Saved"/,
+    "the reusable editor reports its autosave state instead of requiring an extra save",
   );
   assert.match(
     app,
@@ -88,7 +88,7 @@ test("starting a program freezes only its assigned revision", async () => {
 });
 
 test("the reusable Programs library identifies an active use without replacing the template", async () => {
-  const app = await readFile(appPath, "utf8");
+  const app = await readAuthoringSource();
   const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
 
   assert.doesNotMatch(programRow, /deriveProgramRunStatus|program-card-workout-progress/);

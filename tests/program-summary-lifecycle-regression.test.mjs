@@ -43,9 +43,9 @@ test("first use freezes one run revision while a reusable draft remains editable
   );
   assert.match(repository, /rpc\("create_program_runs"/);
   assert.doesNotMatch(app, /repository\.publishProgram/);
-  assert.match(app, /saved for future (?:runs|uses) without altering active or completed plans/i);
+  assert.match(app, /useProgramMetadataDraft\(program\)/);
   assert.doesNotMatch(app, /stays editable until you schedule or assign it/i);
-  assert.match(programView, /Save program/);
+  assert.match(programView, /Changes save automatically\./);
   assert.match(programView, /Duplicate/);
 });
 

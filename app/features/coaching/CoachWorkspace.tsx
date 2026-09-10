@@ -1,7 +1,6 @@
 import {
   CalendarPlus,
   Check,
-  ChevronLeft,
   ChevronRight,
   Clock3,
   Dumbbell,
@@ -12,7 +11,7 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AthleteSummary,
   CoachAgendaEntry,
@@ -22,6 +21,8 @@ import type {
   ProgramRunSummary,
 } from "../../../lib/domain";
 import { formatDateOnly } from "../../../lib/date-only";
+import { programRunLifecycleLabel } from "../../../lib/program-progress";
+import { trainingContentUi } from "../../ui-semantics";
 import {
   appDetailDataFromHistory,
   appDetailFromHistory,
@@ -29,7 +30,7 @@ import {
   pushAppDetailHistory,
 } from "../../../lib/app-route";
 import {
-  AsyncButton,
+  DetailNavigation,
   InlineError,
   PersonAvatar,
   SegmentedTabs,
@@ -223,19 +224,21 @@ export function CoachWorkspace({
   const [mobileAthleteId, setMobileAthleteId] = useState<string | null>(null);
   const [athleteTab, setAthleteTab] =
     useState<CoachAthleteWorkspaceTab>("plan");
+  const restoredAthleteIdRef = useRef<string | null>(null);
 
   const mobileAthlete =
     athletes.find((athlete) => athlete.id === mobileAthleteId) ?? null;
   const detailAthlete = mobileAthlete ?? selectedAthlete;
 
   useEffect(() => {
-    const restoreMobileAthlete = () => {
+    const restoreAthleteContext = () => {
       const historyDetail = appDetailFromHistory();
       const historyData = appDetailDataFromHistory();
       if (
         historyDetail !== "coach-athlete" ||
         historyData?.kind !== "coach-athlete"
       ) {
+        restoredAthleteIdRef.current = null;
         setMobileAthleteId(null);
         setAthleteTab("plan");
         return;
@@ -244,31 +247,40 @@ export function CoachWorkspace({
         (candidate) => candidate.id === historyData.athleteId,
       );
       if (!athlete) {
+        restoredAthleteIdRef.current = null;
         setMobileAthleteId(null);
         return;
       }
       setMobileAthleteId(athlete.id);
       setAthleteTab(historyData.tab);
-      if (selectedAthlete?.id !== athlete.id) onSelectAthlete(athlete);
+      const enteringContext = restoredAthleteIdRef.current !== athlete.id;
+      // A reload can already select this athlete while only its summary is
+      // loaded. Request the details once per restored context; a failed load
+      // must leave Try again in control instead of retrying on every render.
+      restoredAthleteIdRef.current = athlete.id;
+      if (selectedAthlete?.id !== athlete.id || (enteringContext && athlete.detailsLoaded === false)) {
+        onSelectAthlete(athlete);
+      }
     };
-    restoreMobileAthlete();
-    window.addEventListener("popstate", restoreMobileAthlete);
-    window.addEventListener("hashchange", restoreMobileAthlete);
+    restoreAthleteContext();
+    window.addEventListener("popstate", restoreAthleteContext);
+    window.addEventListener("hashchange", restoreAthleteContext);
     return () => {
-      window.removeEventListener("popstate", restoreMobileAthlete);
-      window.removeEventListener("hashchange", restoreMobileAthlete);
+      window.removeEventListener("popstate", restoreAthleteContext);
+      window.removeEventListener("hashchange", restoreAthleteContext);
     };
   }, [athletes, onSelectAthlete, selectedAthlete?.id]);
 
   function openAthlete(athlete: AthleteSummary) {
+    restoredAthleteIdRef.current = athlete.id;
     setAthleteTab("plan");
     setMobileAthleteId(athlete.id);
     onSelectAthlete(athlete);
-    if (window.matchMedia?.("(max-width: 700px)").matches) {
-      pushAppDetailHistory("coach-athlete", "coaching", {
-        data: { kind: "coach-athlete", athleteId: athlete.id, tab: "plan" },
-      });
-    }
+    // Selection establishes the athlete context on either layout. Further
+    // selections and tab changes replace that context, so Back leaves it once.
+    pushAppDetailHistory("coach-athlete", "coaching", {
+      data: { kind: "coach-athlete", athleteId: athlete.id, tab: "plan" },
+    });
   }
 
   function selectAthleteTab(tab: CoachAthleteWorkspaceTab) {
@@ -490,10 +502,12 @@ function AthleteDirectory({
           const loadedProgramCount = runsForAthlete(athlete).filter(
             (run) => run.status === "not_started" || run.status === "in_progress",
           ).length;
-          const programCount =
-            athlete.detailsLoaded === false
-              ? (athlete.assignedProgramCount ?? loadedProgramCount)
-              : loadedProgramCount;
+          const partial = Boolean(athlete.hasMoreProgramRuns);
+          const programCount = athlete.detailsLoaded === false
+            ? (athlete.assignedProgramCount ?? loadedProgramCount) : loadedProgramCount;
+          const summary = partial
+            ? (programCount ? `${programCount}+ active plans loaded` : "More training to load")
+            : (programCount ? `${programCount} active ${programCount === 1 ? "plan" : "plans"}` : "No active training");
           return (
             <button
               type="button"
@@ -501,15 +515,13 @@ function AthleteDirectory({
               className={selectedAthleteId === athlete.id ? "active" : undefined}
               onClick={() => onSelectAthlete(athlete)}
               aria-current={selectedAthleteId === athlete.id ? "page" : undefined}
-              aria-label={`Open ${athlete.name}, ${programCount} active training ${programCount === 1 ? "plan" : "plans"}`}
+              aria-label={partial ? `Open ${athlete.name}, ${summary}` : `Open ${athlete.name}, ${programCount} active training ${programCount === 1 ? "plan" : "plans"}`}
             >
               <PersonAvatar initials={athlete.initials} name={athlete.name} />
               <span>
                 <strong>{athlete.name}</strong>
                 <small>
-                  {programCount
-                    ? `${programCount} active ${programCount === 1 ? "plan" : "plans"}`
-                    : "No active training"}
+                  {summary}
                 </small>
               </span>
               <ChevronRight size={18} />
@@ -596,15 +608,12 @@ function AthleteWorkspace({
   if (athlete.detailsLoaded === false) {
     return (
       <section className="coach-athlete-workspace" aria-label={`${athlete.name} workspace`}>
-        <button
-          type="button"
-          className="coach-mobile-back"
-          onClick={onBack}
-          aria-label="Back to athletes"
-        >
-          <ChevronLeft size={22} />
-          Athletes
-        </button>
+        <DetailNavigation
+          className="coach-athlete-navigation"
+          backLabel="My athletes"
+          title={athlete.name}
+          onBack={onBack}
+        />
         <div className="panel coach-workspace-empty" aria-live="polite">
           {loading ? (
             <>
@@ -629,15 +638,12 @@ function AthleteWorkspace({
 
   return (
     <section className="coach-athlete-workspace" aria-label={`${athlete.name} workspace`}>
-      <button
-        type="button"
-        className="coach-mobile-back"
-        onClick={onBack}
-        aria-label="Back to athletes"
-      >
-        <ChevronLeft size={22} />
-        Athletes
-      </button>
+      <DetailNavigation
+        className="coach-athlete-navigation"
+        backLabel="My athletes"
+        title={athlete.name}
+        onBack={onBack}
+      />
 
       <header className="panel coach-athlete-header">
         <div className="coach-athlete-identity">
@@ -738,7 +744,7 @@ function AthletePlan({
         <div>
           <p className="eyebrow">Plan</p>
           <h2>
-            {runs.length} active {runs.length === 1 ? "plan" : "plans"}
+            {athlete.hasMoreProgramRuns ? "Active training" : `${runs.length} active ${runs.length === 1 ? "plan" : "plans"}`}
           </h2>
         </div>
       </div>
@@ -756,6 +762,11 @@ function AthletePlan({
               onOpen={() => onOpenProgram(program)}
             />
           ))}
+        </div>
+      ) : athlete.hasMoreProgramRuns ? (
+        <div className="coach-plan-empty" role="status">
+          <h3>More training available</h3>
+          <p>No active plans appear in the training loaded so far. Load more training below to find older active plans.</p>
         </div>
       ) : (
         <div className="coach-plan-empty">
@@ -858,41 +869,49 @@ function AthleteHistory({
       </div>
 
       {finishedRuns.length > 0 && (
-        <div className="coach-finished-runs" aria-label="Finished program runs">
-          {finishedRuns.map((run) => (
-            <article key={run.id}>
-              <span><Dumbbell size={16} /></span>
-              <div>
-                <strong>{run.title}</strong>
-                <small>
-                  {run.completedWorkouts} of {run.totalWorkouts} finished · {run.status === "ended" ? "Ended" : "Finished"}
-                </small>
-              </div>
-              <div className="coach-finished-run-actions">
-                <AsyncButton
-                  className="button secondary small"
-                  aria-label={`View ${run.title}`}
-                  loading={openingProgramId === run.id}
-                  loadingLabel="Opening…"
+        <div className="coach-finished-runs" aria-label="Past training">
+          {finishedRuns.map((run) => {
+            const ContentIcon = trainingContentUi(run.contentType).icon;
+            const opening = openingProgramId === run.id;
+            return (
+              <article key={run.id}>
+                <button
+                  type="button"
+                  className="program-card-main"
+                  aria-label={`Open ${run.title}`}
+                  aria-busy={opening || undefined}
                   disabled={Boolean(openingProgramId)}
                   onClick={() => onOpenProgram(run)}
                 >
-                  View
-                </AsyncButton>
+                  <span className="program-card-heading">
+                    <span className="program-icon"><ContentIcon size={16} /></span>
+                    <span>
+                      <strong>{run.title}</strong>
+                      <small>
+                        {programRunLifecycleLabel(run)} · {run.completedWorkouts} of {run.totalWorkouts} completed
+                      </small>
+                    </span>
+                    {opening
+                      ? <LoaderCircle className="button-spinner" size={16} aria-label="Opening training" />
+                      : <ChevronRight size={16} aria-hidden="true" />}
+                  </span>
+                </button>
                 {!run.legacy && onRepeat && (
-                  <button
-                    type="button"
-                    className="button secondary small"
-                    aria-label={`Repeat ${run.title}`}
-                    onClick={() => onRepeat(run)}
-                  >
-                    <RefreshCw size={14} />
-                    Repeat
-                  </button>
+                  <div className="coach-finished-run-actions">
+                    <button
+                      type="button"
+                      className="button secondary small"
+                      aria-label={`Repeat ${run.title}`}
+                      onClick={() => onRepeat(run)}
+                    >
+                      <RefreshCw size={14} />
+                      Repeat
+                    </button>
+                  </div>
                 )}
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
       )}
 

@@ -61,7 +61,10 @@ test("local workout edits survive reload, offline editing and reconnect", async 
     await page.context().setOffline(false);
     if (!page.isClosed()) {
       await fillWorkoutNoteAndWaitForSave(page, original);
-      if (startedHere) await page.getByRole("button", { name: "Set back to planned", exact: true }).click();
+      if (startedHere) {
+        await page.getByLabel(/^More actions for /).click();
+        await page.getByRole("button", { name: "Set back to scheduled", exact: true }).click();
+      }
     }
   }
 });
@@ -88,14 +91,16 @@ test("a program can be authored, saved, reopened and removed through the local U
   name += " revised";
   await page.getByRole("textbox", { name: "Program name", exact: true }).fill(name);
   await page.getByRole("textbox", { name: "Description optional", exact: true }).fill("Local review: reusable strength training.");
-  await page.getByRole("navigation", { name: "Program navigation" }).getByRole("button", { name: "Save", exact: true }).click();
-  await page.getByRole("button", { name: "Programs", exact: true }).click();
+  // Leaving the editor flushes pending metadata before returning to Programs.
+  await page.getByRole("button", { name: "Back to Programs", exact: true }).click();
+  await page.getByLabel(`More actions for ${name}`, { exact: true }).click();
   await page.getByRole("button", { name: `Edit ${name} program`, exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Program name", exact: true })).toHaveValue(name);
   await expect(page.getByRole("textbox", { name: "Description optional", exact: true })).toHaveValue("Local review: reusable strength training.");
   await expect(page.getByRole("button", { name: "Edit Back squat", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("program-authored.png"), fullPage: true });
   await page.getByRole("button", { name: "Programs", exact: true }).click();
+  await page.getByLabel(`More actions for ${name}`, { exact: true }).click();
   await page.getByRole("button", { name: `Delete ${name}`, exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete program", exact: true }).click();
   await expect(page.getByRole("button", { name: `Delete ${name}`, exact: true })).toHaveCount(0);
@@ -115,7 +120,10 @@ test("only one tab edits a workout and takeover restores the latest save", async
     const secondNote = second.getByRole("textbox", { name: "Session notes optional" });
     await expect(secondNote).toBeDisabled();
     await expect(second.getByRole("button", { name: "Finish and save session", exact: true })).toBeDisabled();
-    await expect(second.getByRole("button", { name: "Set back to planned", exact: true })).toBeDisabled();
+    await second.getByLabel(/^More actions for /).click();
+    await expect(second.getByRole("button", { name: "Set back to scheduled", exact: true })).toBeDisabled();
+    await expect(second.getByRole("button", { name: "Skip workout", exact: true })).toBeDisabled();
+    await second.getByLabel(/^More actions for /).press("Escape");
     await fillWorkoutNoteAndWaitForSave(page, marker);
     await page.close();
     await second.getByRole("button", { name: "Try again", exact: true }).click();

@@ -1,15 +1,15 @@
+import { readAppSource as readAuthoringSource } from "./helpers/app-source.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appPath = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const programViewPath = new URL(
   "../app/features/programs/ProgramView.tsx",
   import.meta.url,
 );
 async function readAppSource() {
   const [app, programView] = await Promise.all([
-    readFile(appPath, "utf8"),
+    readAuthoringSource(),
     readFile(programViewPath, "utf8"),
   ]);
   return `${app}\n${programView}`;
@@ -59,9 +59,9 @@ test("quick workouts use the shared tree and the same run flow as programs", asy
     /\.builder-layout\.quick-workout-builder\s*\{[\s\S]*grid-template-columns:\s*minmax\(340px, 1fr\)/,
     "a quick workout must use the full builder width without a persistent picker column",
   );
-  assert.match(app, /Workout saved[^"\n]*future (?:runs|uses)/i);
+  assert.match(app, /Changes save automatically\./);
   assert.doesNotMatch(app, /stays editable until you schedule or assign it/i);
-  assert.match(app, /\{isQuickWorkout \? "Save workout" : "Save program"\}/);
+  assert.match(app, /className="program-save-status" role="status"/);
   assert.match(app, /Assign to athletes/);
   assert.match(runWizard, /program or a standalone workout/);
   assert.match(runWizard, /mode: "self" \| "coach"/);

@@ -1,8 +1,8 @@
+import { readAppSource as readAuthoringSource } from "./helpers/app-source.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const stylesUrl = new URL("../app/globals.css", import.meta.url);
 const primitivesUrl = new URL("../app/ui-primitives.tsx", import.meta.url);
 const repositoryUrl = new URL("../lib/repository.ts", import.meta.url);
@@ -34,7 +34,7 @@ function sourceBetween(source, start, end) {
 
 test("coach requests are confirmed in-app without invitation links", async () => {
   const [app, coachWorkspace, primitives] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(coachWorkspaceUrl, "utf8"),
     readFile(primitivesUrl, "utf8"),
   ]);
@@ -81,7 +81,7 @@ test("coach requests are confirmed in-app without invitation links", async () =>
 });
 
 test("coach-only workspaces stay hidden until relevant coaching data exists", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const app = await readAuthoringSource();
   const programsHome = sourceBetween(
     app,
     "function ProgramsHome",
@@ -103,7 +103,7 @@ test("coach-only workspaces stay hidden until relevant coaching data exists", as
     app,
     /\{ id: "coaching", label: "Coaching", shortLabel: "Coaching", icon: Users \}/,
   );
-  assert.match(app, /\{navItems\.map\(\(item\) => \{/);
+  assert.match(app, /\{navigationItems\.map\(\(item\) => \{/);
   assert.match(
     programsHome,
     /\.\.\.\(hasCoach \? \[\{ value: "coach" as const, label: "From coach", icon: Users \}\] : \[\]\)/,
@@ -114,7 +114,7 @@ test("coach-only workspaces stay hidden until relevant coaching data exists", as
 
 test("self and coach entry points use the same program-run wizard", async () => {
   const [app, wizard] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(wizardUrl, "utf8"),
   ]);
   const appShell = sourceBetween(app, "export default function LiftLogApp", "function Sidebar");
@@ -150,18 +150,20 @@ test("coach master/detail navigation does not stack on mobile", async () => {
     readFile(coachWorkspaceUrl, "utf8"),
   ]);
 
-  assert.match(coachWorkspace, /className="coach-mobile-back"/);
+  assert.match(coachWorkspace, /<DetailNavigation[\s\S]*className="coach-athlete-navigation"[\s\S]*backLabel="My athletes"/);
   assert.match(coachWorkspace, /value: "plan"[\s\S]*label: "Plan"/);
   assert.match(coachWorkspace, /value: "history"[\s\S]*label: "History"/);
   assert.match(
     styles,
-    /@media \(max-width: 700px\)[\s\S]*\.coach-athlete-detail\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-directory\s*\{[^}]*display:\s*none[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-detail\s*\{[^}]*display:\s*block/,
+    /@media \(max-width: 700px\)[\s\S]*\.coach-athlete-detail(?:\s*,[^{}]*)?\s*\{[^}]*display:\s*none/,
   );
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-directory\s*\{[^}]*display:\s*none/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.coach-workspace\.mobile-detail-open \.coach-athlete-detail\s*\{[^}]*display:\s*block/);
 });
 
 test("ending a run preserves history and both participant roles can do it", async () => {
   const [app, coachWorkspace, compactRunCard, repository, migration] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(coachWorkspaceUrl, "utf8"),
     readFile(compactRunCardUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
@@ -172,7 +174,7 @@ test("ending a run preserves history and both participant roles can do it", asyn
   )?.[0] ?? "";
 
   assert.match(coachWorkspace, /ProgramRunCompactCard/);
-  assert.match(compactRunCard, /title=\{quickWorkout \? "End workout" : "End program"\}/);
+  assert.match(compactRunCard, /actionUi\.end, label: `End \$\{objectLabel\.toLowerCase\(\)\}`/);
   assert.match(coachWorkspace, /if \(onOpenAgendaEntry\) onOpenAgendaEntry\(entry\)/);
   assert.doesNotMatch(coachWorkspace, /disabled=\{!program/);
   assert.match(app, /repository\.endProgramRun\(/);

@@ -1,5 +1,5 @@
 import userEvent from "@testing-library/user-event";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { axe } from "vitest-axe";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -193,8 +193,8 @@ describe("CoachWorkspace", () => {
     expect(workspace).toHaveClass("mobile-detail-open");
     expect(callbacks.onSelectAthlete).toHaveBeenCalledWith(athlete);
 
-    await user.click(screen.getByRole("button", { name: "Back to athletes" }));
-    expect(workspace).not.toHaveClass("mobile-detail-open");
+    await user.click(screen.getByRole("button", { name: "Back to My athletes" }));
+    await waitFor(() => expect(workspace).not.toHaveClass("mobile-detail-open"));
   });
 
   it("uses the same native-history path for mobile athlete Back", async () => {
@@ -230,8 +230,138 @@ describe("CoachWorkspace", () => {
       athleteId: athlete.id,
       tab: "plan",
     });
-    await user.click(screen.getByRole("button", { name: "Back to athletes" }));
+    await user.click(screen.getByRole("button", { name: "Back to My athletes" }));
     expect(back).toHaveBeenCalledOnce();
+  });
+
+  it.each(["desktop", "mobile"])("records athlete selection once and restores its tab on %s Back/Forward", async (layout) => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: layout === "mobile" }));
+    window.history.replaceState({}, "", "/#/coaching");
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    const user = userEvent.setup();
+    const { container } = renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Open Elina Tolokonceva, 1 active training plan" }));
+    expect(push).toHaveBeenCalledOnce();
+    expect(appDetailDataFromHistory()).toEqual({ kind: "coach-athlete", athleteId: athlete.id, tab: "plan" });
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    await user.click(screen.getByRole("tab", { name: "Plan" }));
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    expect(push).toHaveBeenCalledOnce();
+    expect(replace).toHaveBeenCalledTimes(3);
+
+    act(() => window.history.back());
+    await waitFor(() => expect(appDetailFromHistory()).toBeNull());
+    expect(container.querySelector(".coach-workspace")).not.toHaveClass("mobile-detail-open");
+
+    act(() => window.history.forward());
+    await waitFor(() => expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true"));
+    expect(appDetailDataFromHistory()).toEqual({ kind: "coach-athlete", athleteId: athlete.id, tab: "history" });
+    expect(container.querySelector(".coach-workspace")).toHaveClass("mobile-detail-open");
+  });
+
+  it.each(["program", "workout-log"] as const)("returns from nested %s to the exact selected athlete and History tab", async (kind) => {
+    window.history.replaceState({}, "", "/#/coaching");
+    const otherAthlete = { ...athlete, id: "athlete-2", name: "Mara Test", initials: "MT" };
+    const user = userEvent.setup();
+    const options = { athletes: [athlete, otherAthlete], selectedAthlete: athlete };
+    const { unmount } = renderWorkspace(options);
+    await user.click(screen.getByRole("button", { name: "Open Mara Test, 1 active training plan" }));
+    await user.click(screen.getByRole("tab", { name: "History" }));
+
+    pushAppDetailHistory(kind, kind === "program" ? "program" : "today", {
+      stackOnDetail: true,
+      data: kind === "program"
+        ? { kind, athleteId: otherAthlete.id, programId: program.programId, programVersionId: program.programVersionId, returnView: "coaching" }
+        : { kind, athleteId: otherAthlete.id, session: { id: "result-1", workoutTitle: "Squat and press", date: "2026-09-02", durationMinutes: 40, rpe: 8 }, returnView: "coaching" },
+    });
+    unmount();
+    window.history.back();
+    await waitFor(() => expect(appDetailDataFromHistory()).toEqual({ kind: "coach-athlete", athleteId: otherAthlete.id, tab: "history" }));
+
+    const { callbacks } = renderWorkspace(options);
+    await waitFor(() => expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("navigation", { name: "Mara Test navigation" })).toBeInTheDocument();
+    expect(callbacks.onSelectAthlete).toHaveBeenCalledWith(otherAthlete);
+  });
+
+  it("loads a restored athlete's details when the summary is already selected", () => {
+    window.history.replaceState({}, "", "/#/coaching");
+    pushAppDetailHistory("coach-athlete", "coaching", {
+      data: { kind: "coach-athlete", athleteId: athlete.id, tab: "history" },
+    });
+    const summary = { ...athlete, detailsLoaded: false, programRuns: [], agenda: [] };
+    const { callbacks, props, rerender } = renderWorkspace({ athletes: [summary], selectedAthlete: summary });
+
+    expect(callbacks.onSelectAthlete).toHaveBeenCalledExactlyOnceWith(summary);
+    rerender(<CoachWorkspace {...props} loadingAthleteId={athlete.id} />);
+    expect(screen.getByRole("heading", { name: `Loading ${athlete.name}…` })).toBeVisible();
+    rerender(<CoachWorkspace {...props} athletes={[athlete]} selectedAthlete={athlete} />);
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: /Squat and press/ })).toBeVisible();
+    expect(callbacks.onSelectAthlete).toHaveBeenCalledOnce();
+  });
+
+  it("keeps failed restored detail loads bounded and allows manual retry or re-entry", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/#/coaching");
+    pushAppDetailHistory("coach-athlete", "coaching", {
+      data: { kind: "coach-athlete", athleteId: athlete.id, tab: "history" },
+    });
+    const summary = { ...athlete, detailsLoaded: false };
+    const { callbacks, props, rerender, container } = renderWorkspace({ athletes: [summary], selectedAthlete: summary });
+    expect(callbacks.onSelectAthlete).toHaveBeenCalledOnce();
+    rerender(<CoachWorkspace {...props} loadingAthleteId={athlete.id} />);
+    // Failed requests return to the same summary. Parent rerenders also change
+    // callback identity, which must not turn that failure into an auto-retry.
+    rerender(<CoachWorkspace {...props} athletes={[{ ...summary }]} onSelectAthlete={(selected) => callbacks.onSelectAthlete(selected)} />);
+    expect(screen.getByRole("heading", { name: "Athlete details unavailable" })).toBeVisible();
+    expect(callbacks.onSelectAthlete).toHaveBeenCalledOnce();
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(callbacks.onSelectAthlete).toHaveBeenCalledOnce();
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(callbacks.onSelectAthlete).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByRole("button", { name: "Back to My athletes" }));
+    await waitFor(() => expect(container.querySelector(".coach-workspace")).not.toHaveClass("mobile-detail-open"));
+    act(() => window.history.forward());
+    await waitFor(() => expect(callbacks.onSelectAthlete).toHaveBeenCalledTimes(3));
+  });
+
+  it.each(["loaded", "loading", "unavailable"])("uses the shared athlete detail navigation in the %s state", (state) => {
+    const detailAthlete = { ...athlete, detailsLoaded: state === "loaded" };
+    renderWorkspace({ athletes: [detailAthlete], selectedAthlete: detailAthlete, loadingAthleteId: state === "loading" ? athlete.id : null });
+    const navigation = screen.getByRole("navigation", { name: "Elina Tolokonceva navigation" });
+    expect(navigation).toHaveClass("detail-navigation", "coach-athlete-navigation");
+    expect(within(navigation).getByRole("button", { name: "Back to My athletes" })).toBeInTheDocument();
+    expect(within(navigation).getByText(athlete.name)).toBeInTheDocument();
+  });
+
+  it("opens past training from its identity while keeping lifecycle and Repeat distinct", async () => {
+    const user = userEvent.setup();
+    const runs: ProgramRunSummary[] = [
+      { ...program, id: "closed", title: "Partly completed plan", status: "completed" },
+      { ...program, id: "completed", title: "Completed workout", contentType: "quick_workout", status: "completed", totalWorkouts: 1, completedWorkouts: 1 },
+      { ...program, id: "ended", title: "Ended plan", status: "ended" },
+    ];
+    const historyAthlete = { ...athlete, programRuns: runs };
+    const onRepeatAthlete = vi.fn();
+    const { callbacks } = renderWorkspace({ athletes: [historyAthlete], selectedAthlete: historyAthlete, onRepeatAthlete });
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    expect(screen.getByText("Closed · 1 of 3 completed")).toBeVisible();
+    expect(screen.getByText("Completed · 1 of 1 completed")).toBeVisible();
+    expect(screen.getByText("Ended · 1 of 3 completed")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "View Partly completed plan" })).not.toBeInTheDocument();
+
+    const open = screen.getByRole("button", { name: "Open Partly completed plan" });
+    expect(within(open).getByText("Partly completed plan")).toBeVisible();
+    await user.click(open);
+    expect(callbacks.onOpenAssignedProgram).toHaveBeenCalledWith(historyAthlete, runs[0], undefined);
+    await user.click(screen.getByRole("button", { name: "Repeat Completed workout" }));
+    expect(onRepeatAthlete).toHaveBeenCalledWith(historyAthlete, runs[1]);
+    expect(callbacks.onOpenAssignedProgram).toHaveBeenCalledOnce();
   });
 
   it("restores the exact athlete History context from native history", async () => {
@@ -431,7 +561,7 @@ describe("CoachWorkspace", () => {
 
     expect(screen.queryByText("Upcoming workout 1")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", {
-      name: "Open active Balanced strength training",
+      name: "Open Balanced strength",
     }));
     expect(callbacks.onOpenAssignedProgram).toHaveBeenCalledWith(
       athleteWithPreview,
@@ -484,4 +614,20 @@ describe("CoachWorkspace", () => {
     });
     expect(results.violations).toEqual([]);
   });
+});
+
+
+it("does not mistake a page of finished training for an athlete with no active plans", async () => {
+  const user = userEvent.setup();
+  const partialAthlete = { ...athlete, programRuns: Array.from({ length: 25 }, (_, index) => ({ ...program, id: `finished-${index}`, status: "completed" as const })), hasMoreProgramRuns: true };
+  const { props, rerender, callbacks } = renderWorkspace({ athletes: [partialAthlete], selectedAthlete: partialAthlete });
+  expect(screen.queryByText("No training assigned")).not.toBeInTheDocument();
+  expect(screen.queryByText("No active training")).not.toBeInTheDocument();
+  expect(screen.getByText("More training available")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Load more training" }));
+  expect(callbacks.onLoadMoreProgramRuns).toHaveBeenCalledWith(partialAthlete);
+  const complete = { ...partialAthlete, programRuns: [...partialAthlete.programRuns, program], hasMoreProgramRuns: false };
+  rerender(<CoachWorkspace {...props} athletes={[complete]} selectedAthlete={complete} />);
+  expect(screen.getByRole("heading", { name: "1 active plan" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Open Elina Tolokonceva, 1 active training plan" })).toBeVisible();
 });

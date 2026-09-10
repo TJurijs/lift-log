@@ -32,22 +32,22 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   );
   assert.match(app, /Workout preview/);
   assert.match(app, /Next workouts/);
-  assert.match(app, /Set back to planned/);
-  assert.match(app, /statusAction === "skipped"[\s\S]*"Skip"/);
+  assert.match(app, /accessibleLabel: "Set back to scheduled"[\s\S]*?onClick: onSetPlanned/);
+  assert.match(app, /accessibleLabel: "Skip workout"[\s\S]*?onClick: onSkip/);
   assert.match(
     app,
     /onRemoveFromCalendar=\{[\s\S]*?workoutPreviewSchedule[\s\S]*?saveSchedule\(scheduleId, null\)/,
     "an unstarted workout can be removed from the calendar from its preview",
   );
-  assert.match(app, /className="icon-button"[\s\S]*aria-label="Remove workout from calendar"/);
+  assert.match(app, /accessibleLabel: "Remove workout from calendar"[\s\S]*?onClick: onRemoveFromCalendar/);
   assert.match(app, /className=\{`workout-preview-actions\$\{workoutStarted/);
-  assert.match(app, /className="workout-action-compact">Workouts</);
+  assert.match(app, /<ObjectActionMenu title=\{workout\.title\} actions=\{workoutActions\}/);
   assert.match(app, /const isQuickWorkout = program\?\.contentType === "quick_workout"/);
   assert.match(app, /isQuickWorkout\s*\?\s*undefined/);
   assert.match(app, /!isQuickWorkout && \([\s\S]*?Session \$\{workoutIndex \+ 1\} of/);
   assert.match(app, /isQuickWorkout \? \([\s\S]*?program\.description/);
   assert.match(app, /workout-preview-actions\$\{workoutStarted \? " started"/);
-  assert.match(app, /className="workout-action-compact">Planned</);
+  assert.match(app, /workoutStarted && onSetPlanned[\s\S]*?disabled: actionPending/);
   assert.match(app, /const \[activeWorkoutVisible, setActiveWorkoutVisible\]/);
   assert.match(
     app,
@@ -59,7 +59,7 @@ test("Next workouts opens a full read-only workout preview before starting", asy
   assert.doesNotMatch(app, /aria-label="View program"|onViewProgram|viewScheduledPlan|programWorkoutPreviewOriginRef/);
   assert.match(
     app,
-    /aria-label="Remove workout from calendar"[\s\S]*statusAction === "skipped"/,
+    /accessibleLabel: "Remove workout from calendar"[\s\S]*statusAction === "skipped"/,
     "preview actions should keep unschedule before skip",
   );
   assert.doesNotMatch(app, />\s*Edit plan\s*</);
@@ -117,9 +117,10 @@ test("Next paging preserves reset retries and queues mutation refreshes", async 
 });
 
 test("new scheduling uses a bounded server page and offers only eligible workouts", async () => {
-  const [app, repository] = await Promise.all([
+  const [app, repository, candidates] = await Promise.all([
     readFile(appUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
+    readFile(new URL("../app/features/scheduling/useScheduleCandidates.ts", import.meta.url), "utf8"),
   ]);
   const scheduler = app.slice(app.indexOf("function ScheduleModal"));
   const choiceLabel = scheduler.slice(
@@ -128,7 +129,7 @@ test("new scheduling uses a bounded server page and offers only eligible workout
   );
 
   assert.match(
-    app,
+    candidates,
     /repository\.listSchedulableWorkouts\(\{[\s\S]*limit:\s*50[\s\S]*cursor:/,
     "the scheduler must request a bounded keyset page instead of hydrating every program tree",
   );

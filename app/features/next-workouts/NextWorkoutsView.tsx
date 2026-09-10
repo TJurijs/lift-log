@@ -195,7 +195,7 @@ export default function NextWorkoutsView({
                     loadingLabel="Restoring…"
                     onClick={() => onSetStatus(schedule.id, "planned")}
                   >
-                    Set back to planned
+                    Set back to scheduled
                   </AsyncButton>
                 ) : (
                   <AsyncButton

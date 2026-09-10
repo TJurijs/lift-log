@@ -8,10 +8,10 @@ export function createOfflineAppShell(releaseSha, files) {
 const PRECACHE=${JSON.stringify(precache)};
 const ASSETS=new Set(PRECACHE.filter(path=>path!=="/"));
 self.addEventListener("install",event=>{
-  event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(PRECACHE)).then(()=>self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(PRECACHE)));
 });
 self.addEventListener("activate",event=>{
-  event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith("liftlog-shell-")&&key!==CACHE_NAME).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));
+  event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith("liftlog-shell-")&&key!==CACHE_NAME).map(key=>caches.delete(key)))));
 });
 self.addEventListener("fetch",event=>{
   const request=event.request;
@@ -21,17 +21,12 @@ self.addEventListener("fetch",event=>{
   if(request.mode==="navigate"){
     event.respondWith((async()=>{
       const cache=await caches.open(CACHE_NAME);
-      try {
-        const response=await fetch(request);
-        if(response.ok&&response.headers.get("content-type")?.includes("text/html")){
-          // Keep the installed HTML paired with its precached build assets.
-          // A newer online deployment belongs to the next worker's cache.
-          return response;
-        }
-        return await cache.match("/")||response;
-      } catch {
-        return await cache.match("/")||Response.error();
-      }
+      // Keep this client's document and lazy imports on the same release.
+      // The next worker waits until existing clients close before activation.
+      const installed=await cache.match("/");
+      if(installed)return installed;
+      try { return await fetch(request); }
+      catch { return Response.error(); }
     })());
     return;
   }

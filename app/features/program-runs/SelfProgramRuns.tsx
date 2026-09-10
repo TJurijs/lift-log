@@ -1,7 +1,7 @@
 import {
-  Check,
   ChevronDown,
-  Dumbbell,
+  ChevronRight,
+  History,
   RefreshCw,
   Users,
 } from "lucide-react";
@@ -9,6 +9,7 @@ import type { ProgramRunSummary } from "../../../lib/domain";
 import { programRunLifecycleLabel } from "../../../lib/program-progress";
 import { AsyncButton } from "../../ui-primitives";
 import { ProgramRunCompactCard } from "./ProgramRunCompactCard";
+import { trainingContentUi } from "../../ui-semantics";
 
 export interface SelfProgramRunsProps {
   runs: ProgramRunSummary[];
@@ -117,26 +118,31 @@ function ProgramRunSections({
       {finished.length > 0 && (
         <details className="self-finished-runs">
           <summary>
-            <span><Check size={15} />Recent training</span>
+            <span><History size={15} />History</span>
             <small>{finished.length}</small>
             <ChevronDown className="self-finished-chevron" size={16} aria-hidden="true" />
           </summary>
           <div>
-            {finished.map((run) => (
-              <article key={run.id}>
-                <span><Dumbbell size={15} /></span>
-                <div>
-                  <strong>{run.title}</strong>
-                  <small>{programRunLifecycleLabel(run)} · {createdLabel(run.finishedAt ?? run.endedAt ?? run.createdAt)}</small>
-                </div>
-                <button type="button" className="button secondary small" aria-label={`View ${run.title}`} onClick={() => onOpen(run)}>
-                  View
-                </button>
-                <button type="button" className="button secondary small" aria-label={`Repeat ${run.title}`} onClick={() => onRepeat(run)}>
-                  <RefreshCw size={13} />Repeat
-                </button>
-              </article>
-            ))}
+            {finished.map((run) => {
+              const ObjectIcon = trainingContentUi(run.contentType).icon;
+              return (
+                <article key={run.id}>
+                  <button type="button" className="program-card-main" aria-label={`Open ${run.title}`} onClick={() => onOpen(run)}>
+                    <span className="program-card-heading">
+                      <span className="program-icon"><ObjectIcon size={18} /></span>
+                      <span>
+                        <strong>{run.title}</strong>
+                        <small>{programRunLifecycleLabel(run)} · {createdLabel(run.finishedAt ?? run.endedAt ?? run.createdAt)}</small>
+                      </span>
+                      <ChevronRight size={15} aria-hidden="true" />
+                    </span>
+                  </button>
+                  <button type="button" className="button secondary small" aria-label={`Repeat ${run.title}`} onClick={() => onRepeat(run)}>
+                    <RefreshCw size={13} />Repeat
+                  </button>
+                </article>
+              );
+            })}
           </div>
         </details>
       )}

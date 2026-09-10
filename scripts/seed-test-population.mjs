@@ -905,13 +905,16 @@ async function main() {
 
   const publishedVersions = new Map();
   const programRuns = new Map();
-  for (const [offset, athleteKey] of [
-    "janis-cakste",
-    "alberts-kviesis",
-    "guntis-ulmanis",
-    "vaira-vike-freiberga",
-    "raimonds-vejonis",
-  ].entries()) {
+  // Historical completions must precede the active/overdue second workout.
+  // Set the complete ordered plan correctly before completing any occurrence;
+  // later single-date updates must not move it before its completed predecessor.
+  for (const [athleteKey, firstDateOffset] of [
+    ["janis-cakste", 0],
+    ["alberts-kviesis", -3],
+    ["guntis-ulmanis", -4],
+    ["vaira-vike-freiberga", 3],
+    ["raimonds-vejonis", 4],
+  ]) {
     const [, authorKey, title] = PROGRAM_PLANS.find(
       ([key]) => key === athleteKey,
     );
@@ -920,7 +923,7 @@ async function main() {
       identities.get(athleteKey).user.id,
       programs.get(athleteKey),
       initialDrafts.get(athleteKey),
-      offset,
+      firstDateOffset,
       title,
     );
     publishedVersions.set(athleteKey, createdRun.versionId);

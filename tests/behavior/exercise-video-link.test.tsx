@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { ExerciseVideoLink } from "../../app/exercise-video-link";
@@ -43,4 +44,19 @@ describe("exercise video link", () => {
     );
     expect(container).toBeEmptyDOMElement();
   });
+});
+
+
+it("contains keyboard focus and returns it to the video opener", async () => {
+  const user = userEvent.setup();
+  render(<><button>Background action</button><ExerciseVideoLink exerciseName="Snatch" label="Video" url="https://www.youtube.com/watch?v=nJmtGVutszE" /></>);
+  const opener = screen.getByRole("button", { name: "Watch Snatch video" });
+  await user.click(opener);
+  const close = screen.getByRole("button", { name: "Close exercise video" });
+  expect(close).toHaveFocus();
+  screen.getByRole("button", { name: "Background action" }).focus();
+  expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(opener).toHaveFocus();
 });

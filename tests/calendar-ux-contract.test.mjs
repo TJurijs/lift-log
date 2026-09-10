@@ -1,8 +1,8 @@
+import { readAppSource as readAuthoringSource } from "./helpers/app-source.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appUrl = new URL("../app/LiftLogApp.tsx", import.meta.url);
 const calendarViewUrl = new URL(
   "../app/features/calendar/CalendarView.tsx",
   import.meta.url,
@@ -32,7 +32,7 @@ function sourceBetween(source, start, end) {
 }
 
 test("calendar scheduling exposes progress and contextual actions", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const app = await readAuthoringSource();
   const scheduleModal = sourceBetween(
     app,
     "function ScheduleModal",
@@ -98,7 +98,7 @@ test("the mobile calendar fits all seven days without horizontal scrolling", asy
 });
 
 test("the primary training destination is labelled Next workouts", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const app = await readAuthoringSource();
 
   assert.ok(
     /\{\s*id:\s*["']today["'],\s*label:\s*["']Next workouts["']/.test(app),
@@ -108,7 +108,7 @@ test("the primary training destination is labelled Next workouts", async () => {
 
 test("calendar event clicks open plans and immutable completed results", async () => {
   const [app, calendarView, repository] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(calendarViewUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
   ]);
@@ -152,7 +152,7 @@ test("calendar always shows completed history without a visibility control", asy
 });
 
 test("Next workouts keeps completed history optional and opens results back to Next workouts", async () => {
-  const app = `${await readFile(appUrl, "utf8")}\n${await readFile(new URL("../app/features/next-workouts/NextWorkoutsView.tsx", import.meta.url), "utf8")}`;
+  const app = `${await readAuthoringSource()}\n${await readFile(new URL("../app/features/next-workouts/NextWorkoutsView.tsx", import.meta.url), "utf8")}`;
 
   assert.match(
     app,
@@ -167,7 +167,7 @@ test("Next workouts keeps completed history optional and opens results back to N
 
 test("completed workout logs mirror the active logging grid and RPE palette", async () => {
   const [app, styles] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(stylesUrl, "utf8"),
   ]);
   const completedView = sourceBetween(
@@ -188,7 +188,7 @@ test("completed workout logs mirror the active logging grid and RPE palette", as
 
 test("calendar days schedule on a chosen date and allow quick drag rescheduling", async () => {
   const [app, calendarView, styles] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(calendarViewUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
   ]);
@@ -210,7 +210,7 @@ test("calendar days schedule on a chosen date and allow quick drag rescheduling"
 
 test("user settings keep Monday and metric units as clean account defaults", async () => {
   const [app, calendarView, repository, calendarMigration, unitsMigration] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(calendarViewUrl, "utf8"),
     readFile(repositoryUrl, "utf8"),
     readFile(calendarPreferenceMigrationUrl, "utf8"),
@@ -249,7 +249,7 @@ test("user settings keep Monday and metric units as clean account defaults", asy
 
 test("scheduled workouts can be removed from plans, calendar hover, or availability", async () => {
   const [app, calendarView, styles, migration] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(calendarViewUrl, "utf8"),
     readFile(stylesUrl, "utf8"),
     readFile(availabilityMigrationUrl, "utf8"),
@@ -261,12 +261,12 @@ test("scheduled workouts can be removed from plans, calendar hover, or availabil
   assert.match(styles, /\.calendar-planned-event:hover \.calendar-event-remove/);
   assert.match(
     app,
-    /onRemoveFromCalendar[\s\S]*?Remove workout from calendar[\s\S]*?Remove from calendar/,
+    /label: "Remove from calendar", accessibleLabel: "Remove workout from calendar"[\s\S]*?onClick: onRemoveFromCalendar/,
     "the shared workout preview must retain calendar removal",
   );
   assert.match(
     app,
-    /onReschedule[\s\S]*?Reschedule workout[\s\S]*?Reschedule/,
+    /label: actionUi\.reschedule\.label, accessibleLabel: "Reschedule workout"[\s\S]*?onClick: onReschedule/,
     "the shared workout preview must retain calendar rescheduling",
   );
   assert.match(
@@ -277,7 +277,7 @@ test("scheduled workouts can be removed from plans, calendar hover, or availabil
 });
 
 test("Calendar owns occurrence removal while reusable content stays in Programs", async () => {
-  const app = await readFile(appUrl, "utf8");
+  const app = await readAuthoringSource();
   const programsHome = sourceBetween(app, "function ProgramsHome", "function CoachProgramEmpty");
   const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
 
@@ -288,22 +288,21 @@ test("Calendar owns occurrence removal while reusable content stays in Programs"
   );
   assert.match(programsHome, /programItems[\s\S]*workoutItems/);
   assert.match(programsHome, />Programs<[/]strong>/);
-  assert.match(programsHome, />Single workouts<[/]strong>/);
-  assert.match(programRow, /onSchedule[\s\S]*?CalendarPlus/);
+  assert.match(programsHome, />Workouts<[/]strong>/);
+  assert.match(programRow, /onSchedule[\s\S]*?actionUi\.schedule\.icon/);
   assert.match(programRow, /canDelete && onDelete/);
 });
 
 test("Programs have no template route and reusable content can be duplicated", async () => {
   const [app, styles] = await Promise.all([
-    readFile(appUrl, "utf8"),
+    readAuthoringSource(),
     readFile(stylesUrl, "utf8"),
   ]);
   assert.doesNotMatch(app, /function LibraryProgramsView|function LibraryTemplateCard/);
   assert.doesNotMatch(app, /handleTemplateAction/);
   assert.match(app, /copyProgramToOwn/);
-  assert.match(
-    styles,
-    /\.program-card-description\s*\{[^}]*color: var\(--text-soft\)[^}]*font-size: var\(--font-caption\)[^}]*white-space: normal/,
-    "program descriptions must remain visible rather than truncate to a faint single line",
-  );
+  const descriptionStyle = styles.match(/\.program-card-description\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.match(descriptionStyle, /color: var\(--text-soft\)/);
+  assert.match(descriptionStyle, /font-size: var\(--font-caption\)/);
+  assert.match(descriptionStyle, /white-space: normal/, "program descriptions remain visible without single-line truncation");
 });
