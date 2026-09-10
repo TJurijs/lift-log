@@ -101,6 +101,23 @@ test("a stalled CLI command is bounded and is never blindly retried", async () =
   assert.equal(subject.calls.filter((call) => call.command === binary).length, 1);
 });
 
+test("first installation has a bounded image-download allowance without extending normal restarts", async () => {
+  const first = harness({ dbExists: false, stall: true });
+  await assert.rejects(startLocalSupabase(first.options), /command timeout/);
+  assert.equal(first.elapsed, 15 * 60_000);
+  assert.equal(first.calls.filter((call) => call.command === binary).length, 1);
+  const custom = harness({ dbExists: false, stall: true, timeoutMs: 7_000 });
+  await assert.rejects(startLocalSupabase(custom.options), /command timeout/);
+  assert.equal(custom.elapsed, 7_000);
+});
+
+test("a killed CLI is rejected even if its exit code is reported as zero", async () => {
+  const subject = harness({ replies: [{ ...ready, timedOut: true }] });
+  await assert.rejects(startLocalSupabase(subject.options), /command timeout/);
+  assert.equal(subject.calls.filter((call) => call.command === binary).length, 1);
+  assert.equal(subject.messages.includes("Local Supabase services are ready."), false);
+});
+
 test("nontransient errors, another project's starting state, and malformed output fail immediately", async () => {
   for (const failure of [
     starting(projectId, "unhealthy"), starting("other-project"), result(1, "fake-private-key"),

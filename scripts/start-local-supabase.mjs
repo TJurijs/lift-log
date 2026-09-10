@@ -33,7 +33,7 @@ export function installedSupabaseBinary(workdir, {
 function execute(command, args, options) {
   return new Promise((resolve) => {
     execFile(command, args, { ...options, encoding: "utf8", windowsHide: true, maxBuffer: 2 * 1024 * 1024, killSignal: "SIGKILL" }, (error, stdout, stderr) => {
-      resolve({ code: error?.code ?? 0, stdout, stderr, timedOut: Boolean(error?.killed) });
+      resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr, timedOut: Boolean(error?.killed) });
     });
   });
 }
@@ -88,7 +88,7 @@ export async function startLocalSupabase({
   if (env.DOCKER_HOST && !isLocalDockerEndpoint(env.DOCKER_HOST)) throw new LocalStartupError("Local Supabase startup rejected a remote Docker override. No startup command was run.");
   try { await verifyDocker({ env }); }
   catch { throw new LocalStartupError("The local Docker engine is not ready. Check the guarded Docker launcher before retrying npm run db:start."); }
-  const deadline = now() + timeoutMs;
+  let deadline = now() + timeoutMs;
   const command = async (executable, args, commandLimit, commandEnv = env) => {
     const remaining = deadline - now();
     if (remaining <= 0) throw new LocalStartupError("Local Supabase startup did not finish within 120 seconds. Inspect the local container health before retrying; no database reset was performed.");
@@ -125,7 +125,11 @@ export async function startLocalSupabase({
   if (listed.code !== 0 || !/^(?:[a-f0-9]{12,64})?$/.test(listed.stdout.trim())) {
     throw new LocalStartupError("Could not inspect the existing local database. No Supabase startup command was run.");
   }
-  if (listed.stdout.trim()) {
+  const firstStart = !listed.stdout.trim();
+  // A clean machine must download images and initialize the database. Keep
+  // ordinary restarts short, but allow one bounded first installation.
+  if (firstStart && timeoutMs === maxStartupMs) deadline = now() + 15 * 60_000;
+  if (!firstStart) {
     let dbId;
     let waitingForDb = false;
     while (true) {
@@ -146,8 +150,8 @@ export async function startLocalSupabase({
   let waiting = false;
   while (true) {
     attempts++;
-    const result = await command(executable, ["start", "--workdir", workdir, "--output", "json"], cliCommandMs, pinnedEnv);
-    if (result.code === 0) break;
+    const result = await command(executable, ["start", "--workdir", workdir, "--output", "json"], firstStart ? 15 * 60_000 : cliCommandMs, pinnedEnv);
+    if (result.code === 0 && !result.timedOut) break;
     if (result.timedOut || !isStartingDatabaseError(result, projectId)) throw startupFailure(result, projectId);
     if (!waiting) { log("The local database is still starting; waiting for its health check…"); waiting = true; }
     const remaining = deadline - now();
