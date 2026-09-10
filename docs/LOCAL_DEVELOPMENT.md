@@ -4,7 +4,7 @@ For everyday local development, run `npm run dev:local`. For dependencies only, 
 
 These commands validate the local Docker target, start Docker Desktop when required on Windows, wait for a healthy Linux engine, and start the existing Supabase stack. Hosted Docker endpoints are rejected. They do not change Docker context, reset the database, prune volumes or seed replacement data.
 
-Supabase startup retries the specific temporary database `starting` health state for up to 120 seconds. Other failures stop with a diagnostic. The enabled Edge Runtime is also restored from its existing container when Docker shutdown has stopped it. Local keys and generated container configuration stay out of startup output.
+Supabase startup retries the specific temporary database `starting` health state for up to 120 seconds on an existing installation. A first installation, detected by the absence of this project's database container, has a bounded 15-minute allowance for image downloads and initialization. Other failures stop with a diagnostic, and a killed CLI process is always treated as failure. The enabled Edge Runtime is also restored from its existing container when Docker shutdown has stopped it. Local keys and generated container configuration stay out of startup output.
 
 The demo and local database modes use separate Vite dependency caches, so running both previews does not invalidate React's optimized assets in the other server.
 
