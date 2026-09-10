@@ -1,5 +1,7 @@
 # Reviewed development template update
 
+Applied and verified on development on 2026-09-10. Post-update read-only inspection returned `already-applied`; published content, existing schedules and session history were preserved. See the [release evidence](../review/evidence/phase-7/dev-rollout-20260910-recording.md).
+
 This is an operational update to one reviewed personal template, not a schema migration or a catalog-wide change. The executable refuses every database except development project `ofyeejyfroblunbspgve`. Do not run it against production. It requires migration `202609100005`, which protects timed entries from older cached clients, and a verified development database backup before application.
 
 The private reviewed plan is intentionally ignored by Git because it contains personal workout content and identifiers:

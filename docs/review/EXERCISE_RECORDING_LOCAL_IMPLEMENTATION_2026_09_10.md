@@ -1,6 +1,6 @@
 # Exercise recording — local implementation, 10 September 2026
 
-Status: implemented and applied locally for review. Nothing has been pushed or deployed from this change set.
+Status: deployed to development and pushed to GitHub. The implementation notes below retain the original local verification history; the [rollout evidence](evidence/phase-7/dev-rollout-20260910-recording.md) records the final release, hosted migrations and future template update. Production was not changed.
 
 ## Behavior
 

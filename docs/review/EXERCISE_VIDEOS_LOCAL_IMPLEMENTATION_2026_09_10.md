@@ -1,6 +1,6 @@
 # Custom exercise videos — local implementation, 10 September 2026
 
-Status: implemented locally. No push or hosted deployment has been performed.
+Status: deployed to development and pushed to GitHub. The [rollout evidence](evidence/phase-7/dev-rollout-20260910-recording.md) records final validation, hosted migration status and the updated reusable template. The figures below describe the earlier local implementation stage. Production was not changed.
 
 ## Behavior
 
