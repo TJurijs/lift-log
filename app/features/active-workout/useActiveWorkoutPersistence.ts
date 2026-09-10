@@ -860,7 +860,11 @@ export function useActiveWorkoutPersistence(
       if (cancelled || invalidated()) return;
       updateWriterState("initializing");
       setConflict(null);
-      scope.lease = await acquireActiveWorkoutWriter(options.userId, session.id);
+      scope.lease = await acquireActiveWorkoutWriter(options.userId, session.id, undefined, {
+        retryForMs: writerAttempt > 0 ? 2_000 : 0,
+        signal: scope.abortController.signal,
+        onBlocked: () => updateWriterState("blocked"),
+      });
       if (cancelled || invalidated()) {
         await scope.lease?.release();
         return;

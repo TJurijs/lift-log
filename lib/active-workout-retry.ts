@@ -227,7 +227,7 @@ export interface ActiveWorkoutRetryOptions
   ) => void | Promise<void>;
 }
 
-function defaultSleep(delayMs: number, signal?: AbortSignal) {
+export function waitForActiveWorkoutRetry(delayMs: number, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
       reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
@@ -255,7 +255,7 @@ export async function runWithActiveWorkoutRetry<T>(
     throw new RangeError("Maximum retry attempts must be one or greater");
   }
   const classify = options.classify ?? classifyActiveWorkoutFailure;
-  const sleep = options.sleep ?? defaultSleep;
+  const sleep = options.sleep ?? waitForActiveWorkoutRetry;
   for (let attemptCount = 1; attemptCount <= maxAttempts; attemptCount += 1) {
     if (options.signal?.aborted) {
       throw options.signal.reason ?? new DOMException("Aborted", "AbortError");
