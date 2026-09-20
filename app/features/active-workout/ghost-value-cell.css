@@ -1,0 +1,43 @@
+.ghost-value-cell {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+.ghost-value-cell:not(.has-previous) {
+  display: contents;
+}
+.ghost-value-cell.has-previous > input,
+.ghost-value-cell.has-previous .rpe-select-trigger {
+  min-height: 52px;
+  padding-top: 6px;
+  padding-bottom: 22px;
+}
+.ghost-value-cell-hint {
+  position: absolute;
+  right: 3px;
+  bottom: 5px;
+  left: 3px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: normal;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.result-input > .ghost-value-cell.has-previous {
+  display: block;
+}
+.rpe-result-input > .ghost-value-cell {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+.result-input .ghost-value-cell.has-previous + small {
+  align-self: flex-start;
+  padding-top: 8px;
+}

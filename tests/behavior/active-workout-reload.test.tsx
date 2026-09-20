@@ -80,6 +80,7 @@ function renderWorkout(
   workspace: WorkspaceData,
   repository: LiftLogRepository,
 ) {
+  repository.loadPreviousWorkoutValues ??= vi.fn().mockResolvedValue(null);
   return render(
     <LiftLogApp
       viewer={demoViewer}
@@ -96,11 +97,8 @@ async function waitForWorkoutEditing() {
   );
 }
 
-async function finishWithoutUnrecordedResults() {
+async function finishSession() {
   fireEvent.click(screen.getByRole("button", { name: "Finish and save session" }));
-  // These persistence fixtures intentionally record only one exercise. Missing
-  // results now stay blank and require an explicit choice before completion.
-  fireEvent.click(await screen.findByRole("button", { name: "Finish without those results" }));
 }
 
 beforeEach(() => {
@@ -203,7 +201,7 @@ describe("active workout reload recovery", () => {
     renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
     fireEvent.change(screen.getByLabelText(`${item.title}, set 1, load in kg`), { target: { value: "100" } });
-    await finishWithoutUnrecordedResults();
+    await finishSession();
     await waitFor(() => expect(completeSession).toHaveBeenCalledOnce());
     expect(saveSessionDraft.mock.calls.at(-1)?.[4]).toBe("Note saved from phone");
     expect(completeSession).toHaveBeenCalledWith(activeSession.id, "8", "Note saved from phone", 9, expect.any(String));
@@ -218,7 +216,7 @@ describe("active workout reload recovery", () => {
     Object.assign(repository, { completeSession });
     renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
-    await finishWithoutUnrecordedResults();
+    await finishSession();
     await waitFor(() => expect(completeSession).toHaveBeenCalled());
     expect(screen.getByRole("textbox", { name: "Session notes optional" })).toBeDisabled();
     fireEvent.click(screen.getByLabelText(/^More actions for /));
@@ -386,7 +384,7 @@ describe("active workout reload recovery", () => {
     expect(saveSessionDraft.mock.calls[1]?.[5]).toBe(15);
     expect(reloadActiveSession).toHaveBeenCalledWith(activeSession.id);
 
-    await finishWithoutUnrecordedResults();
+    await finishSession();
     await waitFor(() => expect(completeSession).toHaveBeenCalledOnce(), {
       timeout: 2_000,
     });
@@ -473,7 +471,7 @@ describe("active workout reload recovery", () => {
       screen.getByLabelText(`${item.title}, set 1, load in kg`),
       { target: { value: "72" } },
     );
-    await finishWithoutUnrecordedResults();
+    await finishSession();
 
     await waitFor(() => expect(completeSession).toHaveBeenCalledOnce(), {
       timeout: 2_000,
@@ -502,10 +500,10 @@ describe("active workout reload recovery", () => {
 
     renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
-    await finishWithoutUnrecordedResults();
+    await finishSession();
     await waitFor(() => expect(completeSession).toHaveBeenCalledOnce());
 
-    await finishWithoutUnrecordedResults();
+    await finishSession();
     await waitFor(() => expect(completeSession).toHaveBeenCalledTimes(2));
 
     expect(saveSessionDraft).not.toHaveBeenCalled();
@@ -530,7 +528,7 @@ describe("active workout reload recovery", () => {
     await waitFor(async () =>
       expect(await loadCachedActiveWorkoutWorkspace(demoViewer)).not.toBeNull(),
     );
-    await finishWithoutUnrecordedResults();
+    await finishSession();
 
     await waitFor(() =>
       expect(

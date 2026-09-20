@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlannedWorkout, SessionSetValue, WorkoutItem } from "../../lib/domain";
-import { plannedRecordingValues, unrecordedEntryCount } from "../../lib/workout-recording";
+import { plannedIntervalRecordingValues, plannedRecordingValues, unrecordedEntryCount } from "../../lib/workout-recording";
 
 function item(overrides: Partial<WorkoutItem> = {}): WorkoutItem {
   return { id: "exercise", title: "Exercise", cue: "", mode: "sets", fields: ["reps", "load"], prescription: { sets: 3, reps: "5", loadKg: 40 }, ...overrides };
@@ -31,6 +31,21 @@ describe("planned recording values", () => {
   it("preserves explicit zero and canonical kilometres without treating them as missing", () => {
     expect(plannedRecordingValues(item({ fields: ["reps", "load", "duration", "distance"], prescription: { reps: "0", loadKg: 0, durationMinutes: 0, distance: 0, distanceUnit: "m" } }))).toEqual({ reps: "0", load: "0", duration: "0", distance: "0" });
     expect(plannedRecordingValues(item({ fields: ["distance"], prescription: { distance: 1.609344, distanceUnit: "km" } }))).toEqual({ distance: "1.609344" });
+  });
+
+  it("seeds interval work per round, preserves zero, and leaves unavailable measurements and effort blank", () => {
+    const movement = item({ mode: "intervals", fields: ["rounds", "duration", "distance", "heartRate", "rpe"], prescription: {
+      rounds: 3, workSeconds: 99, targetRpe: "8", entries: [
+        { workSeconds: 20, durationMinutes: 3, distance: 100, distanceUnit: "m", targetRpe: "7" },
+        { workSeconds: 0, distance: 0, distanceUnit: "km" },
+        { durationMinutes: 0.75 },
+      ],
+    } });
+    expect(plannedIntervalRecordingValues(movement)).toEqual({
+      "round.0.completed": "1", "round.0.duration": "20", "round.0.distance": "0.1", "round.0.heartRate": "", "round.0.rpe": "",
+      "round.1.completed": "1", "round.1.duration": "0", "round.1.distance": "0", "round.1.heartRate": "", "round.1.rpe": "",
+      "round.2.completed": "1", "round.2.duration": "45", "round.2.distance": "", "round.2.heartRate": "", "round.2.rpe": "",
+    });
   });
 });
 

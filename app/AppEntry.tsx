@@ -3,6 +3,8 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { InlineError, Toast } from "./ui-primitives";
 import { demoWorkspace, createExerciseRecordingDemoWorkspace } from "../lib/demo-data";
+import { createPreviousValuesDemoSession, createPreviousValuesDemoWorkspace } from "./features/active-workout/previous-workout-demo";
+import { clearPreviousWorkoutValuesForUser } from "./features/active-workout/usePreviousWorkoutValues";
 import {
   demoViewer,
   getSupabaseBrowserClient,
@@ -31,6 +33,7 @@ const LiftLogApp = lazy(() =>
 );
 
 async function clearActiveWorkoutPersistenceForUser(userId: string) {
+  clearPreviousWorkoutValuesForUser(userId);
   const persistence = await import(
     "./features/active-workout/useActiveWorkoutPersistence"
   );
@@ -93,9 +96,11 @@ function wait(milliseconds: number) {
 
 export default function AppEntry() {
   const [localDemoWorkspace] = useState<WorkspaceData | null>(() => localDemoAvailable
-    ? new URLSearchParams(window.location.search).get("example") === "recording"
-      ? createExerciseRecordingDemoWorkspace() : demoWorkspace
+    ? new URLSearchParams(window.location.search).get("example") === "previous" ? createPreviousValuesDemoWorkspace()
+      : new URLSearchParams(window.location.search).get("example") === "recording" ? createExerciseRecordingDemoWorkspace() : demoWorkspace
     : null);
+  const [localDemoSessions] = useState(() => localDemoAvailable && localDemoWorkspace && new URLSearchParams(window.location.search).get("example") === "previous"
+    ? [createPreviousValuesDemoSession(localDemoWorkspace.scheduledWorkouts[0])] : []);
   const [status, setStatus] = useState<AuthStatus>(isSupabaseConfigured ? "loading" : "anonymous");
   const [session, setSession] = useState<Session | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -441,6 +446,7 @@ export default function AppEntry() {
           viewer={demoViewer}
           onSignOut={signOut}
           initialWorkspace={localDemoWorkspace!}
+          initialDemoSessions={localDemoSessions}
           repository={null}
         />
       </Suspense>

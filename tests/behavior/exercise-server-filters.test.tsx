@@ -93,6 +93,7 @@ describe("server-backed exercise filters", () => {
     });
     const repository = {
       searchExercises,
+      loadPreviousWorkoutValues: vi.fn().mockResolvedValue(null),
     } as unknown as LiftLogRepository;
 
     window.history.replaceState(null, "", window.location.pathname);

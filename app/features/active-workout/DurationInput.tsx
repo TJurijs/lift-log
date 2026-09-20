@@ -1,5 +1,6 @@
 import { useState, type InputHTMLAttributes } from "react";
 import { durationMinutesValue, durationSecondsValue } from "../../../lib/duration";
+import { GhostValueCell } from "./GhostValueCell";
 
 type Props = Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type"> & {
   value: string;
@@ -24,12 +25,15 @@ export function DurationInput({ value, onChange, unit = "sec", onBlur, ...props 
   />;
 }
 
-export function DurationField({ value, onChange, disabled }: Pick<Props, "value" | "onChange" | "disabled">) {
+export function DurationField({ value, onChange, disabled, previous }: Pick<Props, "value" | "onChange" | "disabled"> & { previous?: string }) {
   const [unit, setUnit] = useState<"sec" | "min">(() => Number(value) >= 1 ? "min" : "sec");
+  const previousValue = previous === undefined ? undefined : unit === "sec" ? durationSecondsValue(previous) : previous;
   return <label className="result-input duration-input">
     <span>Time <select aria-label="Time unit" value={unit} disabled={disabled} onChange={(event) => setUnit(event.target.value as "sec" | "min")}>
       <option value="sec">sec</option><option value="min">min</option>
     </select></span>
-    <DurationInput aria-label={`Time in ${unit === "sec" ? "seconds" : "minutes"}`} unit={unit} value={value} onChange={onChange} disabled={disabled} placeholder="—" />
+    <GhostValueCell previous={previousValue}>
+      <DurationInput aria-label={`Time in ${unit === "sec" ? "seconds" : "minutes"}`} unit={unit} value={value} onChange={onChange} disabled={disabled} placeholder="—" />
+    </GhostValueCell>
   </label>;
 }

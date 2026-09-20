@@ -647,6 +647,16 @@ export interface SessionSetValue {
   heartRate?: string;
 }
 
+/** Reference values only; never merge these into an active workout draft. */
+export interface PreviousWorkoutValues {
+  sessionId: string;
+  completedAt: string;
+  items: Record<string, {
+    setLogs: SessionSetValue[];
+    resultLog: Record<string, string>;
+  }>;
+}
+
 export interface ActiveSession {
   id: string;
   /** Last server-confirmed atomic draft revision. */

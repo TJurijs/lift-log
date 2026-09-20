@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { starterSetLogs, useActiveWorkoutForm } from "../../app/features/active-workout/useActiveWorkoutForm";
+import { starterResultLogs, starterSetLogs, useActiveWorkoutForm } from "../../app/features/active-workout/useActiveWorkoutForm";
 import { completeDemoWorkout, createDemoWorkoutSession } from "../../app/features/active-workout/demo-workout";
 import { diffActiveWorkoutSnapshots } from "../../app/features/active-workout/useActiveWorkoutPersistence";
 import { demoWorkspace } from "../../lib/demo-data";
@@ -27,16 +27,56 @@ function blankSnapshot() {
 }
 
 describe("actual workout results", () => {
-  it("starts every actual blank, preserves planned row counts, and never copies targets after a note edit", () => {
+  it("starts exact objective targets once, preserving planned row counts and blank effort after a note edit", () => {
     const planned = schedule();
     const session = createDemoWorkoutSession(planned);
-    expect(session.setLogs.plank).toEqual(Array.from({ length: 3 }, () => ({ reps: "", load: "", rpe: "", duration: "" })));
+    expect(session.setLogs.plank).toEqual(Array.from({ length: 3 }, () => ({ reps: "", load: "", rpe: "", duration: "0.5" })));
     expect(session.sessionRpe).toBe("");
     const { result } = renderHook(() => useActiveWorkoutForm(session, planned.workout));
     act(() => result.current.setSessionNote("Only a note"));
     const payload = buildSessionDraftPayload(session, result.current.setLogs, result.current.resultLogs, result.current.sessionRpe, result.current.sessionNote);
     expect(payload.sessionRpe).toBeNull();
-    expect(payload.items[0].entries.every((entry) => Object.entries(entry).every(([key, value]) => key === "position" || value === null))).toBe(true);
+    expect(payload.items[0].entries.map((entry) => entry.durationSeconds)).toEqual([30, 30, 30]);
+    expect(payload.items[0].entries.every((entry) => entry.reps === null && entry.loadKg === null && entry.rpe === null && entry.heartRate === null)).toBe(true);
+  });
+
+  it("keeps cleared values, zero and removed sets after rerenders and completion", () => {
+    const planned = schedule();
+    const session = createDemoWorkoutSession(planned);
+    const { result, rerender } = renderHook(() => useActiveWorkoutForm(session, planned.workout));
+    act(() => {
+      result.current.updateSet("plank", 0, "duration", "");
+      result.current.updateSet("plank", 1, "duration", "0");
+      result.current.removeSet("plank", 2);
+    });
+    planned.workout.sections[0].items[0].prescription.durationMinutes = 2;
+    rerender();
+    expect(result.current.setLogs.plank.map((entry) => entry.duration)).toEqual(["", "0"]);
+    expect(completeDemoWorkout(session, planned, result.current.snapshot).items[0].entries).toEqual([
+      { position: 0, durationMinutes: undefined }, { position: 1, durationMinutes: 0 },
+    ]);
+    act(() => { result.current.removeSet("plank", 1); result.current.removeSet("plank", 0); });
+    expect(completeDemoWorkout(session, planned, result.current.snapshot).items[0].entries).toEqual([]);
+    expect(starterSetLogs(planned.workout, { ...session, setLogs: { plank: [] } })).toEqual({ plank: [] });
+  });
+
+  it("prefills single results and retained interval rounds only for a new session", () => {
+    const planned = schedule();
+    planned.workout.sections[0].items = [
+      { id: "run", title: "Run", cue: "", mode: "result", fields: ["distance", "duration", "heartRate", "rpe"], prescription: { distance: 500, distanceUnit: "m", durationMinutes: 3, targetRpe: "8" } },
+      { id: "intervals", title: "Intervals", cue: "", mode: "intervals", fields: ["rounds", "duration", "rpe"], prescription: { rounds: 3, workSeconds: 30, targetRpe: "7" } },
+    ];
+    const session = createDemoWorkoutSession(planned);
+    expect(session.resultLogs.run).toEqual({ duration: "3", distance: "0.5" });
+    expect(session.resultLogs.intervals).toMatchObject({ "round.0.completed": "1", "round.1.completed": "1", "round.2.completed": "1", "round.0.duration": "30", "round.0.rpe": "" });
+    const initial = renderHook(() => useActiveWorkoutForm(null, planned.workout));
+    expect(initial.result.current.resultLogs).toEqual(session.resultLogs);
+    const edited = { run: { duration: "", distance: "0" }, intervals: {} };
+    session.resultLogs = edited;
+    expect(starterResultLogs(planned.workout, session)).toBe(edited);
+    const resumed = renderHook(() => useActiveWorkoutForm(session, planned.workout));
+    expect(resumed.result.current.resultLogs).toBe(edited);
+    expect(completeDemoWorkout(session, planned, resumed.result.current.snapshot).items[1].entries).toEqual([]);
   });
 
   it("keeps resumed real results without replacing them with new exercise defaults", () => {
@@ -104,10 +144,10 @@ describe("actual workout results", () => {
       "round.2.completed": "", "round.2.duration": "30",
     } };
     const payload = buildSessionDraftPayload(session, {}, resultLogs, "", "");
-    expect(payload.items[0].entries.map((entry) => entry.rounds)).toEqual([null, 1, null]);
+    expect(payload.items[0].entries.map((entry) => entry.rounds)).toEqual([0, 1, null]);
     expect(payload.items[0].entries.map((entry) => entry.durationSeconds)).toEqual([30, 30, 30]);
     const completed = completeDemoWorkout(session, planned, { setLogs: {}, resultLogs, sessionRpe: "", sessionNote: "" });
-    expect(completed.items[0].entries.map((entry) => entry.rounds)).toEqual([undefined, 1, undefined]);
+    expect(completed.items[0].entries.map((entry) => entry.rounds)).toEqual([0, 1, undefined]);
     expect(completed.items[0].entries.map((entry) => entry.durationMinutes)).toEqual([0.5, 0.5, 0.5]);
   });
 

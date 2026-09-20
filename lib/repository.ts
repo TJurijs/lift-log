@@ -25,6 +25,7 @@ import type {
   OutgoingCoachInvite,
   PendingCoachInvite,
   PlannedWorkout,
+  PreviousWorkoutValues,
   PrescriptionEntry,
   Prescription,
   Program,
@@ -49,6 +50,7 @@ import type {
   WorkspaceData,
 } from "./domain";
 import { trackingFieldsForMode } from "./domain";
+import { parsePreviousWorkoutValues } from "./previous-workout";
 import { exerciseVideoLinks, validateExerciseVideoLinks } from "./exercise-videos";
 import type { ActiveWorkoutDraftSnapshot } from "./active-workout-draft-storage";
 import { recordClientPerformance } from "./performance";
@@ -1395,7 +1397,7 @@ function parseActiveSessionPayload(value: unknown): ActiveSession | null {
             jsonNumeric(entry, "distanceMetres", "distance_metres"),
           );
           return [
-            [`round.${position}.completed`, jsonInteger(entry, "rounds") ? "1" : ""],
+            [`round.${position}.completed`, jsonInteger(entry, "rounds") === 0 ? "0" : jsonInteger(entry, "rounds") ? "1" : ""],
             [
               `round.${position}.duration`,
               durationSeconds === undefined
@@ -1512,7 +1514,7 @@ export function buildSessionDraftPayload(
                 numberValue(result[`round.${position}.distance`]) === null
                   ? null
                   : Number(result[`round.${position}.distance`]) * 1000,
-              rounds: result[`round.${position}.completed`] === "1" ? 1 : null,
+              rounds: result[`round.${position}.completed`] === "1" ? 1 : result[`round.${position}.completed`] === "0" ? 0 : null,
               heartRate: numberValue(result[`round.${position}.heartRate`]),
               rpe: numberValue(result[`round.${position}.rpe`]),
             }))
@@ -3442,6 +3444,22 @@ export class LiftLogRepository {
       fail("Could not complete the workout", result.error);
     }
     this.invalidateProgramRunProgress();
+    this.queryCache.invalidate("previous-workout:");
+  }
+
+  /** Previous actuals are a separate read model, never active-session defaults. */
+  async loadPreviousWorkoutValues(workoutId: string, excludeSessionId?: string): Promise<PreviousWorkoutValues | null> {
+    return this.queryCache.getOrLoad(
+      `previous-workout:${workoutId}:${excludeSessionId ?? ""}`,
+      async () => {
+        const result = await this.client.rpc("get_previous_workout_values", {
+          target_workout_id: workoutId,
+          exclude_session_id: excludeSessionId ?? null,
+        });
+        if (result.error) fail("Could not load previous workout values", result.error);
+        return parsePreviousWorkoutValues(result.data);
+      },
+    );
   }
 
   private async loadOwnSessionNotes(sessionId: string): Promise<OwnSessionNotes> {

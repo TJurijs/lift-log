@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { ActiveSession, PlannedWorkout, SessionSetValue } from "../../../lib/domain";
 import type { ActiveWorkoutDraftSnapshot } from "../../../lib/active-workout-draft-storage";
+import { plannedIntervalRecordingValues, plannedRecordingValues } from "../../../lib/workout-recording";
 
 export function starterSetLogs(workout: PlannedWorkout, session: ActiveSession | null) {
   if (session?.workoutId === workout.id) return session.setLogs;
@@ -10,14 +11,25 @@ export function starterSetLogs(workout: PlannedWorkout, session: ActiveSession |
     const entries = item.prescription.entries?.length
       ? item.prescription.entries
       : Array.from({ length: item.prescription.sets ?? 1 }, () => item.prescription);
-    logs[item.id] = entries.map(() => ({
+    logs[item.id] = entries.map((_, index) => ({
       reps: "",
       load: "",
       rpe: "",
       ...(item.fields.includes("duration") ? { duration: "" } : {}),
       ...(item.fields.includes("distance") ? { distance: "" } : {}),
       ...(item.fields.includes("heartRate") ? { heartRate: "" } : {}),
+      ...plannedRecordingValues(item, index),
     }));
+  }
+  return logs;
+}
+
+export function starterResultLogs(workout: PlannedWorkout, session: ActiveSession | null) {
+  if (session?.workoutId === workout.id) return session.resultLogs;
+  const logs: Record<string, Record<string, string>> = {};
+  for (const item of workout.sections.flatMap((section) => section.items)) {
+    if (item.mode === "result") logs[item.id] = { ...plannedRecordingValues(item) };
+    if (item.mode === "intervals") logs[item.id] = plannedIntervalRecordingValues(item);
   }
   return logs;
 }
@@ -30,7 +42,7 @@ export function useActiveWorkoutForm(
   const [setLogs, setSetLogs] = useState<Record<string, SessionSetValue[]>>(() =>
     initialSession?.setLogs ?? (workout ? starterSetLogs(workout, null) : {}));
   const [resultLogs, setResultLogs] = useState<ActiveWorkoutDraftSnapshot["resultLogs"]>(
-    initialSession?.resultLogs ?? {},
+    () => initialSession?.resultLogs ?? (workout ? starterResultLogs(workout, null) : {}),
   );
   const [sessionRpe, setSessionRpe] = useState(initialSession?.sessionRpe ?? "");
   const [sessionNote, setSessionNote] = useState(initialSession?.sessionNote ?? "");

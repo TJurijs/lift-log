@@ -1,0 +1,18 @@
+.previous-workout-caption,
+.session-finish-hint {
+  display: block;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-caption);
+  line-height: 1.5;
+}
+.previous-workout-caption { padding-bottom: 8px; }
+.session-finish-hint { padding: 8px 0; }
+.interval-round-toggle.round-skip-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 44px;
+}
+.round-skipped .interval-plan-cell { color: var(--muted); }

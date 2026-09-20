@@ -20,7 +20,7 @@ describe("exercise instructions during training", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Start workout" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Session notes optional" })).toBeEnabled());
     const plank = screen.getByText("Plank").closest(".log-item") as HTMLElement;
-    expect(within(plank).getByRole("textbox", { name: "Plank, set 1, time in seconds" })).toHaveValue("");
+    expect(within(plank).getByRole("textbox", { name: "Plank, set 1, time in seconds" })).toHaveValue("30");
     expect(within(plank).queryByRole("button", { name: /Mark round/ })).not.toBeInTheDocument();
     expect(plank).toHaveTextContent("Keep your elbows below your shoulders and avoid letting your hips drop.");
     expect(plank).toHaveTextContent("Rest 30 seconds between sets.");
@@ -31,8 +31,8 @@ describe("exercise instructions during training", () => {
     expect(combination).toHaveTextContent("Complete 4 sets. RPE 6–7; rest 2–3 minutes after each set.");
     expect(combination).toHaveTextContent("These 4 jerks are additional to the 4 standalone jerks earlier in the workout.");
     expect(combination.querySelector(".exercise-note")?.textContent).toContain("\n");
-    expect(within(combination).getByRole("textbox", { name: "Power clean + push jerk, set 1, reps" })).toHaveValue("");
-    expect(within(combination).getByRole("textbox", { name: "Power clean + push jerk, set 4, reps" })).toHaveValue("");
+    expect(within(combination).getByRole("textbox", { name: "Power clean + push jerk, set 1, reps" })).toHaveValue("3");
+    expect(within(combination).getByRole("textbox", { name: "Power clean + push jerk, set 4, reps" })).toHaveValue("3");
     expect(within(combination).getByRole("button", { name: "Watch Power clean + push jerk: 1. Power clean" })).toBeVisible();
     fireEvent.click(within(combination).getByRole("button", { name: "Watch Power clean + push jerk: 2. Push jerk" }));
     const player = await screen.findByTitle("Power clean + push jerk — 2. Push jerk exercise demonstration");

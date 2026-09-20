@@ -2,7 +2,7 @@ import type { ActiveSession, CompletedSessionDetail, CompletedSessionEntry, Sche
 import { workoutItemNotes } from "../../../lib/domain";
 import type { ActiveWorkoutDraftSnapshot } from "../../../lib/active-workout-draft-storage";
 import { localDateOnly } from "../../../lib/date-only";
-import { starterSetLogs } from "./useActiveWorkoutForm";
+import { starterResultLogs, starterSetLogs } from "./useActiveWorkoutForm";
 
 export function createDemoWorkoutSession(schedule: ScheduledWorkout): ActiveSession {
   const id = `demo-session-${crypto.randomUUID()}`;
@@ -15,7 +15,7 @@ export function createDemoWorkoutSession(schedule: ScheduledWorkout): ActiveSess
     itemLogIds: Object.fromEntries(schedule.workout.sections.flatMap((section) => section.items).map((item) => [item.id, `${id}:${item.id}`])),
     itemFields: Object.fromEntries(schedule.workout.sections.flatMap((section) => section.items).map((item) => [item.id, item.fields])),
     setLogs: starterSetLogs(schedule.workout, null),
-    resultLogs: {},
+    resultLogs: starterResultLogs(schedule.workout, null),
     sessionRpe: "",
     sessionNote: "",
   };
@@ -55,7 +55,7 @@ export function completeDemoWorkout(
             position: index,
             durationMinutes: number(result[`round.${index}.duration`], 60),
             distanceKm: number(result[`round.${index}.distance`]),
-            rounds: result[`round.${index}.completed`] === "1" ? 1 : undefined,
+            rounds: result[`round.${index}.completed`] === "1" ? 1 : result[`round.${index}.completed`] === "0" ? 0 : undefined,
             heartRate: number(result[`round.${index}.heartRate`]),
             rpe: number(result[`round.${index}.rpe`]),
           }))

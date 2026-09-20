@@ -58,6 +58,7 @@ import type {
   OutgoingCoachInvite,
   PendingCoachInvite,
   PlannedWorkout,
+  PreviousWorkoutValues,
   PrescriptionEntry,
   Program,
   ProgramAssignment,
@@ -105,6 +106,8 @@ import {
 import {
   formatDistanceKilometres,
   formatWeight,
+  distanceInputValue,
+  weightInputValue,
 } from "../lib/units";
 import {
   programWorkoutCount,
@@ -144,11 +147,15 @@ import {
 } from "./exercise-category-icons";
 import { ExerciseVideoLinks } from "./exercise-video-link";
 import { useActiveWorkoutPersistence } from "./features/active-workout/useActiveWorkoutPersistence";
-import { starterSetLogs, useActiveWorkoutForm } from "./features/active-workout/useActiveWorkoutForm";
+import { starterResultLogs, starterSetLogs, useActiveWorkoutForm } from "./features/active-workout/useActiveWorkoutForm";
+import { GhostValueCell } from "./features/active-workout/GhostValueCell";
+import { usePreviousWorkoutValues } from "./features/active-workout/usePreviousWorkoutValues";
+import { previousDemoWorkoutValues } from "./features/active-workout/previous-workout-demo";
+import "./features/active-workout/workout-reference.css";
 import { MeasurementInput } from "./features/active-workout/MeasurementInput";
 import { DurationInput, DurationField } from "./features/active-workout/DurationInput";
-import { formatRecordedDuration } from "../lib/duration";
-import { plannedRecordingValues, unrecordedEntryCount } from "../lib/workout-recording";
+import { durationSecondsValue, formatRecordedDuration } from "../lib/duration";
+import { plannedRecordingValues, plannedIntervalRecordingValues } from "../lib/workout-recording";
 import { completeDemoWorkout, createDemoWorkoutSession } from "./features/active-workout/demo-workout";
 import { RpeChoiceButtons, RpeLegend, RpeSelect, rpeTone, wholeRpe } from "./features/active-workout/RpeInputs";
 export { PlannedRpeSelect, RpeChoiceButtons, RpeSelect } from "./features/active-workout/RpeInputs";
@@ -387,11 +394,13 @@ export default function LiftLogApp({
   onSignOut,
   initialWorkspace,
   repository,
+  initialDemoSessions = [],
 }: {
   viewer: AppViewer;
   onSignOut: () => void;
   initialWorkspace: WorkspaceData;
   repository: LiftLogRepository | null;
+  initialDemoSessions?: CompletedSessionDetail[];
 }) {
   const [activeView, setActiveView] = useState<ViewName>(() =>
     typeof window === "undefined" ? "today" : parseAppView(window.location.hash),
@@ -443,7 +452,7 @@ export default function LiftLogApp({
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(
     initialWorkspace.activeSession,
   );
-  const demoCompletedSessions = useRef(new Map<string, CompletedSessionDetail>());
+  const [demoCompletedSessions, setDemoCompletedSessions] = useState(() => new Map(initialDemoSessions.map((session) => [session.id, session])));
   const [workoutStarted, setWorkoutStarted] = useState(
     Boolean(initialWorkspace.activeSession),
   );
@@ -451,7 +460,6 @@ export default function LiftLogApp({
     Boolean(initialWorkspace.activeSession),
   );
   const [workoutComplete, setWorkoutComplete] = useState(false);
-  const [unrecordedFinishCount, setUnrecordedFinishCount] = useState<number | null>(null);
   const workoutActionRef = useRef<"starting" | "finishing" | null>(null);
   const [workoutAction, setWorkoutAction] = useState<
     "starting" | "finishing" | null
@@ -515,7 +523,7 @@ export default function LiftLogApp({
       completedWorkoutRequestRef.current = requestId;
       const pending: CompletedWorkoutViewState = {
         session: history.session,
-        detail: repository ? null : demoCompletedSessions.current.get(history.session.id) ?? { ...history.session, items: [] },
+        detail: repository ? null : demoCompletedSessions.get(history.session.id) ?? { ...history.session, items: [] },
         loading: Boolean(repository),
         error: "",
         returnView: history.returnView,
@@ -564,7 +572,7 @@ export default function LiftLogApp({
           });
         });
     },
-    [repository, setDetail],
+    [repository, setDetail, demoCompletedSessions],
   );
   useEffect(
     () => () => {
@@ -1361,6 +1369,16 @@ export default function LiftLogApp({
   const sessionDraftConflict = activeWorkoutPersistence.conflict;
   const sessionSaveStatus = activeWorkoutPersistence.status;
   const isOnline = activeWorkoutPersistence.online;
+  const referenceWorkout = workoutPreviewSchedule?.workout ?? (activeView === "today" ? todayWorkout : undefined);
+  const demoPreviousValues = useMemo(() => {
+    if (!import.meta.env.DEV || repository || !referenceWorkout) return null;
+    const previousSession = [...demoCompletedSessions.values()]
+      .filter((session) => session.workoutId === referenceWorkout.id && session.id !== activeSession?.id)
+      .sort((left, right) => right.date.localeCompare(left.date))[0];
+    return previousDemoWorkoutValues(referenceWorkout, previousSession);
+  }, [repository, referenceWorkout, demoCompletedSessions, activeSession?.id]);
+  const previousWorkoutValues = usePreviousWorkoutValues({ repository, viewerId: viewer.id,
+    workoutId: referenceWorkout?.id, excludeSessionId: activeSession?.id, online: isOnline, demoValues: demoPreviousValues });
   const localRecoveryAvailable =
     activeWorkoutPersistence.localRecoveryAvailable;
 
@@ -1892,15 +1910,10 @@ export default function LiftLogApp({
   }
 
   async function finishWorkout() {
-    if (todayWorkout) {
-      const count = unrecordedEntryCount(todayWorkout, setLogs, resultLogs);
-      if (count) { setUnrecordedFinishCount(count); return; }
-    }
     await saveFinishedWorkout();
   }
 
   async function saveFinishedWorkout() {
-    setUnrecordedFinishCount(null);
     if (activeSession && !activeWorkoutPersistence.editable) return;
     if (workoutActionRef.current) return;
     workoutActionRef.current = "finishing";
@@ -1971,7 +1984,7 @@ export default function LiftLogApp({
       if (import.meta.env.DEV && activeSession && todaySchedule) {
         const completed = completeDemoWorkout(activeSession, todaySchedule, activeWorkoutSnapshot);
         await clearConfirmedActiveSession(activeSession, "completed");
-        demoCompletedSessions.current.set(completed.id, completed);
+        setDemoCompletedSessions((previous) => new Map(previous).set(completed.id, completed));
         setWorkspace((previous) => ({ ...previous, completedSessions: [completed, ...previous.completedSessions] }));
         setCalendarRangeData((previous) => ({ ...previous, completedSessions: [completed, ...previous.completedSessions] }));
         notify("Session saved to your demo training history");
@@ -3869,7 +3882,8 @@ export default function LiftLogApp({
             workoutComplete={!showingWorkoutPreview && workoutComplete}
             workoutAction={showingWorkoutPreview ? null : workoutAction}
             setLogs={showingWorkoutPreview ? starterSetLogs(workoutPreviewSchedule!.workout, null) : setLogs}
-            resultLogs={showingWorkoutPreview ? {} : resultLogs}
+            resultLogs={showingWorkoutPreview ? starterResultLogs(workoutPreviewSchedule!.workout, null) : resultLogs}
+            previousValues={previousWorkoutValues ?? undefined}
             sessionRpe={sessionRpe}
             sessionNote={sessionNote}
             sessionSaveStatus={sessionSaveStatus}
@@ -4744,13 +4758,6 @@ export default function LiftLogApp({
         </ModalShell>
       )}
       </Suspense>
-      {unrecordedFinishCount !== null && <ModalShell title="Finish with unrecorded results?" onClose={() => setUnrecordedFinishCount(null)}
-        description={`${unrecordedFinishCount} ${unrecordedFinishCount === 1 ? "set or result has" : "sets or results have"} not been recorded. Missing values will stay blank.`}>
-        <div className="modal-actions">
-          <button className="button secondary" onClick={() => setUnrecordedFinishCount(null)}>Keep logging</button>
-          <button className="button primary" onClick={() => void saveFinishedWorkout()}>Finish without those results</button>
-        </div>
-      </ModalShell>}
       {toast && <Toast message={toast} />}
     </main>
   );
@@ -4851,6 +4858,7 @@ function TodayView({
   workoutAction,
   setLogs,
   resultLogs,
+  previousValues,
   sessionRpe,
   sessionNote,
   sessionSaveStatus,
@@ -4891,6 +4899,7 @@ function TodayView({
   workoutAction: "starting" | "finishing" | null;
   setLogs: Record<string, SetLog[]>;
   resultLogs: Record<string, Record<string, string>>;
+  previousValues?: PreviousWorkoutValues;
   sessionRpe: string;
   sessionNote: string;
   sessionSaveStatus: SessionDraftSaveStatus;
@@ -5055,6 +5064,10 @@ function TodayView({
             </span>
           </div>
           <section className="workout-section workout-exercise-sequence">
+            {previousValues && Object.values(previousValues.items).some((item) => [...item.setLogs.flatMap((set) => Object.values(set)),
+              ...Object.entries(item.resultLog).filter(([key]) => !key.endsWith(".completed")).map(([, value]) => value)].some((value) => value?.trim())) && <p className="previous-workout-caption">
+              Last: {new Date(previousValues.completedAt).toLocaleDateString("en", { day: "numeric", month: "short" })} · previous results appear inside the cells.
+            </p>}
             {workout.sections.flatMap((section) => section.items).map((item) => (
               <div className="workout-sequence-item" key={item.id}>
                 <WorkoutLogItem
@@ -5065,6 +5078,7 @@ function TodayView({
                   distanceUnit={distanceUnit}
                   setLogs={setLogs[item.id] ?? emptySetLogs}
                   resultLog={resultLogs[item.id] ?? emptyResultLog}
+                  previousLog={previousValues?.items[item.id]}
                   onUpdateSet={onUpdateSet}
                   onAddSet={onAddSet}
                   onRemoveSet={onRemoveSet}
@@ -5119,6 +5133,7 @@ function TodayView({
               >
                 Finish and save session
               </AsyncButton>
+              <small className="session-finish-hint">Remaining sets are saved as completed. Remove any you skipped.</small>
             </div>
           )}
         </fieldset>
@@ -5152,6 +5167,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
   builderPreview = false,
   setLogs,
   resultLog,
+  previousLog,
   onUpdateSet,
   onAddSet,
   onRemoveSet,
@@ -5166,6 +5182,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
   builderPreview?: boolean;
   setLogs: SetLog[];
   resultLog: Record<string, string>;
+  previousLog?: PreviousWorkoutValues["items"][string];
   onUpdateSet: (
     itemId: string,
     index: number,
@@ -5265,6 +5282,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
             <div className="set-row" key={index}>
               <span>{index + 1}</span>
               {fields.includes("reps") && (
+                <GhostValueCell previous={previousLog?.setLogs[index]?.reps}>
                 <input
                   aria-label={`${item.title}, set ${index + 1}, reps`}
                   disabled={!active}
@@ -5275,12 +5293,14 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
                   }
                   placeholder="—"
                 />
+                </GhostValueCell>
               )}
-              {fields.includes("duration") && <DurationInput aria-label={`${item.title}, set ${index + 1}, time in seconds`} disabled={!active}
-                value={row.duration ?? ""} onChange={(value) => onUpdateSet(item.id, index, "duration", value)} placeholder="—" />}
-              {fields.includes("distance") && <MeasurementInput aria-label={`${item.title}, set ${index + 1}, distance in ${distanceUnit}`} disabled={!active}
-                quantity="distance" unit={distanceUnit} value={row.distance ?? ""} onChange={(value) => onUpdateSet(item.id, index, "distance", value)} placeholder="—" />}
+              {fields.includes("duration") && <GhostValueCell previous={durationSecondsValue(previousLog?.setLogs[index]?.duration ?? "")}><DurationInput aria-label={`${item.title}, set ${index + 1}, time in seconds`} disabled={!active}
+                value={row.duration ?? ""} onChange={(value) => onUpdateSet(item.id, index, "duration", value)} placeholder="—" /></GhostValueCell>}
+              {fields.includes("distance") && <GhostValueCell previous={distanceInputValue(previousLog?.setLogs[index]?.distance ?? "", distanceUnit)}><MeasurementInput aria-label={`${item.title}, set ${index + 1}, distance in ${distanceUnit}`} disabled={!active}
+                quantity="distance" unit={distanceUnit} value={row.distance ?? ""} onChange={(value) => onUpdateSet(item.id, index, "distance", value)} placeholder="—" /></GhostValueCell>}
               {fields.includes("load") && (
+                <GhostValueCell previous={weightInputValue(previousLog?.setLogs[index]?.load ?? "", weightUnit)}>
                 <MeasurementInput
                   aria-label={`${item.title}, set ${index + 1}, load in ${weightUnit}`}
                   disabled={!active}
@@ -5290,20 +5310,23 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
                   onChange={(value) => onUpdateSet(item.id, index, "load", value)}
                   placeholder="—"
                 />
+                </GhostValueCell>
               )}
-              {fields.includes("heartRate") && <input aria-label={`${item.title}, set ${index + 1}, average heart rate`} disabled={!active}
-                inputMode="numeric" value={row.heartRate ?? ""} placeholder="—" onChange={(event) => onUpdateSet(item.id, index, "heartRate", event.target.value)} />}
+              {fields.includes("heartRate") && <GhostValueCell previous={previousLog?.setLogs[index]?.heartRate}><input aria-label={`${item.title}, set ${index + 1}, average heart rate`} disabled={!active}
+                inputMode="numeric" value={row.heartRate ?? ""} placeholder="—" onChange={(event) => onUpdateSet(item.id, index, "heartRate", event.target.value)} /></GhostValueCell>}
               {fields.includes("rpe") && (
+                <GhostValueCell previous={previousLog?.setLogs[index]?.rpe}>
                 <RpeSelect
                   ariaLabel={`${item.title}, set ${index + 1}, actual RPE`}
                   disabled={!active}
                   value={row.rpe}
                   onChange={(value) => onUpdateSet(item.id, index, "rpe", value)}
                 />
+                </GhostValueCell>
               )}
               {showSetControls ? (
                 <button
-                  disabled={!active || setLogs.length === 1}
+                  disabled={!active}
                   aria-label={`Remove set ${index + 1}`}
                   onClick={() => onRemoveSet(item.id, index)}
                 >
@@ -5314,6 +5337,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
               )}
             </div>
           ))}
+          {active && setLogs.length === 0 && <small className="session-finish-hint">No sets · skipped</small>}
           {active && showSetControls && (
             <button className="add-row" onClick={() => onAddSet(item.id)}>
               <Plus size={14} />
@@ -5328,6 +5352,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
           active={active}
           distanceUnit={distanceUnit}
           resultLog={resultLog}
+          previousLog={previousLog?.resultLog}
           onUpdate={(field, value) => onUpdateResult(item.id, field, value)}
         />
       )}
@@ -5337,6 +5362,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
             <DurationField
               disabled={!active}
               value={resultLog.duration ?? ""}
+              previous={previousLog?.resultLog.duration}
               onChange={(value) => onUpdateResult(item.id, "duration", value)}
             />
           )}
@@ -5346,6 +5372,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
               unit={distanceUnit}
               disabled={!active}
               value={resultLog.distance ?? ""}
+              previous={distanceInputValue(previousLog?.resultLog.distance ?? "", distanceUnit)}
               onChange={(value) => onUpdateResult(item.id, "distance", value)}
               measurement={{ quantity: "distance", unit: distanceUnit }}
             />
@@ -5356,6 +5383,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
               unit={weightUnit}
               disabled={!active}
               value={resultLog.load ?? ""}
+              previous={weightInputValue(previousLog?.resultLog.load ?? "", weightUnit)}
               onChange={(value) => onUpdateResult(item.id, "load", value)}
               measurement={{ quantity: "weight", unit: weightUnit }}
             />
@@ -5366,6 +5394,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
               unit="bpm"
               disabled={!active}
               value={resultLog.heartRate ?? ""}
+              previous={previousLog?.resultLog.heartRate}
               onChange={(value) => onUpdateResult(item.id, "heartRate", value)}
             />
           )}
@@ -5374,6 +5403,7 @@ const WorkoutLogItem = memo(function WorkoutLogItem({
               label="Actual RPE"
               disabled={!active}
               value={resultLog.rpe ?? ""}
+              previous={previousLog?.resultLog.rpe}
               onChange={(value) =>
                 onUpdateResult(item.id, "rpe", value)
               }
@@ -5390,12 +5420,14 @@ function IntervalLogTable({
   active,
   distanceUnit,
   resultLog,
+  previousLog,
   onUpdate,
 }: {
   item: WorkoutItem;
   active: boolean;
   distanceUnit: OwnProfile["distanceUnit"];
   resultLog: Record<string, string>;
+  previousLog?: Record<string, string>;
   onUpdate: (field: string, value: string) => void;
 }) {
   const rounds = intervalPrescriptionEntries(item);
@@ -5429,31 +5461,40 @@ function IntervalLogTable({
       </div>
       {rounds.map((round, index) => {
         const completedKey = `round.${index}.completed`;
-        const completed = resultLog[completedKey] === "1";
+        const skipped = resultLog[completedKey] === "0";
+        const previousRound = (field: string) => previousLog?.[`round.${index}.${field}`];
+        function toggleSkipped() {
+          const targets = plannedIntervalRecordingValues(item);
+          onUpdate(completedKey, skipped ? "1" : "0");
+          for (const field of metricFields) {
+            const key = `round.${index}.${field}`;
+            onUpdate(key, skipped ? targets[key] ?? "" : "");
+          }
+        }
         return (
-          <div className="interval-log-row" key={index}>
+          <div className={cn("interval-log-row", skipped && "round-skipped")} key={index}>
             {fields.includes("rounds") ? (
               <button
                 type="button"
-                className={cn("interval-round-toggle", completed && "completed")}
+                className="interval-round-toggle round-skip-control"
                 disabled={!active}
-                aria-label={`Mark round ${index + 1} ${completed ? "incomplete" : "complete"}`}
-                aria-pressed={completed}
-                onClick={() => onUpdate(completedKey, completed ? "" : "1")}
+                aria-label={`${skipped ? "Restore" : "Skip"} round ${index + 1}`}
+                title={`${skipped ? "Restore" : "Skip"} round ${index + 1}`}
+                onClick={toggleSkipped}
               >
-                {completed ? <Check size={13} /> : index + 1}
+                {index + 1}{skipped ? <RefreshCw size={12} /> : <X size={12} />}
               </button>
             ) : (
               <span className="interval-round-number">{index + 1}</span>
             )}
             <span className="interval-plan-cell">
-              {round.workSeconds ?? "—"}/{round.restSeconds ?? "—"}
-              <small>s</small>
+              {skipped ? "Skipped" : <>{round.workSeconds ?? "—"}/{round.restSeconds ?? "—"}<small>s</small></>}
             </span>
             {fields.includes("duration") && (
+              <GhostValueCell previous={previousRound("duration")}>
               <input
                 aria-label={`${item.title}, round ${index + 1}, actual duration in seconds`}
-                disabled={!active}
+                disabled={!active || skipped}
                 inputMode="numeric"
                 placeholder="sec"
                 value={resultLog[`round.${index}.duration`] ?? ""}
@@ -5461,11 +5502,13 @@ function IntervalLogTable({
                   onUpdate(`round.${index}.duration`, event.target.value)
                 }
               />
+              </GhostValueCell>
             )}
             {fields.includes("distance") && (
+              <GhostValueCell previous={distanceInputValue(previousRound("distance") ?? "", distanceUnit)}>
               <MeasurementInput
                 aria-label={`${item.title}, round ${index + 1}, distance in ${distanceUnit === "mi" ? "miles" : "kilometres"}`}
-                disabled={!active}
+                disabled={!active || skipped}
                 quantity="distance"
                 unit={distanceUnit}
                 placeholder={distanceUnit}
@@ -5474,11 +5517,13 @@ function IntervalLogTable({
                   onUpdate(`round.${index}.distance`, value)
                 }
               />
+              </GhostValueCell>
             )}
             {fields.includes("heartRate") && (
+              <GhostValueCell previous={previousRound("heartRate")}>
               <input
                 aria-label={`${item.title}, round ${index + 1}, average heart rate`}
-                disabled={!active}
+                disabled={!active || skipped}
                 inputMode="numeric"
                 placeholder="bpm"
                 value={resultLog[`round.${index}.heartRate`] ?? ""}
@@ -5486,14 +5531,17 @@ function IntervalLogTable({
                   onUpdate(`round.${index}.heartRate`, event.target.value)
                 }
               />
+              </GhostValueCell>
             )}
             {fields.includes("rpe") && (
+              <GhostValueCell previous={previousRound("rpe")}>
               <RpeSelect
                 ariaLabel={`${item.title}, round ${index + 1}, actual RPE`}
-                disabled={!active}
+                disabled={!active || skipped}
                 value={resultLog[`round.${index}.rpe`] ?? ""}
                 onChange={(value) => onUpdate(`round.${index}.rpe`, value)}
               />
+              </GhostValueCell>
             )}
           </div>
         );
@@ -5511,17 +5559,19 @@ function RpeResultInput({
   label,
   disabled,
   value,
+  previous,
   onChange,
 }: {
   label: string;
   disabled: boolean;
   value: string;
+  previous?: string;
   onChange: (value: string) => void;
 }) {
   return (
     <label className="result-input rpe-result-input">
       <span>{label}</span>
-      <RpeSelect disabled={disabled} value={value} onChange={onChange} />
+      <GhostValueCell previous={previous}><RpeSelect disabled={disabled} value={value} onChange={onChange} /></GhostValueCell>
     </label>
   );
 }
@@ -5531,6 +5581,7 @@ function ResultInput({
   unit,
   disabled,
   value,
+  previous,
   onChange,
   measurement,
 }: {
@@ -5538,6 +5589,7 @@ function ResultInput({
   unit: string;
   disabled: boolean;
   value: string;
+  previous?: string;
   onChange: (value: string) => void;
   measurement?: { quantity: "weight"; unit: OwnProfile["weightUnit"] } | { quantity: "distance"; unit: OwnProfile["distanceUnit"] };
 }) {
@@ -5545,6 +5597,7 @@ function ResultInput({
     <label className="result-input">
       <span>{label}</span>
       <div>
+        <GhostValueCell previous={previous}>
         {measurement ? <MeasurementInput {...measurement} disabled={disabled} value={value} onChange={onChange} placeholder="—" /> : <input
           disabled={disabled}
           inputMode="decimal"
@@ -5552,6 +5605,7 @@ function ResultInput({
           onChange={(event) => onChange(event.target.value)}
           placeholder="—"
         />}
+        </GhostValueCell>
         <small>{unit}</small>
       </div>
     </label>

@@ -73,6 +73,7 @@ describe("coach history pagination flow", () => {
     const repository = {
       loadCoachingWorkspace,
       listCoachCompletedHistory,
+      loadPreviousWorkoutValues: vi.fn().mockResolvedValue(null),
     } as unknown as LiftLogRepository;
     const initialWorkspace = {
       ...demoWorkspace,
@@ -135,6 +136,7 @@ describe("coach history pagination flow", () => {
       items: [],
     });
     const repository = {
+      loadPreviousWorkoutValues: vi.fn().mockResolvedValue(null),
       loadCoachingWorkspace: vi.fn().mockResolvedValue({
         coachConnections: [],
         pendingCoachInvites: [],

@@ -12,6 +12,27 @@ export function plannedRecordingValues(item: WorkoutItem, index = 0): Partial<Se
   return values;
 }
 
+/** A new interval session starts with the planned rounds retained as completed. */
+export function plannedIntervalRecordingValues(item: WorkoutItem): Record<string, string> {
+  const entries = item.prescription.entries?.length ? item.prescription.entries : [item.prescription];
+  const count = Math.max(1, item.prescription.rounds ?? entries.length);
+  const values: Record<string, string> = {};
+  for (let index = 0; index < count; index++) {
+    const target = entries[index] ?? entries.at(-1) ?? item.prescription;
+    if (item.fields.includes("rounds")) values[`round.${index}.completed`] = "1";
+    if (item.fields.includes("duration")) {
+      const seconds = target.workSeconds ?? (target.durationMinutes === undefined ? undefined : Math.round(target.durationMinutes * 60));
+      values[`round.${index}.duration`] = seconds === undefined ? "" : String(seconds);
+    }
+    if (item.fields.includes("distance")) {
+      values[`round.${index}.distance`] = target.distance === undefined ? "" : String(target.distance / (target.distanceUnit === "m" ? 1000 : 1));
+    }
+    if (item.fields.includes("heartRate")) values[`round.${index}.heartRate`] = "";
+    if (item.fields.includes("rpe")) values[`round.${index}.rpe`] = "";
+  }
+  return values;
+}
+
 export function unrecordedEntryCount(workout: PlannedWorkout, sets: Record<string, SessionSetValue[]>, results: Record<string, Record<string, string>>) {
   let count = 0;
   for (const item of workout.sections.flatMap((section) => section.items)) {

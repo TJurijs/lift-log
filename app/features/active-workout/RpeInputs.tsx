@@ -102,6 +102,7 @@ export function RpeSelect({
   ariaLabel = "Actual RPE",
   emptyLabel = "Not logged",
   intent = "actual",
+  "aria-describedby": describedBy,
 }: {
   disabled: boolean;
   value: string;
@@ -109,6 +110,7 @@ export function RpeSelect({
   ariaLabel?: string;
   emptyLabel?: string;
   intent?: "actual" | "planned";
+  "aria-describedby"?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -170,7 +172,7 @@ export function RpeSelect({
         disabled={disabled}
         className={cn("rpe-select-trigger", value && "selected", value && `rpe-${rpeTone(value)}`)}
         aria-label={ariaLabel}
-        aria-describedby={selectionId}
+        aria-describedby={[selectionId, describedBy].filter(Boolean).join(" ")}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}

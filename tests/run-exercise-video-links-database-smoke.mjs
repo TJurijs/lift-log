@@ -134,6 +134,10 @@ try {
   const [{ today }] = await db`select current_date::text as today`;
   const [run] = await db`select * from public.create_program_runs(${program.id}::uuid, ${[owner]}::uuid[],
     ${db.json([{ workoutId: workout.payload.id, plannedDate: today }])}::jsonb, ${randomUUID()}::uuid)`;
+  const [successorDraft] = await db`select public.get_program_version_detail(${program.id}::uuid) as payload`;
+  const successorItems = successorDraft.payload.weeks[0].workouts[0].sections[0].items;
+  assert.notEqual(successorItems[0].id, item.payload.id, 'Successor draft exercises have cloned identities');
+  assert.deepEqual(successorItems.map((entry) => entry.videoLinks), [links, null, []], 'Cloning preserves source video lookup, including legacy and explicit clearing');
   const [runDetail] = await db`select public.get_program_run_detail(${run.run_id}::uuid) as payload`;
   const [runContent] = await db`select public.get_program_version_detail(${program.id}::uuid, null, ${runDetail.payload.programVersionId}::uuid) as payload`;
   assert.deepEqual(findItem(runContent.payload, item.payload.id).videoLinks, links);
@@ -169,7 +173,21 @@ try {
   const completedItems = await db`select snapshot_name, snapshot_video_url, snapshot_video_links
     from public.session_item_logs where workout_session_id = ${session.id}::uuid order by position`;
   assert.deepEqual(mediaByName(completedItems), expectedMedia);
-  console.log('Video links SQL smoke passed: nullable legacy/custom/clear semantics; URL and label bounds; duplicate normalization; authorized multi-link writes; cross-account denial; search/program/run/schedule projections; immutable start/resume/completed media after library edits; no existing-data rewrite. Entire transaction rolled back.');
+  const [copiedProgram] = await db`select public.copy_program_run_to_own(${run.run_id}::uuid) as id`;
+  const [copiedDetail] = await db`select public.get_program_version_detail(${copiedProgram.id}::uuid) as payload`;
+  const copiedWorkout = copiedDetail.payload.weeks[0].workouts[0];
+  const [copiedRun] = await db`select * from public.create_program_runs(${copiedProgram.id}::uuid, ${[owner]}::uuid[],
+    ${db.json([{ workoutId: copiedWorkout.id, plannedDate: today }])}::jsonb, ${randomUUID()}::uuid)`;
+  const [copiedOccurrence] = await db`select id from public.scheduled_workouts where program_run_id = ${copiedRun.run_id}::uuid`;
+  const [copiedSession] = await db`select public.start_scheduled_workout(${copiedOccurrence.id}::uuid) as id`;
+  const copiedSessionItems = await db`select snapshot_name, snapshot_video_url, snapshot_video_links from public.session_item_logs
+    where workout_session_id = ${copiedSession.id}::uuid order by position`;
+  assert.deepEqual(mediaByName(copiedSessionItems), {
+    'Custom video smoke': { url: 'https://example.test/replaced-after-start', links: [{ url: 'https://example.test/replaced-after-start', label: 'New demonstration' }] },
+    'Legacy video smoke': { url: 'https://example.test/replaced-legacy', links: null },
+    'Cleared video smoke': { url: null, links: [] },
+  }, 'New sessions from cloned workout IDs capture current source media through the snapshot trigger');
+  console.log('Video links SQL smoke passed: nullable legacy/custom/clear semantics; URL and label bounds; duplicate normalization; authorized multi-link writes; cross-account denial; search/program/run/schedule projections; immutable start/resume/completed media after library edits; cloned draft media and cloned-session snapshot triggers; no existing-data rewrite. Entire transaction rolled back.');
 } finally {
   if (transactionOpen) await db.unsafe('rollback');
   await db.end({ timeout: 2 });
