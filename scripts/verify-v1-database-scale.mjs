@@ -222,7 +222,7 @@ async function requireV1Contract(connection) {
         'public.schedule_program_run_workouts(uuid,jsonb,uuid)'
       ) is not null as schedule_program_run_workouts,
       to_regprocedure(
-        'public.list_program_run_summaries(uuid,integer,timestamptz,uuid,text)'
+        'public.list_program_run_summaries(uuid,integer,timestamptz,uuid,text,text,date)'
       ) is not null as program_run_summaries,
       to_regprocedure(
         'public.get_program_run_detail(uuid)'
@@ -233,9 +233,13 @@ async function requireV1Contract(connection) {
       to_regclass('public.program_runs') is not null as program_runs,
       to_regclass('public.program_run_workouts') is not null as program_run_workouts
   `;
-  assert.ok(
-    Object.values(contract).every(Boolean),
-    "Apply the V1 performance data architecture and program-runs migrations to local Supabase first.",
+  const missingContracts = Object.entries(contract)
+    .filter(([, available]) => !available)
+    .map(([name]) => name);
+  assert.deepEqual(
+    missingContracts,
+    [],
+    `Local database contracts are missing or incompatible: ${missingContracts.join(", ")}. Apply the current migrations first.`,
   );
 }
 
@@ -1210,9 +1214,9 @@ async function runVerification(transaction) {
     transaction,
     reports,
     "athlete-run-summaries",
-    "select * from public.list_program_run_summaries($1::uuid, $2::integer, $3::timestamptz, $4::uuid, $5::text)",
-    [null, 26, null, null, "coach"],
-    100,
+    "select * from public.list_program_run_summaries($1::uuid, $2::integer, $3::timestamptz, $4::uuid, $5::text, $6::text, $7::date)",
+    [null, 26, null, null, "coach", "active", null],
+    26,
   );
   assert.equal(athleteRunRows.length, 1);
   assert.equal(athleteRunRows[0].id, firstRun.id);
@@ -1223,6 +1227,16 @@ async function runVerification(transaction) {
     completedRunWorkoutsPerAthlete,
   );
   assert.equal(athleteRunRows[0].status, "in_progress");
+  assert.deepEqual(athleteRunRows[0].sort_date, athleteRunRows[0].next_workout_date);
+  const athleteHistoryRunRows = await benchmarkRead(
+    transaction,
+    reports,
+    "athlete-history-run-summaries",
+    "select * from public.list_program_run_summaries($1::uuid, $2::integer, $3::timestamptz, $4::uuid, $5::text, $6::text, $7::date)",
+    [null, 26, null, null, "coach", "history", null],
+    26,
+  );
+  assert.equal(athleteHistoryRunRows.length, 0, "Active runs must not appear in finished training history");
   const runDetailRows = await benchmarkRead(
     transaction,
     reports,
@@ -1315,13 +1329,15 @@ async function runVerification(transaction) {
     coachRows.every((row) => numeric(row.assigned_program_count) === 1),
     "Coach roster summaries did not count each athlete's active program run",
   );
+  // Keep the previous five-argument caller covered: the new status/cursor
+  // parameters are optional for clients that still request all run statuses.
   const coachRunRows = await benchmarkRead(
     transaction,
     reports,
     "coach-run-summaries",
     "select * from public.list_program_run_summaries($1::uuid, $2::integer, $3::timestamptz, $4::uuid, $5::text)",
     [athleteIds[0], 26, null, null, "coach"],
-    100,
+    26,
   );
   assert.equal(coachRunRows.length, 1);
   assert.equal(coachRunRows[0].id, firstRun.id);
@@ -1398,6 +1414,7 @@ async function runVerification(transaction) {
       contract: "bounded-reads",
       programList: reports.queries["program-list"].returnedRows,
       athleteRunSummaries: reports.queries["athlete-run-summaries"].returnedRows,
+      athleteHistoryRunSummaries: reports.queries["athlete-history-run-summaries"].returnedRows,
       programRunDetail: reports.queries["program-run-detail"].returnedRows,
       schedulable: reports.queries["schedulable-candidates"].returnedRows,
       calendar: reports.queries.calendar.returnedRows,
