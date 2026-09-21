@@ -89,7 +89,7 @@ test("an active workout draft survives reload and an offline background cycle", 
       });
       if (startedHere) {
         await page.getByLabel(/^More actions for /).click();
-        await page.getByRole("button", { name: "Set back to scheduled" }).click();
+        await page.getByRole("button", { name: "Restore workout", exact: true }).click();
         await expect(
           page.getByRole("heading", { name: "Training" }),
         ).toBeVisible({ timeout: 15_000 });

@@ -54,6 +54,15 @@ export async function signInAsTestPersona(page: Page, personaName: string) {
   ).toBeVisible();
 }
 
+/** Fresh sign-ins show Training; only a restored recorder route opens the log. */
+export async function resumeActiveWorkout(page: Page) {
+  const note = page.getByRole("textbox", { name: "Session notes optional" });
+  const resume = page.getByRole("button", { name: "Resume workout", exact: true });
+  await expect(note.or(resume).first()).toBeVisible();
+  if (await resume.isVisible()) await resume.click();
+  await expect(note).toBeEnabled();
+}
+
 /** The previous Saved indicator can remain visible during the autosave delay. */
 export async function waitForWorkoutNoteSave(
   page: Page,

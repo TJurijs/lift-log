@@ -433,10 +433,10 @@ async function domSnapshot(page) {
 
     return {
       cardCount: visibleCount(
-        ".program-catalog-card, .next-workout-card, .workout-card, .calendar-card, .coach-assigned-program",
+        ".training-card, .workout-card, .calendar-card, .coach-assigned-program",
       ),
       rowCount: visibleCount(
-        ".exercise-list-row, .coach-connection-row, .athlete-list > button, .coach-agenda-list > *, .program-compact-list > *, .workout-list-items > *, table tbody > tr, [role='row']",
+        ".exercise-list-row, .coach-connection-row, .athlete-list > button, .coach-agenda-list > *, .training-card-list > *, .training-workout-row, .workout-list-items > *, table tbody > tr, [role='row']",
       ),
       panelCount: visibleCount(".app-content .panel"),
       documentHeightPx: Math.max(

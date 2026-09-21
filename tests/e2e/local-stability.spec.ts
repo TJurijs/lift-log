@@ -63,7 +63,7 @@ test("local workout edits survive reload, offline editing and reconnect", async 
       await fillWorkoutNoteAndWaitForSave(page, original);
       if (startedHere) {
         await page.getByLabel(/^More actions for /).click();
-        await page.getByRole("button", { name: "Set back to scheduled", exact: true }).click();
+        await page.getByRole("button", { name: "Restore workout", exact: true }).click();
       }
     }
   }
@@ -125,7 +125,7 @@ test("only one tab edits a workout and takeover restores the latest save", async
     await expect(secondNote).toBeDisabled();
     await expect(second.getByRole("button", { name: "Finish and save session", exact: true })).toBeDisabled();
     await second.getByLabel(/^More actions for /).click();
-    await expect(second.getByRole("button", { name: "Set back to scheduled", exact: true })).toBeDisabled();
+    await expect(second.getByRole("button", { name: "Restore workout", exact: true })).toBeDisabled();
     await expect(second.getByRole("button", { name: "Skip workout", exact: true })).toBeDisabled();
     await second.getByLabel(/^More actions for /).press("Escape");
     await fillWorkoutNoteAndWaitForSave(page, marker);

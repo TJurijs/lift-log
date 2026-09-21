@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { fillWorkoutNoteAndWaitForSave, signInAsTestPersona, waitForWorkoutNoteSave } from "./helpers";
+import { fillWorkoutNoteAndWaitForSave, resumeActiveWorkout, signInAsTestPersona, waitForWorkoutNoteSave } from "./helpers";
 
 test("two independent devices recover a same-field conflict without losing the selected draft", async ({ page, browser }, testInfo) => {
   test.skip((process.env.PLAYWRIGHT_DATA_ENVIRONMENT ?? "local") !== "local", "Local fixture accounts only");
   test.skip(!["desktop-chromium", "mobile-webkit"].includes(testInfo.project.name), "Desktop and phone conflict journeys");
   test.setTimeout(45_000);
   await signInAsTestPersona(page, "Jānis Čakste");
+  await resumeActiveWorkout(page);
   const localNote = page.getByRole("textbox", { name: "Session notes optional" });
   await expect(localNote).toBeEnabled();
   const original = await localNote.inputValue();
@@ -15,6 +16,7 @@ test("two independent devices recover a same-field conflict without losing the s
   const marker = `Two-device recovery ${Date.now()}`;
   try {
     await signInAsTestPersona(otherPage, "Jānis Čakste");
+    await resumeActiveWorkout(otherPage);
     await page.context().setOffline(true);
     await page.evaluate(() => window.dispatchEvent(new Event("offline")));
     await localNote.fill(`${marker} local`);

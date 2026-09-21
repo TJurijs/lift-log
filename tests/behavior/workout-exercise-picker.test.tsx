@@ -90,4 +90,3 @@ describe("workout exercise search and creation", () => {
     expect(props.onClose).toHaveBeenCalledOnce();
   });
 });
-
