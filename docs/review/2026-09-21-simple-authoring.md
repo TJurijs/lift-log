@@ -21,4 +21,6 @@ Migrations `202609210004_optional_workout_duration.sql` and `202609210005_workou
 - Manual mobile inspection verified the highlighted list, Save-only editor, icon-only details, combined search/create layout, and return to actions after Save.
 - Four real-browser journeys passed across desktop Chromium and mobile WebKit: the existing training lifecycle and the new simplified-authoring journey on each. The new journey verifies optional duration set/clear, selected workout rows, editor/action separation, custom creation through Enter, no library insertion, default tracking fields, and retained prescriptions after reopening and reload.
 
-No GitHub push, hosted deployment, or hosted data changes were performed.
+The local review above made no hosted changes. The reviewed implementation was
+subsequently pushed and deployed to development; see the
+[September 21 rollout evidence](evidence/phase-7/dev-rollout-20260921-unified-training.md).

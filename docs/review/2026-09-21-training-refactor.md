@@ -41,4 +41,4 @@ Final frontend evidence is in `artifacts/training-refactor-behavior.log`, `artif
 
 ## Release status
 
-**Local implementation and review only.** The September 21 migrations and frontend refactor have not been applied to hosted development or production, and have not been pushed to GitHub. The local frontend checks and visual review above are complete. The mobile preview is available at `http://127.0.0.1:3000/?preview=mobile#/program` using the fictional local test account; the same app is available without the `preview` parameter for desktop review.
+This first iteration was reviewed locally. Its subsequent unified Training and simplified authoring implementation has now been pushed and deployed to development, including all five September 21 migrations. See the [rollout evidence](evidence/phase-7/dev-rollout-20260921-unified-training.md). Production remains unchanged. The local mobile preview remains available at `http://127.0.0.1:3000/?preview=mobile#/training` using the fictional local test account.

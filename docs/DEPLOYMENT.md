@@ -63,7 +63,7 @@ The checked-in server configuration is `deploy/nginx-liftlog.conf`; the producti
 
 - GoDaddy DNS points `@`, `app`, and `dev` to Hetzner `2.29.2.99`; `www` aliases `liftlog.cc`.
 - Nonprod is live at `https://dev.liftlog.cc` from `/srv/liftlog/nonprod/current`.
-- The active nonprod release is `/srv/liftlog/nonprod/releases/20260920T214812Z` (application commit `0ae75976df55e67bb6a18c327800df290e4435f8`). `/srv/liftlog/nonprod/releases/20260910T190315Z` remains the frontend rollback target. See the [workout defaults and previous-results rollout evidence](review/evidence/phase-7/dev-rollout-20260921-previous-values.md).
+- The active nonprod release is `/srv/liftlog/nonprod/releases/20260921T140844Z` (application commit `cc6dd0b70b8baebc511e244e94e4bc8062c3e61c`). `/srv/liftlog/nonprod/releases/20260920T214812Z` remains the frontend rollback target. See the [unified Training and authoring rollout evidence](review/evidence/phase-7/dev-rollout-20260921-unified-training.md).
 - Nginx serves SPA fallbacks, non-cached HTML, immutable hashed assets, and security headers.
 - UFW exposes only SSH, HTTP, and HTTPS.
 - Let's Encrypt covers `dev.liftlog.cc` and a separate SAN certificate covers `liftlog.cc`, `app.liftlog.cc`, and `www.liftlog.cc`; automatic renewal and simulated renewal have succeeded for both.

@@ -32,7 +32,7 @@ Weighted strength defaults remain reps and weight; RPE is optional and off for n
 - Expanded program cards refresh after authoritative updates even when their next date and completion counts have not changed. Stale expansion responses are ignored.
 - Editing a selected source workout preserves its position when preparing an editable revision changes workout IDs. A coach's Repeat action uses the selected concrete training identity without depending on an already-open detail screen.
 - Private occurrence editors stay out of the Training feed. Creation always starts in the owner's Training; athlete copies are created through Assign.
-- Mobile cards keep Open, Start/Resume, and More on one row. Touch targets remain at least 44 pixels; full accessible labels are retained. Checks cover 320–768 pixel widths, menu overflow, navigation, and accessibility.
+- Card content opens the workout/program; the redundant Open button is removed. Start/Resume and More remain independent controls. Mobile menus expand inside their card so every action can scroll above the bottom navigation. Touch targets remain at least 44 pixels; full accessible labels are retained. Checks cover 320–768 pixel widths, menu overflow, navigation, and accessibility.
 - Obsolete Next, source-reuse scheduling, and completion-banner styles were removed. Bundle limits remain unchanged.
 
 ## Verification status
@@ -58,7 +58,7 @@ Journey checklist used for the review (specific browser, behavior-test, and data
 5. Create a multi-workout program, start an undated workout, change another date, skip/restore a workout, and end remaining work while preserving results.
 6. Assign training to a local fictional athlete; verify independent content/date changes, correct coach controls, and retained athlete results.
 
-No hosted writes, deployment, GitHub push, or local database reset were performed as part of this local review. Existing database migrations and record lineage remain where needed to preserve old workouts and results.
+No hosted writes or local database reset were performed as part of this local review. Existing database migrations and record lineage remain where needed to preserve old workouts and results. The reviewed implementation was subsequently pushed and deployed to development; see the [September 21 rollout evidence](evidence/phase-7/dev-rollout-20260921-unified-training.md).
 
 ## Backend and concurrency evidence
 
