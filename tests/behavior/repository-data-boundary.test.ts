@@ -46,7 +46,6 @@ describe("repository data boundary", () => {
         initials: "AO",
         assignedProgramCount: 1,
         detailsLoaded: false,
-        assignedPrograms: [],
         agenda: [],
       }),
     ]);
@@ -157,18 +156,10 @@ describe("repository data boundary", () => {
       id: "athlete-1",
       detailsLoaded: true,
       assignedProgramCount: 1,
-      assignedPrograms: [
-        {
-          id: "assignment-1",
-          assignmentId: "assignment-1",
-          programId: "program-1",
-          title: "Snapshot title",
-          completionPercent: 50,
-        },
-      ],
       programRuns: [],
       agenda: [{ id: "session:session-1", rpe: 8 }],
     });
+    expect(detail).not.toHaveProperty("assignedPrograms");
     expect(detail?.agenda[0]).not.toHaveProperty("athleteNote");
   });
 

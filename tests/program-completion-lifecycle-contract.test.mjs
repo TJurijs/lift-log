@@ -22,14 +22,6 @@ async function readAppSource() {
   return `${app}\n${programView}`;
 }
 
-function sourceBetween(source, start, end) {
-  const startIndex = source.indexOf(start);
-  const endIndex = source.indexOf(end, startIndex + start.length);
-  assert.notEqual(startIndex, -1, `expected source marker: ${start}`);
-  assert.notEqual(endIndex, -1, `expected source marker: ${end}`);
-  return source.slice(startIndex, endIndex);
-}
-
 test("one run owns every ordered workout and dates remain optional", async () => {
   const [migration, repository] = await Promise.all([
     readFile(runMigrationPath, "utf8"),
@@ -58,7 +50,7 @@ test("one run owns every ordered workout and dates remain optional", async () =>
   );
 });
 
-test("using a program freezes only its assigned revision", async () => {
+test("planning a program preserves assigned snapshots and keeps autosave in its editor", async () => {
   const [app, migration] = await Promise.all([
     readAppSource(),
     readFile(runMigrationPath, "utf8"),
@@ -74,29 +66,26 @@ test("using a program freezes only its assigned revision", async () => {
   assert.match(snapshot, /insert into public\.program_versions[\s\S]*'draft'/);
   assert.match(snapshot, /clone_program_version_tree/);
   assert.doesNotMatch(canEdit, /locked_at/);
-  assert.match(app, /saved for future (?:runs|uses)/i);
   assert.match(
     app,
     /className="program-save-status" role="status"[\s\S]*?"Saving…"[\s\S]*?"Couldn't save"[\s\S]*?"Saved"/,
-    "the reusable editor reports its autosave state instead of requiring an extra save",
+    "the workout and program editor reports its autosave state",
   );
   assert.match(
     app,
-    /\{editable && pickerOpen && \([\s\S]*?<ModalShell[\s\S]*?className="exercise-picker-modal"/,
+    /const editable = capabilities\.edit && editing;/,
+    "being in editor mode never grants write permission on its own",
+  );
+  assert.match(
+    app,
+    /\{editable && pickerOpen && \([\s\S]*?<WorkoutExercisePicker[\s\S]*?pending=\{mutationPending\}/,
     "the Exercise Library picker must open only for an editable working revision",
   );
 });
 
-test("the reusable Programs library identifies an active use without replacing the template", async () => {
-  const app = await readAuthoringSource();
-  const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
-
-  assert.doesNotMatch(programRow, /deriveProgramRunStatus|program-card-workout-progress/);
-  assert.match(programRow, /activeRun/);
-  assert.match(programRow, /In use/);
-  assert.match(programRow, /program\.title/);
-  assert.match(programRow, /formatWorkoutCount\(workoutCount\)/);
-});
+// The old template + "In use" card shape is intentionally gone. Actual
+// training occurrences, hiding their source cards, and keeping independent
+// repeats are covered by programs-home.test.tsx and training-workflows.test.tsx.
 
 test("calendar and workout detail still distinguish due, overdue, skipped and completed", async () => {
   const progress = await readFile(progressPath, "utf8");

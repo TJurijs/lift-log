@@ -12,6 +12,8 @@ export function createDemoWorkoutSession(schedule: ScheduledWorkout): ActiveSess
     workoutId: schedule.workoutId,
     programVersionId: schedule.programVersionId,
     scheduledWorkoutId: schedule.id,
+    programRunId: schedule.programRunId,
+    programRunWorkoutId: schedule.programRunWorkoutId,
     itemLogIds: Object.fromEntries(schedule.workout.sections.flatMap((section) => section.items).map((item) => [item.id, `${id}:${item.id}`])),
     itemFields: Object.fromEntries(schedule.workout.sections.flatMap((section) => section.items).map((item) => [item.id, item.fields])),
     setLogs: starterSetLogs(schedule.workout, null),
@@ -35,10 +37,13 @@ export function completeDemoWorkout(
   return {
     id: session.id,
     workoutId: session.workoutId,
+    programRunId: schedule.programRunId,
+    programRunWorkoutId: schedule.programRunWorkoutId,
+    sourceType: schedule.sourceType === "coach" ? "coach" : "self",
     programVersionId: session.programVersionId,
     workoutTitle: schedule.workoutTitle,
     date: schedule.plannedDate ?? localDateOnly(),
-    durationMinutes: schedule.workout.durationMinutes,
+    durationMinutes: schedule.workout.durationMinutes ?? 0,
     rpe: number(snapshot.sessionRpe) ?? 0,
     note: snapshot.sessionNote,
     items: schedule.workout.sections.flatMap((section) => section.items).map((item, position) => {

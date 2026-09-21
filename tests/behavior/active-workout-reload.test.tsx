@@ -12,6 +12,7 @@ import {
   type LiftLogRepository,
 } from "../../lib/repository";
 import { loadCachedActiveWorkoutWorkspace } from "../../app/features/active-workout/useActiveWorkoutPersistence";
+import { localDateOnly } from "../../lib/date-only";
 
 function activeWorkoutFixture() {
   const scheduled = demoWorkspace.scheduledWorkouts[0];
@@ -76,12 +77,15 @@ function repositoryFor(activeSession: ActiveSession) {
   };
 }
 
-function renderWorkout(
+async function renderWorkout(
   workspace: WorkspaceData,
   repository: LiftLogRepository,
 ) {
+  window.history.replaceState({}, "", "/#/training");
   repository.loadPreviousWorkoutValues ??= vi.fn().mockResolvedValue(null);
-  return render(
+  repository.listProgramRuns ??= vi.fn().mockResolvedValue({ items: workspace.programRuns ?? [], hasMore: false });
+  repository.listProgramSummaries ??= vi.fn().mockResolvedValue({ items: workspace.programCatalog ?? [], hasMore: false });
+  const rendered = render(
     <LiftLogApp
       viewer={demoViewer}
       onSignOut={vi.fn()}
@@ -89,6 +93,9 @@ function renderWorkout(
       repository={repository}
     />,
   );
+  const resume = await screen.findByRole("button", { name: "Resume workout" });
+  if (!screen.queryByRole("heading", { name: "Workout changed elsewhere" })) fireEvent.click(resume);
+  return rendered;
 }
 
 async function waitForWorkoutEditing() {
@@ -102,6 +109,7 @@ async function finishSession() {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("scrollTo", vi.fn());
   window.localStorage.clear();
   Object.defineProperty(navigator, "onLine", {
     configurable: true,
@@ -110,6 +118,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  window.history.replaceState({}, "", "/");
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   window.localStorage.clear();
   Object.defineProperty(navigator, "onLine", {
@@ -128,7 +138,7 @@ describe("active workout reload recovery", () => {
     const activeSession: ActiveSession = { ...fixture.activeSession, setLogs: {}, resultLogs: { [resultItem.id]: { distance: "1.609344" }, [intervalItem.id]: { "round.0.distance": "3.218688" } }, itemLogIds: { [resultItem.id]: "result-log", [intervalItem.id]: "interval-log" } };
     const workspace = { ...fixture.workspace, profile: { ...fixture.workspace.profile, distanceUnit: "mi" as const }, activeSession, scheduledWorkouts: [{ ...schedule, workout }] };
     const { repository, saveSessionDraft } = repositoryFor(activeSession);
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
     const user = userEvent.setup();
     const result = screen.getByRole("textbox", { name: "Distance mi" });
@@ -147,26 +157,31 @@ describe("active workout reload recovery", () => {
 
   it("preserves active entries through preview, resume, and offline reload", async () => {
     const { activeSession, workspace, item } = activeWorkoutFixture();
-    const other = { ...workspace.scheduledWorkouts[0], id: "preview-other", workoutId: "preview-workout", workoutTitle: "Other preview workout", status: "planned" as const, workout: { ...workspace.scheduledWorkouts[0].workout, id: "preview-workout", title: "Other preview workout" } };
+    const other = { ...workspace.scheduledWorkouts[0], id: "preview-other", workoutId: "preview-workout", workoutTitle: "Other preview workout", plannedDate: localDateOnly(), status: "planned" as const, workout: { ...workspace.scheduledWorkouts[0].workout, id: "preview-workout", title: "Other preview workout" } };
     const { repository, saveSessionDraft } = repositoryFor(activeSession);
-    const first = renderWorkout({ ...workspace, scheduledWorkouts: [...workspace.scheduledWorkouts, other] }, repository);
+    Object.assign(repository, {
+      loadCalendarWorkspace: vi.fn().mockResolvedValue({ scheduledWorkouts: [other], completedSessions: [] }),
+      loadCalendarRange: vi.fn().mockResolvedValue({ scheduledWorkouts: [other], completedSessions: [] }),
+      loadScheduledWorkoutDetail: vi.fn().mockResolvedValue(other),
+    });
+    const first = await renderWorkout({ ...workspace, scheduledWorkouts: [...workspace.scheduledWorkouts, other] }, repository);
     await waitForWorkoutEditing();
     fireEvent.change(screen.getByRole("textbox", { name: "Session notes optional" }), { target: { value: "Keep my active workout note" } });
     fireEvent.change(screen.getByLabelText(`${item.title}, set 1, load in kg`), { target: { value: "100" } });
     await act(async () => { window.dispatchEvent(new Event("pagehide")); });
     await waitFor(() => expect(saveSessionDraft).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getAllByRole("button", { name: "Next workouts" })[0]);
-    fireEvent.click(await screen.findByRole("button", { name: /Other preview workout/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Calendar" }));
+    fireEvent.click(await screen.findByRole("button", { name: `Other preview workout, scheduled on ${other.plannedDate}` }));
     await screen.findByRole("heading", { name: "Workout preview" });
     await act(async () => { window.dispatchEvent(new Event("pagehide")); });
-    fireEvent.click(screen.getAllByRole("button", { name: "Next workouts" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Training" }));
     fireEvent.click(await screen.findByRole("button", { name: "Resume workout" }));
     expect(screen.getByRole("textbox", { name: "Session notes optional" })).toHaveValue("Keep my active workout note");
     expect(screen.getByLabelText(`${item.title}, set 1, load in kg`)).toHaveValue("100");
     first.unmount();
     Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
     const cached = await loadCachedActiveWorkoutWorkspace(demoViewer);
-    renderWorkout(cached!, repository);
+    await renderWorkout(cached!, repository);
     await waitForWorkoutEditing();
     expect(screen.getByRole("textbox", { name: "Session notes optional" })).toHaveValue("Keep my active workout note");
     expect(screen.getByLabelText(`${item.title}, set 1, load in kg`)).toHaveValue("100");
@@ -176,7 +191,7 @@ describe("active workout reload recovery", () => {
   it("autosaves a decimal load typed character by character without losing its separator", async () => {
     const { activeSession, workspace, item } = activeWorkoutFixture();
     const { repository, saveSessionDraft } = repositoryFor(activeSession);
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
     const user = userEvent.setup();
     const input = screen.getByLabelText(`${item.title}, set 1, load in kg`);
@@ -198,7 +213,7 @@ describe("active workout reload recovery", () => {
       if (rpe !== "8" || note !== "Note saved from phone") throw new Error("Completion values must match the confirmed workout draft");
     });
     Object.assign(repository, { completeSession });
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
     fireEvent.change(screen.getByLabelText(`${item.title}, set 1, load in kg`), { target: { value: "100" } });
     await finishSession();
@@ -214,13 +229,13 @@ describe("active workout reload recovery", () => {
     let rejectCompletion!: (error: Error) => void;
     const completeSession = vi.fn().mockReturnValue(new Promise<void>((_resolve, reject) => { rejectCompletion = reject; }));
     Object.assign(repository, { completeSession });
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
     await finishSession();
     await waitFor(() => expect(completeSession).toHaveBeenCalled());
     expect(screen.getByRole("textbox", { name: "Session notes optional" })).toBeDisabled();
     fireEvent.click(screen.getByLabelText(/^More actions for /));
-    expect(screen.getByRole("button", { name: "Set back to scheduled" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restore workout" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Skip workout" })).toBeDisabled();
     await act(async () => { rejectCompletion(new Error("The server could not complete the workout")); });
     await waitForWorkoutEditing();
@@ -231,7 +246,7 @@ describe("active workout reload recovery", () => {
     Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
     const { activeSession, workspace } = activeWorkoutFixture();
     const firstRepository = repositoryFor(activeSession);
-    const firstRender = renderWorkout(workspace, firstRepository.repository);
+    const firstRender = await renderWorkout(workspace, firstRepository.repository);
     await waitForWorkoutEditing();
     fireEvent.change(screen.getByRole("textbox", { name: "Session notes optional" }), {
       target: { value: "Entries saved while offline" },
@@ -244,7 +259,7 @@ describe("active workout reload recovery", () => {
     expect(cachedWorkspace?.activeSession?.draftRevision).toBe(activeSession.draftRevision);
     expect(cachedWorkspace?.activeSession?.sessionNote).toBe(activeSession.sessionNote);
     const secondRepository = repositoryFor(activeSession);
-    renderWorkout(cachedWorkspace!, secondRepository.repository);
+    await renderWorkout(cachedWorkspace!, secondRepository.repository);
 
     await waitForWorkoutEditing();
     expect(screen.getByRole("textbox", { name: "Session notes optional" })).toHaveValue("Entries saved while offline");
@@ -273,7 +288,7 @@ describe("active workout reload recovery", () => {
     );
     const { repository, saveSessionDraft } = repositoryFor(activeSession);
 
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
 
     await waitFor(() =>
       expect(
@@ -296,7 +311,7 @@ describe("active workout reload recovery", () => {
     });
     const { activeSession, item, workspace } = activeWorkoutFixture();
     const firstRepository = repositoryFor(activeSession);
-    const firstRender = renderWorkout(workspace, firstRepository.repository);
+    const firstRender = await renderWorkout(workspace, firstRepository.repository);
     const loadInput = screen.getByLabelText(
       `${item.title}, set 1, load in kg`,
     );
@@ -322,7 +337,7 @@ describe("active workout reload recovery", () => {
     firstRender.unmount();
 
     const secondRepository = repositoryFor(activeSession);
-    renderWorkout(workspace, secondRepository.repository);
+    await renderWorkout(workspace, secondRepository.repository);
     await waitFor(() =>
       expect(
         screen.getByLabelText(`${item.title}, set 1, load in kg`),
@@ -370,7 +385,7 @@ describe("active workout reload recovery", () => {
       saveSessionDraft,
     } as unknown as LiftLogRepository;
 
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
     fireEvent.change(
       screen.getByLabelText(`${item.title}, set 1, load in kg`),
@@ -419,7 +434,7 @@ describe("active workout reload recovery", () => {
       authoritativeSession,
     );
 
-    renderWorkout(authoritativeWorkspace, repository);
+    await renderWorkout(authoritativeWorkspace, repository);
 
     expect(
       await screen.findByRole("heading", { name: "Workout changed elsewhere" }),
@@ -465,7 +480,7 @@ describe("active workout reload recovery", () => {
       saveSessionDraft,
     } as unknown as LiftLogRepository;
 
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
     fireEvent.change(
       screen.getByLabelText(`${item.title}, set 1, load in kg`),
@@ -498,7 +513,7 @@ describe("active workout reload recovery", () => {
       saveSessionDraft,
     } as unknown as LiftLogRepository;
 
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
     await finishSession();
     await waitFor(() => expect(completeSession).toHaveBeenCalledOnce());
@@ -524,7 +539,7 @@ describe("active workout reload recovery", () => {
       reloadActiveSession: vi.fn().mockResolvedValue(activeSession),
       saveSessionDraft,
     } as unknown as LiftLogRepository;
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     await waitFor(async () =>
       expect(await loadCachedActiveWorkoutWorkspace(demoViewer)).not.toBeNull(),
     );
@@ -546,11 +561,11 @@ describe("active workout reload recovery", () => {
       saveSessionDraft: vi.fn(),
       setScheduledWorkoutStatus: vi.fn().mockResolvedValue(undefined),
     } as unknown as LiftLogRepository;
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     await waitForWorkoutEditing();
     fireEvent.click(screen.getByLabelText(/^More actions for /));
     fireEvent.click(
-      screen.getByRole("button", { name: "Set back to scheduled" }),
+      screen.getByRole("button", { name: "Restore workout" }),
     );
 
     await waitFor(() =>
@@ -575,7 +590,7 @@ describe("active workout reload recovery", () => {
     const { activeSession, item, workspace } = activeWorkoutFixture();
     const { repository } = repositoryFor(activeSession);
 
-    renderWorkout(workspace, repository);
+    await renderWorkout(workspace, repository);
     fireEvent.change(
       screen.getByLabelText(`${item.title}, set 1, load in kg`),
       { target: { value: "55" } },

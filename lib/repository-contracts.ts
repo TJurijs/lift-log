@@ -6,7 +6,4 @@ export type ActiveWorkoutRepository = Pick<LiftLogRepository,
 export type CoachingRepository = Pick<LiftLogRepository,
   "loadCoachingWorkspace" | "listCoachAthletes" | "loadCoachedAthleteDetail" |
   "listCoachCompletedHistory" | "listProgramRuns">;
-export type SchedulingRepository = Pick<LiftLogRepository,
-  "listSchedulableWorkouts" | "listFrequentSchedulableWorkouts" | "scheduleWorkout" |
-  "scheduleProgramRunWorkouts" | "loadProgramRunDetail">;
 export type ExerciseSearchRepository = Pick<LiftLogRepository, "searchExercises">;

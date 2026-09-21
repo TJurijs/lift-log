@@ -6,18 +6,18 @@ The canonical glossary, independent lifecycle axes, viewer-relative provenance r
 
 Every account can create and follow its own program for free. A user can invite one or more other accounts to coach them. Coaching is a revocable permission relationship, not a permanent user role: a person may coach others while being coached themselves.
 
-The athlete owns their programs, schedule, and complete workout history. An active coach can read the athlete's training data, write coach feedback, and create or publish future program versions. Coaches cannot rewrite completed or in-progress sessions.
+The athlete owns their training, dates, and workout history. An active coach can assign independent training, edit future workouts they assigned, and read the corresponding results. Other training and private athlete notes remain private. Coaches cannot rewrite completed or in-progress sessions.
 
 ## MVP flows
 
 1. Sign in with Google through Supabase Auth.
-2. Create a finite program containing an ordered workout sequence.
+2. Create a workout or finite program in Training; set dates optionally and start any unfinished workout.
 3. Build workouts from one reorderable list of reusable exercise-library items.
 4. Log a workout containing any mix of instructions, strength sets, cardio results, and intervals.
-5. Review history in a calendar with session RPE and notes.
+5. Review finished training and workout results in Training's History or Calendar; repeat into a fresh undated copy.
 6. Create a personal exercise and reuse it later.
 7. Invite, accept, and independently revoke coach relationships.
-8. Let a coach view adherence and effort, then publish a future plan version.
+8. Assign independent training to connected athletes, change its upcoming dates/content, and review its results.
 
 ## Explicitly outside the MVP
 
@@ -25,7 +25,7 @@ The athlete owns their programs, schedule, and complete workout history. An acti
 - Payments and subscriptions
 - Chat or real-time messaging
 - Ratings and reviews
-- Bulk template updates and cohort tools
+- Bulk changes across athletes and cohort tools
 - Wearable integrations
 - Nutrition tracking
 
@@ -41,7 +41,7 @@ Program
 ```
 
 Every MVP program is finite. Workouts have an explicit sequence, while athletes
-choose calendar dates independently when scheduling. A workout is one ordered
+choose optional calendar dates independently. A workout is one ordered
 exercise list without structural groups or categories.
 `program_weeks` and `workout_sections` remain single-row internal persistence
 containers so existing ownership and history relationships stay stable.
@@ -59,13 +59,13 @@ tracking_fields:
 Examples:
 
 - Warm-up instruction: `none`
-- Back squat: `sets` with reps/load/RPE
-- Push-up: `sets` with reps/RPE
-- Zone 2 ride: `result` with duration/distance/RPE
-- 500 m row: `result` with distance/duration/RPE
-- Bike sprints: `intervals` with rounds/duration/RPE
+- Back squat: `sets` with reps/load
+- Push-up: `sets` with reps
+- Zone 2 ride: `result` with duration/distance
+- 500 m row: `result` with distance/duration
+- Bike sprints: `intervals` with rounds/duration
 
-Pace is derived from distance and duration. Load, distance, and time are stored canonically and displayed in the user's preferred units. Completing the session never requires every optional field to be filled.
+RPE is available as an optional tracking field and is off for new default prescriptions. Existing explicit field choices remain intact. Pace is derived from distance and duration. Load, distance, and time are stored canonically and displayed in the user's preferred units. Completing the session never requires every optional field to be filled.
 
 ## Exercise library rules
 
@@ -127,10 +127,10 @@ coach_feedback
 
 ## Ownership and versioning rules
 
-- Programs are always owned by the athlete, including coach-authored programs.
+- Each training occurrence belongs to its athlete. Source content may have a different author; assignments receive independent copies.
 - Published program versions are immutable.
-- Editing a published plan creates a draft based on that version.
-- Publishing affects only future scheduled workouts from an explicit effective date.
+- Editing an upcoming workout creates an isolated internal draft for that occurrence.
+- Starting atomically freezes its prescribed content; publication is not a user action.
 - Completed and in-progress sessions remain attached to their original program version.
 - Revoking a coach takes effect immediately; already-published plans remain available to the athlete.
 - Authorization is enforced by database policies, not only by hidden UI controls.
@@ -146,10 +146,10 @@ coach_feedback
 
 ## Future extension points
 
-Trainer templates and mass updates can later use the same program-version structure:
+Future bulk changes can use the same snapshot structure without introducing another user-facing template type:
 
 ```text
-Coach template → template version → athlete plan → individual override
+Coach workout/program → independent athlete training → individual upcoming edits
 ```
 
-The future bulk workflow should preview affected athletes, preserve individual overrides, and publish new future versions rather than silently changing historical prescriptions.
+Any future bulk workflow should preview affected athletes, preserve their individual changes, and leave historical prescriptions intact. It is outside the current product scope.

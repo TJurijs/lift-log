@@ -46,20 +46,23 @@ describe("program metadata saving", () => {
   });
 
   it("saves the demo editor name before Back and preserves it when reopened", async () => {
-    window.history.replaceState({}, "", "/#/program");
+    window.history.replaceState({}, "", "/#/training");
     vi.stubGlobal("scrollTo", vi.fn());
     const user = userEvent.setup();
     render(<LiftLogApp viewer={demoViewer} initialWorkspace={demoWorkspace} repository={null} onSignOut={vi.fn()} />);
-    await user.click((await screen.findByText(initialProgram.title)).closest("button")!);
+    await user.click(await screen.findByRole("button", { name: `Open ${initialProgram.title}` }));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Program name" }), { target: { value: "Saved through Back" } });
-    await user.click(screen.getByRole("button", { name: "Back to Programs" }));
-    const renamed = await screen.findByText("Saved through Back");
-    await user.click(renamed.closest("button")!);
+    await user.click(screen.getByRole("button", { name: "Back to Training" }));
+    const renamed = await screen.findByRole("button", { name: "Open Saved through Back" });
+    await user.click(renamed);
+    expect(await screen.findByRole("heading", { level: 1, name: "Saved through Back" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
     expect(await screen.findByRole("textbox", { name: "Program name" })).toHaveValue("Saved through Back");
   });
 
   it("blocks feature navigation when saving fails, then resumes after retry", async () => {
-    window.history.replaceState({}, "", "/#/program");
+    window.history.replaceState({}, "", "/#/training");
     vi.stubGlobal("scrollTo", vi.fn());
     const user = userEvent.setup();
     const updateProgramTitle = vi.fn().mockRejectedValue(new Error("Offline: keep editing"));
@@ -67,12 +70,14 @@ describe("program metadata saving", () => {
       listProgramSummaries: vi.fn().mockResolvedValue({ items: [initialProgram], hasMore: false }),
       listProgramRuns: vi.fn().mockResolvedValue({ items: [], hasMore: false }),
       loadProgramDetail: vi.fn().mockResolvedValue(initialProgram),
+      loadEditableProgram: vi.fn().mockResolvedValue(initialProgram),
       updateProgramTitle,
       updateProgramDescription: vi.fn().mockResolvedValue(undefined),
       searchExercises: vi.fn().mockResolvedValue({ items: [], hasMore: false }),
     } as unknown as LiftLogRepository;
     render(<LiftLogApp viewer={demoViewer} initialWorkspace={demoWorkspace} repository={repository} onSignOut={vi.fn()} />);
-    await user.click((await screen.findByText(initialProgram.title)).closest("button")!);
+    await user.click(await screen.findByRole("button", { name: `Open ${initialProgram.title}` }));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Program name" }), { target: { value: "Unsaved but retained" } });
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     await user.click(within(nav).getByRole("button", { name: "Exercises" }));
@@ -84,19 +89,21 @@ describe("program metadata saving", () => {
   });
 
   it("flushes metadata on browser Back before removing the editor", async () => {
-    window.history.replaceState({}, "", "/#/program");
+    window.history.replaceState({}, "", "/#/training");
     vi.stubGlobal("scrollTo", vi.fn());
     const user = userEvent.setup();
     render(<LiftLogApp viewer={demoViewer} initialWorkspace={demoWorkspace} repository={null} onSignOut={vi.fn()} />);
-    await user.click((await screen.findByText(initialProgram.title)).closest("button")!);
+    await user.click(await screen.findByRole("button", { name: `Open ${initialProgram.title}` }));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Program name" }), { target: { value: "Saved with browser Back" } });
     act(() => window.history.back());
-    expect(await screen.findByRole("heading", { level: 1, name: "Programs" })).toBeVisible();
-    expect(await screen.findByText("Saved with browser Back")).toBeVisible();
+    expect(await screen.findByRole("heading", { level: 1, name: "Training" })).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Program name" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open Saved with browser Back" })).toBeVisible();
   });
 
   it("retains a failed editor draft before sign-out and signs out only after its retry saves", async () => {
-    window.history.replaceState({}, "", "/#/program");
+    window.history.replaceState({}, "", "/#/training");
     vi.stubGlobal("scrollTo", vi.fn());
     const user = userEvent.setup();
     const onSignOut = vi.fn();
@@ -105,12 +112,14 @@ describe("program metadata saving", () => {
       listProgramSummaries: vi.fn().mockResolvedValue({ items: [initialProgram], hasMore: false }),
       listProgramRuns: vi.fn().mockResolvedValue({ items: [], hasMore: false }),
       loadProgramDetail: vi.fn().mockResolvedValue(initialProgram),
+      loadEditableProgram: vi.fn().mockResolvedValue(initialProgram),
       updateProgramTitle,
       updateProgramDescription: vi.fn().mockResolvedValue(undefined),
       searchExercises: vi.fn().mockResolvedValue({ items: [], hasMore: false }),
     } as unknown as LiftLogRepository;
     render(<LiftLogApp viewer={demoViewer} initialWorkspace={demoWorkspace} repository={repository} onSignOut={onSignOut} />);
-    await user.click((await screen.findByText(initialProgram.title)).closest("button")!);
+    await user.click(await screen.findByRole("button", { name: `Open ${initialProgram.title}` }));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Program name" }), { target: { value: "Keep before signing out" } });
     await user.click(screen.getByRole("button", { name: /^Sign out / }));
     expect(onSignOut).not.toHaveBeenCalled();

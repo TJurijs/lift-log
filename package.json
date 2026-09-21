@@ -27,6 +27,8 @@
     "test:v1:database-smoke": "node tests/run-v1-performance-database-smoke.mjs",
     "test:authoring:database-smoke": "node tests/run-authoring-database-smoke.mjs",
     "test:recording:database-smoke": "node tests/run-exercise-recording-database-smoke.mjs",
+    "test:rpe-defaults:database-smoke": "node tests/run-optional-rpe-defaults-database-smoke.mjs",
+    "test:training:database-smoke": "node tests/run-workout-program-lifecycle-database-smoke.mjs",
     "test:prefill:database-smoke": "node tests/run-workout-prefill-database-smoke.mjs",
     "test:previous:database-smoke": "node tests/run-previous-workout-values-database-smoke.mjs",
     "test:videos:database-smoke": "node tests/run-exercise-video-links-database-smoke.mjs",
@@ -42,7 +44,7 @@
     "perf:measure:hosted": "node scripts/measure-hosted-readonly-performance.mjs --data-environment=hosted-dev --output=artifacts/performance/runtime-hosted.json",
     "perf:measure:local": "node scripts/measure-hosted-readonly-performance.mjs --data-environment=local --output=artifacts/performance/runtime-local.json",
     "ci:verify": "npm run lint && npm run typecheck && npm run build:prod && npm run test:legacy && npm run test:behavior && npm run perf:bundle:check",
-    "ci:local-supabase": "npm run db:reset && npm run db:lint && npm run test:integration && npm run test:v1:database-smoke && npm run test:authoring:database-smoke && npm run test:recording:database-smoke && npm run test:prefill:database-smoke && npm run test:previous:database-smoke && npm run test:videos:database-smoke && npm run test:review:database-smoke && npm run test:telemetry:database-smoke && npm run test:telemetry:diagnostics-smoke && npm run test:migrations:portable && npm run db:contract:export && npm run db:recovery:rehearse && npm run perf:database:local:report",
+    "ci:local-supabase": "npm run db:reset && npm run db:lint && npm run test:integration && npm run test:v1:database-smoke && npm run test:authoring:database-smoke && npm run test:recording:database-smoke && npm run test:rpe-defaults:database-smoke && npm run test:training:database-smoke && npm run test:unified-training:database-smoke && npm run test:unified-training:api-smoke && npm run test:custom-exercises:database-smoke && npm run test:prefill:database-smoke && npm run test:previous:database-smoke && npm run test:videos:database-smoke && npm run test:review:database-smoke && npm run test:telemetry:database-smoke && npm run test:telemetry:diagnostics-smoke && npm run test:migrations:portable && npm run db:contract:export && npm run db:recovery:rehearse && npm run perf:database:local:report",
     "seed:test-population": "node scripts/seed-test-population.mjs --apply --project-ref=ofyeejyfroblunbspgve",
     "seed:test-population:local": "node scripts/seed-test-population.mjs --apply --local",
     "lint": "eslint . --ignore-pattern dist",
@@ -57,7 +59,10 @@
     "db:promote": "node scripts/promote-database.mjs",
     "db:contract:export": "node scripts/export-database-contract.mjs",
     "db:recovery:rehearse": "node scripts/rehearse-local-database-recovery.mjs",
-    "ops:telemetry": "node scripts/report-telemetry-diagnostics.mjs"
+    "ops:telemetry": "node scripts/report-telemetry-diagnostics.mjs",
+    "test:unified-training:database-smoke": "node tests/run-unified-training-database-smoke.mjs",
+    "test:unified-training:api-smoke": "node tests/run-unified-training-api-smoke.mjs",
+    "test:custom-exercises:database-smoke": "node tests/run-workout-custom-exercise-database-smoke.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.2.8",

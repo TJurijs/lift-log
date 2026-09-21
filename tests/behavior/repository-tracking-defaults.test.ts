@@ -110,7 +110,7 @@ function repositoryWithDeleteRecorder(result = { count: 1, error: null }) {
 
 describe("personal-exercise tracking defaults", () => {
   it.each<[EntryMode, TrackingField[]]>([
-    ["sets", ["reps"]],
+    ["sets", ["reps", "load"]],
     ["result", ["duration"]],
     ["intervals", ["rounds", "duration"]],
     ["none", []],
@@ -238,7 +238,7 @@ describe("personal-exercise tracking defaults", () => {
       category: "Strength",
       cue: "Keep the brace.",
       default_entry_mode: "sets",
-      default_tracking_fields: ["reps"],
+      default_tracking_fields: ["reps", "load"],
     });
   });
 

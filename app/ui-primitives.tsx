@@ -421,7 +421,7 @@ export function ModalShell({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   onClose: () => void;
   dismissible?: boolean;
   wide?: boolean;
@@ -449,7 +449,7 @@ export function ModalShell({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={descriptionId}
+        aria-describedby={description ? descriptionId : undefined}
         aria-busy={!dismissible || undefined}
         tabIndex={-1}
       >
@@ -457,7 +457,7 @@ export function ModalShell({
           <div>
             <p className="eyebrow">Lift Log</p>
             <h2 id={titleId}>{title}</h2>
-            <p id={descriptionId}>{description}</p>
+            {description && <p id={descriptionId}>{description}</p>}
           </div>
           <button
             type="button"

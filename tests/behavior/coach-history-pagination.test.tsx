@@ -44,7 +44,6 @@ const athlete: AthleteSummary = {
   initials: "EA",
   detailsLoaded: true,
   assignedProgramCount: 0,
-  assignedPrograms: [],
   programRuns: [],
   agenda: [firstResult],
   historyCursor: cursor,

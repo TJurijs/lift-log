@@ -1,4 +1,4 @@
-.program-run-schedule-wizard {
+.training-dates-editor {
   width: min(780px, 100%);
   height: min(760px, calc(100dvh - 48px));
   display: flex;
@@ -38,10 +38,10 @@
   color: var(--muted);
 }
 
-.program-run-schedule-wizard > .program-run-generator,
-.program-run-schedule-wizard > .program-run-date-list,
-.program-run-schedule-wizard > .inline-error,
-.program-run-schedule-wizard > .program-run-schedule-loading {
+.training-dates-editor > .program-run-generator,
+.training-dates-editor > .program-run-date-list,
+.training-dates-editor > .inline-error,
+.training-dates-editor > .program-run-schedule-loading {
   min-height: 0;
 }
 
@@ -203,12 +203,12 @@
 }
 
 @media (max-width: 700px) {
-  .modal-backdrop:has(.program-run-schedule-wizard) {
+  .modal-backdrop:has(.training-dates-editor) {
     padding: 0;
     place-items: stretch;
   }
 
-  .program-run-schedule-wizard {
+  .training-dates-editor {
     width: 100%;
     height: 100dvh;
     max-height: none;

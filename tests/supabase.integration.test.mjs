@@ -1405,7 +1405,7 @@ test(
         {
           athlete_id: coachId,
           created_by_id: coachId,
-          title: "Shared coaching template copy",
+          title: "Shared coaching template",
           source_type: "self",
         },
       );
@@ -1424,7 +1424,7 @@ test(
         "load the athlete-owned run copy",
       );
       assert.deepEqual(copiedRunProgram, {
-        title: "Shared coaching template copy",
+        title: "Shared coaching template",
         source_type: "self",
         content_type: "program",
       });
@@ -1445,7 +1445,7 @@ test(
         {
           based_on_version_id: sharedDraftVersion.id,
           status: "draft",
-          title: "Shared coaching template copy",
+          title: "Shared coaching template",
         },
       );
       const copiedRunContainer = expectData(
@@ -1880,7 +1880,7 @@ test(
             .from("scheduled_workouts")
             .select("status")
             .eq("program_run_id", athleteBRun.run_id)
-            .order("sequence_number"),
+            .order("planned_date"),
           "retain ended-run occurrence lineage",
         ),
         [{ status: "completed" }, { status: "skipped" }],

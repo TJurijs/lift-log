@@ -1,4 +1,3 @@
-import { CalendarDays } from "lucide-react";
 import { useRef, useState } from "react";
 import type { PlannedWorkout } from "../../../lib/domain";
 import { InlineError, ModalShell } from "../../ui-primitives";
@@ -26,7 +25,6 @@ export function WorkoutModal({
   return (
     <ModalShell
       title="Add a workout"
-      description="Create the next session in this program. The athlete chooses its calendar date separately."
       onClose={onClose}
       dismissible={!saving}
     >
@@ -39,12 +37,6 @@ export function WorkoutModal({
             placeholder="e.g. Upper body"
           />
         </label>
-        <div className="form-info full">
-          <CalendarDays size={16} />
-          <span>
-            This workout is ordered in the plan, not tied to a weekday.
-          </span>
-        </div>
       </fieldset>
       {error && <InlineError>{error}</InlineError>}
       <div className="modal-actions">
@@ -74,19 +66,20 @@ export function WorkoutSettingsModal({
   onClose: () => void;
   onSave: (
     title: string,
-    durationMinutes: number,
+    durationMinutes: number | undefined,
     description: string,
   ) => Promise<void>;
 }) {
   const [title, setTitle] = useState(workout.title);
-  const [duration, setDuration] = useState(String(workout.durationMinutes));
+  const [duration, setDuration] = useState(String(workout.durationMinutes ?? ""));
   const [nextDescription, setNextDescription] = useState(description ?? "");
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [error, setError] = useState("");
-  const durationMinutes = Number(duration);
+  const durationMinutes = duration.trim() ? Number(duration) : undefined;
+  const invalidDuration = durationMinutes !== undefined && (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 600);
   async function save() {
-    if (savingRef.current) return;
+    if (savingRef.current || !title.trim() || invalidDuration) return;
     savingRef.current = true;
     setSaving(true);
     setError("");
@@ -106,7 +99,6 @@ export function WorkoutSettingsModal({
   return (
     <ModalShell
       title="Workout details"
-      description="Update the name, description and expected duration shown throughout the plan."
       onClose={onClose}
       dismissible={!saving}
     >
@@ -119,12 +111,12 @@ export function WorkoutSettingsModal({
           />
         </label>
         <label className="form-field full">
-          <span>Estimated duration in minutes</span>
+          <span>Duration (minutes) <em>optional</em></span>
           <input
             type="number"
-            min="5"
+            min="1"
             max="600"
-            step="5"
+            step="1"
             value={duration}
             onChange={(event) => setDuration(event.target.value)}
           />
@@ -149,9 +141,7 @@ export function WorkoutSettingsModal({
           className="button primary"
           disabled={
             !title.trim() ||
-            !Number.isInteger(durationMinutes) ||
-            durationMinutes < 5 ||
-            durationMinutes > 600 ||
+            invalidDuration ||
             saving
           }
           onClick={save}

@@ -216,7 +216,6 @@ export default function PrescriptionModal({
   return (
     <ModalShell
       title={`Prescribe ${item.title}`}
-      description="Set the target here. Actual results are logged during training."
       onClose={onClose}
       className="prescription-modal"
     >

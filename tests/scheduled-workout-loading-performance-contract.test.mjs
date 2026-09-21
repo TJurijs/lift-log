@@ -18,7 +18,7 @@ function sourceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
-test("calendar and scheduling lists use bounded summary RPCs", async () => {
+test("calendar and training lists use bounded summary RPCs", async () => {
   const [repository, migration] = await Promise.all([
     readFile(repositoryUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
@@ -26,12 +26,12 @@ test("calendar and scheduling lists use bounded summary RPCs", async () => {
   const calendar = sourceBetween(
     repository,
     "async listCalendarOccurrences(",
-    "async listSchedulableWorkouts(",
+    "async listCompletedSessionSummaries(",
   );
-  const schedulable = sourceBetween(
+  const training = sourceBetween(
     repository,
-    "async listSchedulableWorkouts(",
-    "async loadCalendarRange(",
+    "async listProgramRuns(",
+    "async loadProgramRunDetail(",
   );
 
   assert.match(calendar, /rpc\("list_calendar_occurrences"/);
@@ -39,7 +39,12 @@ test("calendar and scheduling lists use bounded summary RPCs", async () => {
   assert.match(calendar, /range_start: rangeStart[\s\S]*range_end: rangeEnd/);
   assert.match(calendar, /page_limit: limit \+ 1/);
   assert.match(calendar, /after_planned_date:[\s\S]*after_id:/);
-  assert.match(calendar, /detailsLoaded: false/);
+  assert.match(calendar, /parseScheduledWorkoutSummary\(row, this\.viewerId\)/);
+  const summaryParser = sourceBetween(repository, "function parseScheduledWorkoutSummary(", "function parseOwnSessionNotes(");
+  assert.match(summaryParser, /jsonInteger\(row, "estimated_minutes", "estimatedMinutes"\) \?\? undefined/);
+  assert.match(summaryParser, /durationMinutes: estimatedMinutes/);
+  assert.match(summaryParser, /detailsLoaded: false/);
+  assert.match(summaryParser, /sections: \[\]/);
   assert.doesNotMatch(calendar, /\.from\("(?:workout_sections|workout_items|prescribed_entries)"\)/);
 
   const calendarWorkspace = sourceBetween(
@@ -53,17 +58,15 @@ test("calendar and scheduling lists use bounded summary RPCs", async () => {
   );
   assert.doesNotMatch(calendarWorkspace, /listCompletedSessionSummaries/);
 
-  assert.match(schedulable, /rpc\("list_schedulable_workouts"/);
-  assert.match(schedulable, /page_limit: limit \+ 1/);
-  assert.match(
-    schedulable,
-    /after_program_title:[\s\S]*after_week_index:[\s\S]*after_workout_position:[\s\S]*after_id:/,
-  );
-  assert.doesNotMatch(schedulable, /getProgramVersionDetail|loadProgramDetail|\.from\(/);
+  assert.match(training, /rpc\("list_program_run_summaries"/);
+  assert.match(training, /page_limit: limit \+ 1/);
+  assert.match(training, /status_scope: statusScope/);
+  assert.match(training, /after_sort_date: options\.cursor\?\.sortDate/);
+  assert.doesNotMatch(training, /getProgramVersionDetail|loadProgramDetail|\.from\(/);
+  assert.doesNotMatch(repository, /async (?:listSchedulableWorkouts|listFrequentSchedulableWorkouts|listUpcomingScheduledWorkouts|createScheduledQuickWorkoutRun|unassignProgram)\(/);
 
   assert.match(migration, /create or replace function public\.list_calendar_occurrences/);
   assert.match(migration, /create or replace function public\.list_calendar_session_summaries/);
-  assert.match(migration, /create or replace function public\.list_schedulable_workouts/);
   assert.match(migration, /idx_scheduled_workouts_athlete_calendar/);
   assert.match(migration, /idx_scheduled_workouts_assignment_sequence/);
 });

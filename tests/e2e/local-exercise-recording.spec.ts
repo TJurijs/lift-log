@@ -75,9 +75,9 @@ test("three timed plank sets retain seconds, zero rest and multiline coaching no
   let created = false;
   await signInAsTestPersona(page, "Gustavs Zemgals");
   try {
-    await page.getByRole("button", { name: "Programs", exact: true }).click();
+    await page.getByRole("button", { name: "Training", exact: true }).click();
     await page.locator(".program-create-menu summary").click();
-    await page.getByRole("button", { name: "Program Multiple ordered workouts", exact: true }).click();
+    await page.getByRole("button", { name: "Program A sequence of workouts", exact: true }).click();
     await page.getByRole("dialog").getByRole("textbox", { name: "Program name", exact: true }).fill(name);
     await page.getByRole("button", { name: "Create program", exact: true }).click();
     await expect(page.getByRole("textbox", { name: "Program name", exact: true })).toHaveValue(name);
@@ -98,7 +98,7 @@ test("three timed plank sets retain seconds, zero rest and multiline coaching no
     await expect(dialog.getByRole("textbox", { name: /^Target weight/ })).toHaveCount(0);
     await dialog.getByRole("button", { name: "Save", exact: true }).click();
     await expect(dialog).toHaveCount(0);
-    await page.getByRole("button", { name: "Back to Programs", exact: true }).click();
+    await page.getByRole("button", { name: "Back to Training", exact: true }).click();
     await page.reload();
     await page.getByLabel(`More actions for ${name}`, { exact: true }).click();
     await page.getByRole("button", { name: `Edit ${name} program`, exact: true }).click();
@@ -114,7 +114,7 @@ test("three timed plank sets retain seconds, zero rest and multiline coaching no
   } finally {
     if (created && !page.isClosed()) {
       await closeDialogs(page);
-      await page.getByRole("button", { name: "Programs", exact: true }).click();
+      await page.getByRole("button", { name: "Training", exact: true }).click();
       await page.getByLabel(`More actions for ${name}`, { exact: true }).click();
       await page.getByRole("button", { name: `Delete ${name}`, exact: true }).click();
       await page.getByRole("dialog").getByRole("button", { name: "Delete program", exact: true }).click();

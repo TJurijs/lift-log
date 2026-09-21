@@ -1,7 +1,8 @@
 # Stabilization review evidence
 
-Latest: [4 September 2026 technical review and cleanup](TECHNICAL_REVIEW_2026_09_04.md),
-including local Docker/browser verification and remaining architecture work.
+Latest: [21 September simple workout authoring](2026-09-21-simple-authoring.md), following the [unified Training review](2026-09-21-unified-training.md) and [workout/program and optional-RPE refactor](2026-09-21-training-refactor.md). These changes remain local; completed verification is recorded in each review.
+
+Earlier: [4 September 2026 technical review and cleanup](TECHNICAL_REVIEW_2026_09_04.md), including local Docker/browser verification and remaining architecture work.
 
 The primary assignment and acceptance criteria are in the [major review, cleanup, and testing guide](../MAJOR_REVIEW_CLEANUP_TESTING_GUIDE.md).
 

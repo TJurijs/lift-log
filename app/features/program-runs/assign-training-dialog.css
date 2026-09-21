@@ -1,11 +1,11 @@
-.program-run-wizard {
+.assign-training-dialog {
   width: min(760px, 100%);
   overflow: hidden;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
-.program-run-wizard .modal-heading {
+.assign-training-dialog .modal-heading {
   margin-bottom: 14px;
 }
 
@@ -34,7 +34,8 @@
   background: var(--accent);
 }
 
-.program-run-wizard-body {
+.assign-training-dialog-body {
+  grid-row: 3;
   min-height: 0;
   padding: 18px 2px 4px;
   overflow-y: auto;
@@ -326,7 +327,8 @@
   cursor: pointer;
 }
 
-.program-run-wizard-actions {
+.assign-training-dialog-actions {
+  grid-row: 4;
   padding-top: 14px;
   display: grid;
   grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
@@ -334,17 +336,17 @@
   background: #11191e;
 }
 
-.program-run-wizard-actions .button {
+.assign-training-dialog-actions .button {
   min-height: 46px;
 }
 
 @media (max-width: 700px) {
-  .modal-backdrop:has(.program-run-wizard) {
+  .modal-backdrop:has(.assign-training-dialog) {
     padding: 0;
     place-items: stretch;
   }
 
-  .program-run-wizard {
+  .assign-training-dialog {
     width: 100%;
     height: 100dvh;
     max-height: none;
@@ -353,15 +355,15 @@
     border-radius: 0;
   }
 
-  .program-run-wizard .modal-heading {
+  .assign-training-dialog .modal-heading {
     margin-bottom: 10px;
   }
 
-  .program-run-wizard .modal-heading h2 {
+  .assign-training-dialog .modal-heading h2 {
     font-size: 22px;
   }
 
-  .program-run-wizard-body {
+  .assign-training-dialog-body {
     padding-top: 14px;
   }
 
@@ -386,7 +388,7 @@
     grid-template-columns: 30px minmax(0, 1fr) 100px;
   }
 
-  .program-run-wizard-actions {
+  .assign-training-dialog-actions {
     position: sticky;
     z-index: 3;
     bottom: calc(-1 * max(12px, env(safe-area-inset-bottom)));
@@ -396,7 +398,7 @@
     box-shadow: 0 -12px 25px rgba(3, 6, 8, 0.32);
   }
 
-  .program-run-wizard-actions .button {
+  .assign-training-dialog-actions .button {
     min-height: 48px;
   }
 }

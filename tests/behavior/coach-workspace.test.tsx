@@ -83,7 +83,6 @@ const athlete: AthleteSummary = {
   initials: "ET",
   detailsLoaded: true,
   assignedProgramCount: 1,
-  assignedPrograms: [],
   programRuns: [program],
   agenda: [completedEntry, upcomingEntry],
 };
@@ -132,16 +131,16 @@ describe("CoachWorkspace", () => {
     const search = screen.getByRole("textbox", { name: "Search athletes" });
     expect(search).toHaveValue("Nobody");
     await user.clear(search);
-    expect(screen.getByRole("button", { name: "Open Athlete 0, 1 active training plan" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open Athlete 0, 1 active training item" })).toBeVisible();
   });
 
-  it("opens the exact legacy assignment when repeated plans share a program version", async () => {
+  it("opens the exact occurrence when repeated programs share a source version", async () => {
     const user = userEvent.setup();
     const runs: CoachWorkspaceRun[] = [
-      { ...program, id: "run-older", assignmentId: "assignment-older" },
-      { ...program, id: "run-current", assignmentId: "assignment-current" },
+      { ...program, id: "run-older" },
+      { ...program, id: "run-current" },
     ];
-    const entry = { ...completedEntry, programRunId: undefined, assignmentId: "assignment-current" };
+    const entry = { ...completedEntry, programRunId: "run-current" };
     const historyAthlete = { ...athlete, programRuns: runs, agenda: [entry] };
     const { callbacks } = renderWorkspace({ athletes: [historyAthlete], selectedAthlete: historyAthlete, onOpenAgendaEntry: undefined });
 
@@ -186,7 +185,7 @@ describe("CoachWorkspace", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "Open Elina Tolokonceva, 1 active training plan",
+        name: "Open Elina Tolokonceva, 1 active training item",
       }),
     );
 
@@ -220,7 +219,7 @@ describe("CoachWorkspace", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "Open Elina Tolokonceva, 1 active training plan",
+        name: "Open Elina Tolokonceva, 1 active training item",
       }),
     );
 
@@ -242,12 +241,12 @@ describe("CoachWorkspace", () => {
     const user = userEvent.setup();
     const { container } = renderWorkspace();
 
-    await user.click(screen.getByRole("button", { name: "Open Elina Tolokonceva, 1 active training plan" }));
+    await user.click(screen.getByRole("button", { name: "Open Elina Tolokonceva, 1 active training item" }));
     expect(push).toHaveBeenCalledOnce();
     expect(appDetailDataFromHistory()).toEqual({ kind: "coach-athlete", athleteId: athlete.id, tab: "plan" });
 
     await user.click(screen.getByRole("tab", { name: "History" }));
-    await user.click(screen.getByRole("tab", { name: "Plan" }));
+    await user.click(screen.getByRole("tab", { name: "Training" }));
     await user.click(screen.getByRole("tab", { name: "History" }));
     expect(push).toHaveBeenCalledOnce();
     expect(replace).toHaveBeenCalledTimes(3);
@@ -268,10 +267,10 @@ describe("CoachWorkspace", () => {
     const user = userEvent.setup();
     const options = { athletes: [athlete, otherAthlete], selectedAthlete: athlete };
     const { unmount } = renderWorkspace(options);
-    await user.click(screen.getByRole("button", { name: "Open Mara Test, 1 active training plan" }));
+    await user.click(screen.getByRole("button", { name: "Open Mara Test, 1 active training item" }));
     await user.click(screen.getByRole("tab", { name: "History" }));
 
-    pushAppDetailHistory(kind, kind === "program" ? "program" : "today", {
+    pushAppDetailHistory(kind, kind === "program" ? "training" : "workout", {
       stackOnDetail: true,
       data: kind === "program"
         ? { kind, athleteId: otherAthlete.id, programId: program.programId, programVersionId: program.programVersionId, returnView: "coaching" }
@@ -392,7 +391,7 @@ describe("CoachWorkspace", () => {
     window.dispatchEvent(new PopStateEvent("popstate"));
 
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Plan" })).toHaveAttribute(
+      expect(screen.getByRole("tab", { name: "Training" })).toHaveAttribute(
         "aria-selected",
         "true",
       ),
@@ -434,7 +433,6 @@ describe("CoachWorkspace", () => {
     const endedAthlete: AthleteSummary = {
       ...athlete,
       assignedProgramCount: 0,
-      assignedPrograms: [],
       programRuns: [],
       agenda: [completedEntry],
     };
@@ -628,6 +626,6 @@ it("does not mistake a page of finished training for an athlete with no active p
   expect(callbacks.onLoadMoreProgramRuns).toHaveBeenCalledWith(partialAthlete);
   const complete = { ...partialAthlete, programRuns: [...partialAthlete.programRuns, program], hasMoreProgramRuns: false };
   rerender(<CoachWorkspace {...props} athletes={[complete]} selectedAthlete={complete} />);
-  expect(screen.getByRole("heading", { name: "1 active plan" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Open Elina Tolokonceva, 1 active training plan" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Active training (1)" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Open Elina Tolokonceva, 1 active training item" })).toBeVisible();
 });

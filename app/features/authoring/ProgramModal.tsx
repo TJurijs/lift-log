@@ -27,7 +27,7 @@ export function ProgramModal({
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "The program could not be created.",
+          : `The ${kind} could not be created.`,
       );
     } finally {
       savingRef.current = false;
@@ -40,11 +40,6 @@ export function ProgramModal({
         kind === "workout"
           ? "Create a workout"
           : `Create a program for ${targetName}`
-      }
-      description={
-        kind === "workout"
-          ? "Create one session, then schedule it for yourself or assign it to athletes."
-          : "Add workouts in training order. Choose dates when you use or assign the program."
       }
       onClose={onClose}
       dismissible={!saving}

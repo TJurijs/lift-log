@@ -25,8 +25,8 @@ test("exercise search recovery and coach detail screens remain usable", async ({
 
   await page.getByRole("button", { name: "Coaching", exact: true }).click();
   await page.getByRole("tab", { name: "My athletes", exact: true }).click();
-  await page.getByRole("button", { name: /^Open .+, \d+ active training plans?$/ }).first().click();
-  for (const section of ["Plan", "History"]) {
+  await page.getByRole("button", { name: /^Open .+, \d+ active training items?$/ }).first().click();
+  for (const section of ["Training", "History"]) {
     await page.getByRole("tab", { name: section, exact: true }).click();
     await expect(page.getByRole("tab", { name: section, exact: true })).toHaveAttribute("aria-selected", "true");
     const results = await new AxeBuilder({ page }).analyze();

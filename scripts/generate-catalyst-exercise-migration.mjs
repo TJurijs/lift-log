@@ -144,13 +144,13 @@ const unloadedBodyweightPattern =
 
 function defaultsForExercise(name, sectionId) {
   if (sectionId === 19) {
-    return { mode: "result", fields: ["distance", "load", "rpe"] };
+    return { mode: "result", fields: ["distance", "load"] };
   }
   if (/sled/i.test(name)) {
-    return { mode: "result", fields: ["distance", "load", "rpe"] };
+    return { mode: "result", fields: ["distance", "load"] };
   }
   if (distanceMovementPattern.test(name)) {
-    return { mode: "result", fields: ["distance", "duration", "rpe"] };
+    return { mode: "result", fields: ["distance", "duration"] };
   }
   if (timedMovementPattern.test(name)) {
     return {
@@ -159,14 +159,14 @@ function defaultsForExercise(name, sectionId) {
         sectionId === 18
           ? ["duration"]
           : [8, 9, 10, 11, 13, 17].includes(sectionId)
-            ? ["duration", "load", "rpe"]
-            : ["duration", "rpe"],
+            ? ["duration", "load"]
+            : ["duration"],
     };
   }
   if ([12, 16, 18].includes(sectionId) || unloadedBodyweightPattern.test(name)) {
-    return { mode: "sets", fields: ["reps", "rpe"] };
+    return { mode: "sets", fields: ["reps"] };
   }
-  return { mode: "sets", fields: ["reps", "load", "rpe"] };
+  return { mode: "sets", fields: ["reps", "load"] };
 }
 
 function tagsForExercise(section, category) {

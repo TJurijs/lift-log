@@ -140,7 +140,7 @@ describe("mobile and accessible interactions", () => {
     expect(selectDay).toHaveAttribute("aria-pressed", "true");
 
     const directSchedule = within(cell as HTMLElement).getByRole("button", {
-      name: `Schedule a workout on ${date}`,
+      name: `Set training dates from ${date}`,
     });
     const plannedEvent = (cell as HTMLElement).querySelector(
       ".calendar-events button.planned",

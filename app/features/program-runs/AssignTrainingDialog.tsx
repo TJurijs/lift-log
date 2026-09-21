@@ -8,7 +8,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AthleteSummary, Program } from "../../../lib/domain";
+import type { AthleteSummary, Program, ProgramRunSummary } from "../../../lib/domain";
 import { formatDateOnly, localDateOnly } from "../../../lib/date-only";
 import {
   generateProgramRunDates,
@@ -22,31 +22,42 @@ import { trainingContentUi } from "../../ui-semantics";
 const ProgramIcon = trainingContentUi("program").icon;
 
 type WizardStep = "training" | "athletes" | "delivery" | "review";
+type TrainingChoice = { key: string; kind: "program"; training: Program }
+  | { key: string; kind: "run"; training: ProgramRunSummary };
+const emptyRuns: ProgramRunSummary[] = [];
 
-export interface ProgramRunWizardSubmission {
+function choiceWorkoutCount(choice: TrainingChoice) {
+  return choice.kind === "run" ? choice.training.totalWorkouts : programWorkoutCount(choice.training);
+}
+
+export interface AssignTrainingSubmission {
   programId: string;
+  runId?: string;
   athleteIds: string[];
   workoutDates: Array<{ workoutId: string; plannedDate?: string }>;
   idempotencyKey: string;
 }
 
-export interface ProgramRunWizardProps {
-  mode: "self" | "coach";
-  viewerId: string;
-  viewerName: string;
+export interface AssignTrainingDialogProps {
   programs: Program[];
+  runs?: ProgramRunSummary[];
   athletes: AthleteSummary[];
   hasMorePrograms?: boolean;
   loadingMorePrograms?: boolean;
   onLoadMorePrograms?: () => void;
+  hasMoreRuns?: boolean;
+  loadingMoreRuns?: boolean;
+  onLoadMoreRuns?: () => void;
   hasMoreAthletes?: boolean;
   loadingMoreAthletes?: boolean;
   onLoadMoreAthletes?: () => void;
   initialProgramId?: string;
+  initialRunId?: string;
   initialAthleteIds?: string[];
   onLoadProgram: (program: Program) => Promise<Program | null>;
+  onLoadRun?: (run: ProgramRunSummary) => Promise<Program | null>;
   onClose: () => void;
-  onCreate: (submission: ProgramRunWizardSubmission) => Promise<void>;
+  onAssign: (submission: AssignTrainingSubmission) => Promise<void>;
 }
 
 const weekDays = [
@@ -74,49 +85,68 @@ function createIdempotencyKey() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export default function ProgramRunWizard({
-  mode,
-  viewerId,
-  viewerName,
+export default function AssignTrainingDialog({
   programs,
+  runs = emptyRuns,
   athletes,
   hasMorePrograms = false,
   loadingMorePrograms = false,
   onLoadMorePrograms,
+  hasMoreRuns = false,
+  loadingMoreRuns = false,
+  onLoadMoreRuns,
   hasMoreAthletes = false,
   loadingMoreAthletes = false,
   onLoadMoreAthletes,
   initialProgramId,
+  initialRunId,
   initialAthleteIds = [],
   onLoadProgram,
+  onLoadRun,
   onClose,
-  onCreate,
-}: ProgramRunWizardProps) {
-  const programLocked = Boolean(initialProgramId);
-  const athletesLocked = mode === "self" || initialAthleteIds.length === 1;
+  onAssign,
+}: AssignTrainingDialogProps) {
+  const programLocked = Boolean(initialProgramId || initialRunId);
+  const athletesLocked = initialAthleteIds.length === 1
+    && athletes.some((athlete) => athlete.id === initialAthleteIds[0]);
+  const choices = useMemo<TrainingChoice[]>(() => {
+    const representedPrograms = new Set(runs.map((run) => run.programId));
+    return [
+      ...programs.filter((program) => !program.hasOwnRuns && !program.programRunId
+        && !program.editableRunId && !representedPrograms.has(program.id))
+        .map((training) => ({ key: `program:${training.id}`, kind: "program" as const, training })),
+      ...runs.map((training) => ({ key: `run:${training.id}`, kind: "run" as const, training })),
+    ];
+  }, [programs, runs]);
+  const [choiceKey, setChoiceKey] = useState(() => initialRunId
+    ? `run:${initialRunId}` : initialProgramId ? `program:${initialProgramId}` : choices[0]?.key ?? "");
+  const selectedChoice = choices.find((candidate) => candidate.key === choiceKey);
+  const selectedSummary = selectedChoice?.training;
+  const runId = selectedChoice?.kind === "run" ? selectedChoice.training.id : undefined;
+  const programId = selectedChoice?.kind === "run" ? selectedChoice.training.programId : selectedChoice?.training.id;
+  const simpleWorkout = selectedSummary?.contentType === "quick_workout";
   const steps = useMemo<WizardStep[]>(() => {
     const result: WizardStep[] = [];
     if (!programLocked) result.push("training");
-    if (mode === "coach" && !athletesLocked) result.push("athletes");
-    result.push("delivery", "review");
+    if (!athletesLocked) result.push("athletes");
+    result.push("delivery");
+    result.push("review");
     return result;
-  }, [athletesLocked, mode, programLocked]);
+  }, [athletesLocked, programLocked]);
   const [stepIndex, setStepIndex] = useState(0);
   const step = steps[stepIndex];
-  const [programId, setProgramId] = useState(initialProgramId ?? programs[0]?.id ?? "");
-  const selectedSummary = programs.find((candidate) => candidate.id === programId);
   const [athleteIds, setAthleteIds] = useState(
-    () => new Set(mode === "self" ? [viewerId] : initialAthleteIds),
+    () => new Set(initialAthleteIds),
   );
   const [programQuery, setProgramQuery] = useState("");
   const [athleteQuery, setAthleteQuery] = useState("");
-  const selectedProgramKey = selectedSummary
-    ? `${selectedSummary.id}:${selectedSummary.versionId}`
+  const selectedProgramKey = selectedChoice
+    ? `${selectedChoice.key}:${selectedChoice.kind === "run" ? selectedChoice.training.programVersionId : selectedChoice.training.versionId}`
     : "";
   const selectedSummaryHasDetails = Boolean(
-    selectedSummary &&
-      selectedSummary.detailsLoaded !== false &&
-      programWorkouts(selectedSummary).length,
+    selectedChoice?.kind === "program" &&
+      selectedChoice.training.detailsLoaded !== false &&
+      programWorkouts(selectedChoice.training).length,
   );
   const [programLoad, setProgramLoad] = useState<{
     key: string;
@@ -124,9 +154,9 @@ export default function ProgramRunWizard({
     error: string;
   }>({ key: "", program: null, error: "" });
   const [programLoadAttempt, setProgramLoadAttempt] = useState(0);
-  const [delivery, setDelivery] = useState<"scheduled" | "flexible">("scheduled");
+  const [delivery, setDelivery] = useState<"scheduled" | "flexible">("flexible");
   const [startDate, setStartDate] = useState(() => localDateOnly(new Date()));
-  const summaryWorkoutCount = selectedSummary ? programWorkoutCount(selectedSummary) : 0;
+  const summaryWorkoutCount = selectedChoice ? choiceWorkoutCount(selectedChoice) : 0;
   const initialFrequency = Math.min(
     3,
     Math.max(1, summaryWorkoutCount || 3),
@@ -141,15 +171,19 @@ export default function ProgramRunWizard({
   const idempotencyRef = useRef<{ fingerprint: string; key: string } | null>(null);
 
   useEffect(() => {
-    if (!selectedSummary || selectedSummaryHasDetails) return;
+    if (!selectedChoice || selectedSummaryHasDetails) return;
     let active = true;
-    void onLoadProgram(selectedSummary)
+    // A run may contain edits absent from its original source. Never substitute that source.
+    const request = selectedChoice.kind === "run"
+      ? onLoadRun ? onLoadRun(selectedChoice.training) : Promise.resolve(null)
+      : onLoadProgram(selectedChoice.training);
+    void request
       .then((next) => {
         if (active) {
           setProgramLoad({
             key: selectedProgramKey,
             program: next,
-            error: next ? "" : "This program could not be loaded.",
+            error: next ? "" : "This training could not be loaded.",
           });
         }
       })
@@ -161,7 +195,7 @@ export default function ProgramRunWizard({
             error:
               loadError instanceof Error
                 ? loadError.message
-                : "This program could not be loaded.",
+                : "This training could not be loaded.",
           });
         }
       });
@@ -170,14 +204,15 @@ export default function ProgramRunWizard({
     };
   }, [
     onLoadProgram,
+    onLoadRun,
     selectedProgramKey,
-    selectedSummary,
+    selectedChoice,
     selectedSummaryHasDetails,
     programLoadAttempt,
   ]);
 
-  const loadedProgram = selectedSummaryHasDetails
-    ? (selectedSummary ?? null)
+  const loadedProgram = selectedSummaryHasDetails && selectedChoice?.kind === "program"
+    ? selectedChoice.training
     : programLoad.key === selectedProgramKey
       ? programLoad.program
       : null;
@@ -208,17 +243,17 @@ export default function ProgramRunWizard({
     ...entry,
     plannedDate: dateOverrides[entry.workoutId] ?? entry.plannedDate,
   }));
-  const selectedAthletes =
-    mode === "self"
-      ? [{ id: viewerId, name: viewerName }]
-      : athletes
-          .filter((athlete) => athleteIds.has(athlete.id))
-          .map((athlete) => ({ id: athlete.id, name: athlete.name }));
+  const selectedAthletes = athletes
+    .filter((athlete) => athleteIds.has(athlete.id))
+    .map((athlete) => ({ id: athlete.id, name: athlete.name }));
   const selectedNames = selectedAthletes.map((athlete) => athlete.name);
-  const visiblePrograms = programs.filter((candidate) => {
+  const visibleChoices = choices.filter((candidate) => {
     const query = programQuery.trim().toLocaleLowerCase();
-    return !query || `${candidate.title} ${candidate.description}`.toLocaleLowerCase().includes(query);
+    const description = candidate.kind === "program" ? candidate.training.description : candidate.training.nextWorkout?.title;
+    return !query || `${candidate.training.title} ${description ?? ""}`.toLocaleLowerCase().includes(query);
   });
+  const canLoadMoreTraining = (hasMorePrograms && onLoadMorePrograms) || (hasMoreRuns && onLoadMoreRuns);
+  const loadingMoreTraining = loadingMorePrograms || loadingMoreRuns;
   const visibleAthletes = athletes.filter((athlete) => {
     const query = athleteQuery.trim().toLocaleLowerCase();
     return !query || athlete.name.toLocaleLowerCase().includes(query);
@@ -232,12 +267,12 @@ export default function ProgramRunWizard({
     setDateOverrides({});
   }
 
-  function chooseProgram(candidate: Program) {
+  function chooseTraining(candidate: TrainingChoice) {
     const nextFrequency = Math.min(
       3,
-      Math.max(1, programWorkoutCount(candidate) || 1),
+      Math.max(1, choiceWorkoutCount(candidate) || 1),
     );
-    setProgramId(candidate.id);
+    setChoiceKey(candidate.key);
     setSessionsPerWeek(nextFrequency);
     setTrainingDays(
       startDate ? suggestProgramTrainingDays(startDate, nextFrequency) : [],
@@ -270,20 +305,24 @@ export default function ProgramRunWizard({
 
   function canContinue() {
     if (step === "training") return Boolean(programId);
-    if (step === "athletes") return athleteIds.size > 0;
+    if (step === "athletes") return selectedAthletes.length > 0;
     if (step === "delivery") {
       return Boolean(
         loadedProgram &&
           workouts.length &&
-          (delivery === "flexible" || (startDate && trainingDays.length)),
+          (delivery === "flexible" || generatedDates.length === workouts.length),
       );
     }
-    return true;
+    return selectedAthletes.length > 0;
   }
 
   async function submit() {
-    if (!programId || !athleteIds.size || !loadedProgram || saving) return;
-    const submittedAthleteIds = [...athleteIds];
+    if (!programId || !selectedAthletes.length || !loadedProgram || saving) return;
+    if (!workouts.length || (delivery === "scheduled" && generatedDates.length !== workouts.length)) {
+      setError("Choose a valid date, or assign without dates.");
+      return;
+    }
+    const submittedAthleteIds = selectedAthletes.map((athlete) => athlete.id);
     const submittedWorkoutDates: Array<{
       workoutId: string;
       plannedDate?: string;
@@ -305,6 +344,7 @@ export default function ProgramRunWizard({
     }
     const fingerprint = JSON.stringify({
       programId,
+      runId,
       athleteIds: [...submittedAthleteIds].sort(),
       workoutDates: submittedWorkoutDates,
     });
@@ -314,8 +354,9 @@ export default function ProgramRunWizard({
     setSaving(true);
     setError("");
     try {
-      await onCreate({
+      await onAssign({
         programId,
+        ...(runId ? { runId } : {}),
         athleteIds: submittedAthleteIds,
         workoutDates: submittedWorkoutDates,
         idempotencyKey: idempotencyRef.current.key,
@@ -324,58 +365,45 @@ export default function ProgramRunWizard({
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "The program could not be assigned.",
+          : "The training could not be saved.",
       );
       setSaving(false);
     }
   }
 
-  const targetLabel =
-    mode === "self"
-      ? "yourself"
-      : selectedNames.length === 1
+  const targetLabel = selectedNames.length === 1
         ? selectedNames[0]
         : selectedNames.length > 1
           ? `${selectedNames.length} athletes`
           : "selected athletes";
   const selectedObjectLabel = trainingContentUi(selectedSummary?.contentType).label.toLowerCase();
-  const finalAction =
-    mode === "self"
-      ? `Use ${selectedObjectLabel}`
-      : `${delivery === "scheduled" ? "Assign and schedule" : "Assign"} ${selectedObjectLabel}`;
+  const finalAction = `Assign ${selectedObjectLabel}`;
 
   return (
     <ModalShell
-      title={
-        mode === "self"
-          ? `Use ${selectedObjectLabel}`
-          : selectedNames.length
-            ? `Assign to ${targetLabel}`
-            : "Assign training"
-      }
-      description="This creates a separate training plan. Existing and completed training will not be changed."
+      title={selectedNames.length ? `Assign to ${targetLabel}` : "Assign training"}
+      description="Each athlete gets an independent copy."
       onClose={onClose}
       dismissible={!saving}
-      className="program-run-wizard"
+      className="assign-training-dialog"
       wide
     >
-      <div className="program-run-progress" aria-label={`Step ${stepIndex + 1} of ${steps.length}`}>
+      {steps.length > 1 && <div className="program-run-progress" aria-label={`Step ${stepIndex + 1} of ${steps.length}`}>
         <span>{stepIndex + 1} of {steps.length}</span>
         <div aria-hidden="true">
           {steps.map((candidate, index) => (
             <i key={candidate} className={index <= stepIndex ? "active" : ""} />
           ))}
         </div>
-      </div>
+      </div>}
 
-      <div className="program-run-wizard-body">
+      <div className="assign-training-dialog-body">
         {step === "training" && (
           <section className="program-run-step" aria-labelledby="run-training-heading">
             <div className="program-run-step-heading">
               <ProgramIcon size={20} />
               <div>
                 <h3 id="run-training-heading">Choose training</h3>
-                <p>Select a program or a standalone workout.</p>
               </div>
             </div>
             <label className="search-field program-run-search">
@@ -388,47 +416,56 @@ export default function ProgramRunWizard({
               />
             </label>
             <div className="program-run-choice-list">
-              {visiblePrograms.map((candidate) => {
-                const ObjectIcon = trainingContentUi(candidate.contentType).icon;
+              {visibleChoices.map((candidate) => {
+                const ObjectIcon = trainingContentUi(candidate.training.contentType).icon;
+                const count = choiceWorkoutCount(candidate);
+                const chosen = candidate.key === selectedChoice?.key;
+                const nextWorkout = candidate.kind === "run" ? candidate.training.nextWorkout : undefined;
                 return (
                 <button
                   type="button"
-                  key={candidate.id}
-                  className={candidate.id === programId ? "selected" : ""}
-                  aria-pressed={candidate.id === programId}
-                  onClick={() => chooseProgram(candidate)}
+                  key={candidate.key}
+                  className={chosen ? "selected" : ""}
+                  aria-pressed={chosen}
+                  onClick={() => chooseTraining(candidate)}
                 >
                   <span className="program-run-choice-icon"><ObjectIcon size={17} /></span>
                   <span>
-                    <strong>{candidate.title}</strong>
-                    <small>{programWorkoutCount(candidate)} {programWorkoutCount(candidate) === 1 ? "workout" : "workouts"}</small>
+                    <strong>{candidate.training.title}</strong>
+                    <small>{count} {count === 1 ? "workout" : "workouts"}
+                      {nextWorkout?.plannedDate ? ` · ${formatShortDate(nextWorkout.plannedDate)}` : " · No date"}</small>
+                    {nextWorkout && nextWorkout.title !== candidate.training.title && <small>Next: {nextWorkout.title}</small>}
                   </span>
-                  {candidate.id === programId ? <Check size={18} /> : <ChevronRight size={18} />}
+                  {chosen ? <Check size={18} /> : <ChevronRight size={18} />}
                 </button>
               );})}
-              {!visiblePrograms.length && (
+              {!visibleChoices.length && (
                 <div className="program-run-empty-state">
                   <ProgramIcon size={22} />
                   <strong>
-                    {programs.length ? "No matching training" : "No reusable training yet"}
+                    {programQuery.trim() ? "No matching training" : canLoadMoreTraining ? "More training is available" : "No training yet"}
                   </strong>
                   <p>
-                    {programs.length
-                      ? "Try a different search."
-                      : "Create a program or workout before using or assigning it."}
+                    {programQuery.trim()
+                      ? canLoadMoreTraining ? "Try a different search or load more training." : "Try a different search."
+                      : canLoadMoreTraining ? "Load more to find your workouts and programs."
+                        : "Create a workout or program in Training."}
                   </p>
                 </div>
               )}
             </div>
-            {hasMorePrograms && onLoadMorePrograms && (
+            {canLoadMoreTraining && (
               <button
                 type="button"
                 className="button secondary full program-run-load-more"
-                disabled={loadingMorePrograms}
-                onClick={onLoadMorePrograms}
+                disabled={loadingMoreTraining}
+                onClick={() => {
+                  if (hasMorePrograms && onLoadMorePrograms) onLoadMorePrograms();
+                  if (hasMoreRuns && onLoadMoreRuns) onLoadMoreRuns();
+                }}
               >
-                {loadingMorePrograms && <LoaderCircle className="button-spinner" size={15} />}
-                {loadingMorePrograms ? "Loading training…" : "Load more training"}
+                {loadingMoreTraining && <LoaderCircle className="button-spinner" size={15} />}
+                {loadingMoreTraining ? "Loading training…" : "Load more training"}
               </button>
             )}
           </section>
@@ -440,7 +477,6 @@ export default function ProgramRunWizard({
               <UserRound size={20} />
               <div>
                 <h3 id="run-athletes-heading">Choose athletes</h3>
-                <p>You can give the same plan to more than one athlete.</p>
               </div>
             </div>
             {athletes.length > 4 && (
@@ -466,7 +502,7 @@ export default function ProgramRunWizard({
                   <PersonAvatar initials={athlete.initials} name={athlete.name} />
                   <span>
                     <strong>{athlete.name}</strong>
-                    <small>{athlete.assignedProgramCount ?? athlete.assignedPrograms.length} active</small>
+                    <small>{athlete.assignedProgramCount ?? athlete.programRuns?.filter((run) => run.status === "not_started" || run.status === "in_progress").length ?? 0} active</small>
                   </span>
                   {athleteIds.has(athlete.id) && <Check size={18} />}
                 </button>
@@ -498,15 +534,10 @@ export default function ProgramRunWizard({
             <div className="program-run-step-heading">
               <CalendarDays size={20} />
               <div>
-                <h3 id="run-delivery-heading">When should it happen?</h3>
-                <p>
-                  {mode === "self"
-                    ? "Schedule everything now, or choose dates later."
-                    : "Schedule everything now, or let the athlete choose dates later."}
-                </p>
+                <h3 id="run-delivery-heading">Optional dates</h3>
               </div>
             </div>
-            <div className="program-run-delivery-options" role="radiogroup" aria-label="Program delivery">
+            <div className="program-run-delivery-options" role="radiogroup" aria-label="Training dates">
               <button
                 type="button"
                 role="radio"
@@ -515,8 +546,7 @@ export default function ProgramRunWizard({
                 onClick={() => setDelivery("scheduled")}
               >
                 <span>
-                  <strong>{mode === "self" ? "Schedule now" : "Assign and schedule"}</strong>
-                  <small>Generate dates for every workout</small>
+                  <strong>Set dates</strong>
                 </span>
                 {delivery === "scheduled" && <Check size={18} />}
               </button>
@@ -528,12 +558,7 @@ export default function ProgramRunWizard({
                 onClick={() => setDelivery("flexible")}
               >
                 <span>
-                  <strong>Set full schedule later</strong>
-                  <small>
-                    {selectedObjectLabel === "workout"
-                      ? "Choose its calendar date when you are ready"
-                      : "Keep the workout sequence now and add all dates later"}
-                  </small>
+                  <strong>No dates</strong>
                 </span>
                 {delivery === "flexible" && <Check size={18} />}
               </button>
@@ -541,7 +566,7 @@ export default function ProgramRunWizard({
             {delivery === "scheduled" && (
               <div className="program-run-schedule-fields">
                 <label className="form-field">
-                  <span>Start date</span>
+                  <span>{simpleWorkout ? "Workout date" : "Start date"}</span>
                   <input
                     type="date"
                     value={startDate}
@@ -599,7 +624,7 @@ export default function ProgramRunWizard({
                 <h3 id="run-review-heading">{loadedProgram.title}</h3>
                 <p>{workouts.length} {workouts.length === 1 ? "workout" : "workouts"} for {targetLabel}</p>
               </div>
-              <span>{delivery === "scheduled" ? "Scheduled" : "Schedule later"}</span>
+              <span>{delivery === "scheduled" ? "Dates set" : "No dates"}</span>
             </div>
             <div className="program-run-review-list">
               {workouts.map((workout, index) => {
@@ -607,10 +632,10 @@ export default function ProgramRunWizard({
                 return (
                   <article key={workout.id}>
                     <span>{index + 1}</span>
-                    <div><strong>{workout.title}</strong><small>~{workout.durationMinutes} min</small></div>
+                    <div><strong>{workout.title}</strong>{(workout.durationMinutes ?? 0) > 0 && <small>~{workout.durationMinutes} min</small>}</div>
                     {delivery === "scheduled" ? (
                       <label>
-                        <span>{generated?.plannedDate ? formatShortDate(generated.plannedDate) : "Schedule later"}</span>
+                        <span>{generated?.plannedDate ? formatShortDate(generated.plannedDate) : "No date"}</span>
                         <input
                           type="date"
                           aria-label={`Date for ${workout.title}`}
@@ -619,7 +644,7 @@ export default function ProgramRunWizard({
                         />
                       </label>
                     ) : (
-                      <em>Unscheduled</em>
+                      <em>No date</em>
                     )}
                   </article>
                 );
@@ -648,7 +673,7 @@ export default function ProgramRunWizard({
         )}
       </div>
 
-      <div className="program-run-wizard-actions">
+      <div className="assign-training-dialog-actions">
         <button
           type="button"
           className="button secondary"
@@ -662,7 +687,7 @@ export default function ProgramRunWizard({
           {stepIndex === 0 ? "Cancel" : <><ArrowLeft size={16} />Back</>}
         </button>
         {step === "review" ? (
-          <button type="button" className="button primary" disabled={saving || !workouts.length} onClick={() => void submit()}>
+          <button type="button" className="button primary" disabled={saving || !workouts.length || !canContinue() || loadingProgram} onClick={() => void submit()}>
             {saving ? <><LoaderCircle className="button-spinner" size={16} />Saving…</> : <><Check size={16} />{finalAction}</>}
           </button>
         ) : (

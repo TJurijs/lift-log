@@ -8,7 +8,7 @@ test("authenticated sections have consistent accessible layouts", async ({ page 
   await signInAsTestPersona(page, "Raimonds Vējonis");
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  for (const section of ["Next workouts", "Programs", "Calendar", "Exercises", "Coaching"]) {
+  for (const section of ["Training", "Calendar", "Exercises", "Coaching"]) {
     await page.getByRole("button", { name: section, exact: true }).click();
     await expect(page.locator("main h1")).toHaveCount(1);
     await expect(page.locator(".feature-load-status .spin")).toHaveCount(0);
@@ -26,7 +26,7 @@ test("local workout edits survive reload, offline editing and reconnect", async 
   await signInAsTestPersona(page, "Jānis Čakste");
   const note = page.getByRole("textbox", { name: "Session notes optional" });
   const resume = page.getByRole("button", { name: "Resume workout", exact: true });
-  const start = page.getByRole("button", { name: "Start workout", exact: true }).first();
+  const start = page.getByRole("button", { name: /^Start workout(?::|$)/ }).first();
   await expect(note.or(resume).or(start).first()).toBeVisible();
   let startedHere = false;
   if (await note.isVisible()) {
@@ -73,9 +73,9 @@ test("a program can be authored, saved, reopened and removed through the local U
   test.skip(!["desktop-chromium", "mobile-webkit"].includes(testInfo.project.name), "One desktop and one mobile authoring journey");
   let name = `Review program ${testInfo.project.name} ${Date.now()}`;
   await signInAsTestPersona(page, "Gustavs Zemgals");
-  await page.getByRole("button", { name: "Programs", exact: true }).click();
+  await page.getByRole("button", { name: "Training", exact: true }).click();
   await page.locator(".program-create-menu summary").click();
-  await page.getByRole("button", { name: "Program Multiple ordered workouts", exact: true }).click();
+  await page.getByRole("button", { name: "Program A sequence of workouts", exact: true }).click();
   await page.getByRole("dialog").getByRole("textbox", { name: "Program name", exact: true }).fill(name);
   await page.getByRole("button", { name: "Create program", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Program name", exact: true })).toHaveValue(name);
@@ -91,15 +91,15 @@ test("a program can be authored, saved, reopened and removed through the local U
   name += " revised";
   await page.getByRole("textbox", { name: "Program name", exact: true }).fill(name);
   await page.getByRole("textbox", { name: "Description optional", exact: true }).fill("Local review: reusable strength training.");
-  // Leaving the editor flushes pending metadata before returning to Programs.
-  await page.getByRole("button", { name: "Back to Programs", exact: true }).click();
+  // Leaving the editor flushes pending metadata before returning to Training.
+  await page.getByRole("button", { name: "Back to Training", exact: true }).click();
   await page.getByLabel(`More actions for ${name}`, { exact: true }).click();
   await page.getByRole("button", { name: `Edit ${name} program`, exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Program name", exact: true })).toHaveValue(name);
   await expect(page.getByRole("textbox", { name: "Description optional", exact: true })).toHaveValue("Local review: reusable strength training.");
   await expect(page.getByRole("button", { name: "Edit Back squat", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("program-authored.png"), fullPage: true });
-  await page.getByRole("button", { name: "Programs", exact: true }).click();
+  await page.getByRole("button", { name: "Training", exact: true }).click();
   await page.getByLabel(`More actions for ${name}`, { exact: true }).click();
   await page.getByRole("button", { name: `Delete ${name}`, exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete program", exact: true }).click();
@@ -110,12 +110,16 @@ test("only one tab edits a workout and takeover restores the latest save", async
   test.skip(!["desktop-chromium", "mobile-webkit"].includes(testInfo.project.name), "One desktop and one mobile cross-tab journey");
   await signInAsTestPersona(page, "Jānis Čakste");
   const note = page.getByRole("textbox", { name: "Session notes optional" });
+  const resume = page.getByRole("button", { name: "Resume workout", exact: true });
+  await expect(note.or(resume).first()).toBeVisible();
+  if (await resume.isVisible()) await resume.click();
   await expect(note).toBeEnabled();
   const original = await note.inputValue();
   const marker = `Local tab takeover ${Date.now()}`;
   const second = await context.newPage();
   try {
     await second.goto("/");
+    await second.getByRole("button", { name: "Resume workout", exact: true }).click();
     await expect(second.getByText("This workout is open for editing in another tab. Close it there, then try again.")).toBeVisible();
     const secondNote = second.getByRole("textbox", { name: "Session notes optional" });
     await expect(secondNote).toBeDisabled();

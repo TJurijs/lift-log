@@ -62,11 +62,7 @@ export function ExerciseModal({
   return (
     <ModalShell
       title={exercise ? "Edit exercise" : "Create an exercise"}
-      description={
-        exercise
-          ? "Update the defaults used when you add this exercise to future workouts."
-          : "Save it once, then reuse it in any program you build."
-      }
+      description={exercise ? "Changes apply when you add this exercise to future workouts." : undefined}
       onClose={onClose}
       dismissible={!saving}
     >
@@ -96,7 +92,7 @@ export function ExerciseModal({
           </select>
         </label>
         <label className="form-field">
-          <span>Category <em>icon and search</em></span>
+          <span>Category</span>
           <select
             aria-label="Category"
             value={category}

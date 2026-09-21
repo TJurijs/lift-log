@@ -15,16 +15,12 @@ const programViewUrl = new URL(
   "../app/features/programs/ProgramView.tsx",
   import.meta.url,
 );
-const runWizardUrl = new URL(
-  "../app/features/program-runs/ProgramRunWizard.tsx",
-  import.meta.url,
-);
 const runWizardStylesUrl = new URL(
-  "../app/features/program-runs/program-run-wizard.css",
+  "../app/features/program-runs/assign-training-dialog.css",
   import.meta.url,
 );
 const runScheduleStylesUrl = new URL(
-  "../app/features/program-runs/program-run-schedule-wizard.css",
+  "../app/features/program-runs/training-dates-editor.css",
   import.meta.url,
 );
 
@@ -173,7 +169,7 @@ test("creating a run atomically materializes every workout and optionally schedu
   );
 });
 
-test("first use snapshots a revision without permanently locking the reusable program", async () => {
+test("planning preserves immutable history behind the workout and program interface", async () => {
   const [sql, app] = await Promise.all([
     readMigrationHistory(),
     readAuthoringSource(),
@@ -204,7 +200,8 @@ test("first use snapshots a revision without permanently locking the reusable pr
     /case[\s\S]*when candidate\.status = 'draft' then 0[\s\S]*end/,
     "the Programs library must continue to open the owner's working revision",
   );
-  assert.match(app, /saved for future (?:runs|uses)/i);
+  const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
+  assert.doesNotMatch(programRow, /Template|Saved version|In use/);
 });
 
 test("repeating creates an isolated run while ending retains completed results", async () => {
@@ -242,7 +239,7 @@ test("repeating creates an isolated run while ending retains completed results",
   assert.doesNotMatch(end, /delete from public\.(workout_sessions|session_item_logs)/i);
   assert.doesNotMatch(end, /delete from public\.program_run_workouts/i);
 
-  assert.match(repository, /async repeatProgramRun\([\s\S]*rpc\("repeat_program_run"/);
+  assert.match(repository, /async copyProgramRunToOwn\([\s\S]*rpc\("copy_program_run_to_own"/);
   assert.match(repository, /async endProgramRun\([\s\S]*rpc\("end_program_run"/);
 });
 
@@ -276,45 +273,6 @@ test("run progress comes from the complete materialized run, never the bounded N
   assert.doesNotMatch(programRow, /deriveProgramRunStatus|program-card-workout-progress/);
 });
 
-test("self run progress is attached to its template while Next stays schedule-focused", async () => {
-  const app = await readAuthoringSource();
-  const nextWorkouts = await readFile(new URL("../app/features/next-workouts/NextWorkoutsView.tsx", import.meta.url), "utf8");
-  const programRow = sourceBetween(app, "function ProgramRow", "function ProgramsHome");
-
-  assert.doesNotMatch(nextWorkouts, /SelfProgramRuns|Active training|Your training plans/);
-  assert.match(programRow, /isQuickWorkout[\s\S]*\? "In use"[\s\S]*In use · \$\{activeRun\.completedWorkouts\}\/\$\{activeRun\.totalWorkouts\} completed/);
-  assert.match(programRow, /onOpenActiveRun/);
-  assert.match(app, /function openOwnProgramRun[\s\S]*repository\.loadProgramForRun\(run\.id\)/);
-  assert.match(
-    app,
-    /onEndRun=\{\(run\)[\s\S]*kind: "program-run"[\s\S]*id: run\.id[\s\S]*setModal\("delete-content"\)/,
-  );
-  assert.match(
-    app,
-    /onRepeatRun=\{\(run\)[\s\S]*openProgramRunWizard\([\s\S]*mode: "self"[\s\S]*repeatRun: run/,
-  );
-  assert.doesNotMatch(programRow, /completionPercent|nextWorkout/);
-});
-
-test("coach-assigned history pages independently from self-created runs", async () => {
-  const [domain, repository, app] = await Promise.all([
-    readFile(domainUrl, "utf8"),
-    readFile(repositoryUrl, "utf8"),
-    readAuthoringSource(),
-  ]);
-
-  assert.match(domain, /coachProgramRunCursor\?: ProgramRunCursor/);
-  assert.match(
-    repository,
-    /creatorScope\?: "all" \| "self" \| "coach"[\s\S]*creator_scope: creatorScope/,
-  );
-  assert.match(
-    app,
-    /listProgramRuns\(undefined, \{ creatorScope: "coach" \}\)[\s\S]*coachProgramRunCursor/,
-  );
-  assert.match(app, /Search older training/);
-});
-
 test("opening either self or coach run targets the next incomplete run workout", async () => {
   const app = await readAuthoringSource();
   const selfOpen = sourceBetween(
@@ -345,12 +303,12 @@ test("run detail keeps its launch surface and opens completed results", async ()
     readFile(programViewUrl, "utf8"),
   ]);
 
-  assert.match(app, /openOwnProgramRun\(run, "program"\)/);
+  assert.match(app, /openOwnProgramRun\(run, "training"\)/);
   assert.match(app, /const returnView = programReturnView/);
-  assert.match(app, /backLabel=\{destinationLabel\(programReturnView\)\}/);
+  assert.match(app, /backLabel=\{program\.editableRunId \? "Workout" : destinationLabel\(programReturnView\)\}/);
   assert.match(
     app,
-    /function openProgramRunActivity[\s\S]*entry\.kind !== "completed"[\s\S]*openCalendarResults\([\s\S]*"program"/,
+    /function openProgramRunActivity[\s\S]*entry\.kind !== "completed"[\s\S]*openCalendarResults\([\s\S]*"training"/,
   );
   assert.match(
     programView,
@@ -367,7 +325,7 @@ test("athletes and assigning coaches can copy an exact superseded run revision",
   );
   assert.match(
     app,
-    /sourceRunId[\s\S]*capabilitiesForViewedProgram\(targetProgram\)[\s\S]*copyProgramRunToOwn\(sourceRunId\)/,
+    /function duplicateProgram[\s\S]*sourceRun\.athleteId !== viewer\.id && sourceRun\.createdById !== viewer\.id[\s\S]*throw new Error[\s\S]*copyProgramRunToOwn\(sourceRun\.id\)/,
   );
 });
 
@@ -398,49 +356,6 @@ test("run progress is invalidated and refreshed after every occurrence transitio
   assert.match(app, /setScheduledWorkoutStatus[\s\S]*refreshProgramRunSummaries\(\)/);
 });
 
-test("self and coach entry points use one assignment-and-scheduling flow", async () => {
-  const [app, wizard] = await Promise.all([
-    readAuthoringSource(),
-    readFile(runWizardUrl, "utf8"),
-  ]);
-
-  assert.match(wizard, /mode: "self" \| "coach"/);
-  assert.match(wizard, /mode === "self"\s*\? \[viewerId\]/);
-  assert.match(wizard, /Assign and schedule/);
-  assert.match(wizard, /Set full schedule later/);
-  assert.match(wizard, /`Use \$\{selectedObjectLabel\}`/);
-  assert.match(wizard, /Training days/);
-  assert.match(wizard, /step === "review"/);
-  assert.match(
-    wizard,
-    /Choose training[\s\S]*program or a standalone workout/,
-    "programs and standalone workouts must enter the same workflow",
-  );
-  assert.match(app, /<ProgramRunWizard/);
-  assert.match(app, /repository\.createProgramRuns\(/);
-  assert.doesNotMatch(wizard, /Scheduling is a separate step\./);
-  const appShell = sourceBetween(
-    app,
-    "export default function LiftLogApp",
-    "function Sidebar",
-  );
-  assert.doesNotMatch(
-    appShell,
-    /<AssignProgramModal\b/,
-    "self and coach actions must not render a separate legacy assignment flow",
-  );
-  assert.match(
-    appShell,
-    /modal === "run-schedule"[\s\S]*repository\.scheduleProgramRunWorkouts\(/,
-    "an existing run's flexible dates must use the run scheduling command",
-  );
-  assert.doesNotMatch(
-    appShell,
-    /repository\.assignQuickWorkoutToAthletes\(/,
-    "legacy compatibility may remain in the repository, but the UI must use the universal run command",
-  );
-});
-
 test("mobile coaching drills into one athlete and uses full-screen run workflows", async () => {
   const [app, coachWorkspace, styles, wizardStyles, scheduleStyles] = await Promise.all([
     readAuthoringSource(),
@@ -455,7 +370,7 @@ test("mobile coaching drills into one athlete and uses full-screen run workflows
     /<DetailNavigation[\s\S]*className="coach-athlete-navigation"[\s\S]*backLabel="My athletes"/,
     "the selected athlete must be a navigable detail screen, not a second stacked panel",
   );
-  assert.match(coachWorkspace, /value: "plan"[\s\S]*label: "Plan"/);
+  assert.match(coachWorkspace, /value: "plan"[\s\S]*label: "Training"/);
   assert.match(coachWorkspace, /value: "history"[\s\S]*label: "History"/);
   assert.match(coachWorkspace, /onOpenAgendaEntry\?:[\s\S]*CoachAgendaEntry/);
   assert.match(
@@ -475,10 +390,10 @@ test("mobile coaching drills into one athlete and uses full-screen run workflows
   assert.match(coachWorkspace, /className="[^"]*coach-athlete-directory[^"]*"/);
   assert.match(coachWorkspace, /className="coach-athlete-detail"/);
   assert.match(app, /<CoachWorkspace/);
-  assert.match(app, /<ProgramRunWizard/);
+  assert.match(app, /<AssignTrainingDialog/);
   assert.match(
     wizardStyles,
-    /@media \(max-width: 700px\)[\s\S]*\.modal-backdrop:has\(\.program-run-wizard\)[\s\S]*place-items:\s*stretch[\s\S]*\.program-run-wizard[\s\S]*height:\s*100dvh[\s\S]*max-height:\s*none/,
+    /@media \(max-width: 700px\)[\s\S]*\.modal-backdrop:has\(\.assign-training-dialog\)[\s\S]*place-items:\s*stretch[\s\S]*\.assign-training-dialog[\s\S]*height:\s*100dvh[\s\S]*max-height:\s*none/,
     "the multi-step workflow must use the mobile viewport rather than a scrolling nested modal",
   );
   assert.match(
@@ -491,12 +406,12 @@ test("mobile coaching drills into one athlete and uses full-screen run workflows
   );
   assert.match(
     wizardStyles,
-    /@media \(max-width: 700px\)[\s\S]*\.program-run-wizard-actions[\s\S]*position:\s*sticky[\s\S]*bottom:/,
+    /@media \(max-width: 700px\)[\s\S]*\.assign-training-dialog-actions[\s\S]*position:\s*sticky[\s\S]*bottom:/,
     "the primary action must remain reachable above the mobile safe area",
   );
   assert.match(
     scheduleStyles,
-    /@media \(max-width: 700px\)[\s\S]*\.modal-backdrop:has\(\.program-run-schedule-wizard\)[\s\S]*place-items:\s*stretch[\s\S]*\.program-run-schedule-wizard[\s\S]*height:\s*100dvh[\s\S]*max-height:\s*none/,
+    /@media \(max-width: 700px\)[\s\S]*\.modal-backdrop:has\(\.training-dates-editor\)[\s\S]*place-items:\s*stretch[\s\S]*\.training-dates-editor[\s\S]*height:\s*100dvh[\s\S]*max-height:\s*none/,
     "bulk rescheduling must also use the full mobile viewport",
   );
   assert.match(

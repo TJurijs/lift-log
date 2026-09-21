@@ -58,6 +58,7 @@ try {
   const workout = workoutResult.payload;
   assert.equal(workout.title, "First workout");
   assert.equal(workout.position, 0);
+  assert.equal(workout.estimatedMinutes, null, "New workouts do not invent an estimate");
   assert.equal(workout.sections.length, 1);
   const section = workout.sections[0];
   assert.equal(section.title, "Exercises");
@@ -68,6 +69,28 @@ try {
   `;
   assert.equal(nextWorkout.payload.position, 1);
   assert.equal(nextWorkout.payload.scheduleLabel, "Workout 2");
+  assert.equal(nextWorkout.payload.estimatedMinutes, null);
+
+  const [{ id: quickProgramId }] = await db`
+    select public.create_blank_quick_workout('Optional estimate') as id
+  `;
+  const [{ payload: quickProgram }] = await db`
+    select public.get_program_version_detail(${quickProgramId}::uuid) as payload
+  `;
+  assert.equal(quickProgram.weeks[0].workouts[0].estimatedMinutes, null,
+    "Standalone workouts also start without an estimate");
+  await db`update public.workouts set estimated_minutes = 55 where id = ${workout.id}::uuid`;
+  const [{ id: copiedProgramId }] = await db`
+    select public.copy_program_to_own(${program.id}::uuid) as id
+  `;
+  const [{ payload: copiedProgram }] = await db`
+    select public.get_program_version_detail(${copiedProgramId}::uuid) as payload
+  `;
+  assert.deepEqual(copiedProgram.weeks[0].workouts.map((item) => item.estimatedMinutes), [55, null],
+    "Repeat preserves both explicit estimates and omitted estimates");
+  await db`update public.workouts set estimated_minutes = null where id = ${workout.id}::uuid`;
+  assert.equal((await db`select estimated_minutes from public.workouts where id = ${workout.id}::uuid`)[0].estimated_minutes,
+    null, "An explicit estimate can be cleared");
 
   const fixtures = [
     { mode: "sets", fields: ["reps", "load", "rpe"], entries: 3 },
@@ -260,7 +283,7 @@ try {
     select * from public.list_calendar_session_summaries(current_date, current_date, 100)
   `).length, 0);
 
-  console.log("Atomic authoring smoke passed: complete defaults, append order, authorization, child-failure rollback, immutable versions, dense calendar keysets, enforced read-only queries.");
+  console.log("Atomic authoring smoke passed: complete defaults, optional workout estimates and copies, append order, authorization, child-failure rollback, immutable versions, dense calendar keysets, enforced read-only queries.");
 } finally {
   if (transactionOpen) await db.unsafe("rollback");
   await db.end({ timeout: 2 });

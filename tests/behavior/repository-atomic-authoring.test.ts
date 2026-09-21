@@ -14,6 +14,36 @@ function makeRepository(data: unknown, error: { message: string } | null = null)
 }
 
 describe("atomic workout authoring", () => {
+  it("creates a workout-only snapshot without a library insert", async () => {
+    const { repository, rpc, from } = makeRepository({
+      id: "custom-item", sourceExerciseId: null, name: "Clean + hold", cue: "",
+      entryMode: "sets", trackingFields: ["reps", "load"], position: 2,
+      prescribedEntries: [0, 1, 2].map((position) => ({ id: `entry-${position}`, position })),
+    });
+    const result = await repository.addCustomWorkoutItem({ id: "section", title: "Exercises", items: [] }, " Clean + hold ");
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("append_custom_workout_exercise", {
+      target_section_id: "section", target_name: "Clean + hold",
+    });
+    expect(from).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ title: "Clean + hold", mode: "sets", fields: ["reps", "load"], prescription: { sets: 3 } });
+    expect(result.exerciseId).toBeUndefined();
+    expect(result.prescription.reps).toBeUndefined();
+    expect(result.prescription.targetRpe).toBeUndefined();
+  });
+
+  it.each([" ", "x".repeat(161)])("rejects an invalid custom name before sending it", async (name) => {
+    const { repository, rpc } = makeRepository(null);
+    await expect(repository.addCustomWorkoutItem({ id: "section", title: "Exercises", items: [] }, name)).rejects.toThrow("Exercise name must be between 1 and 160 characters");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to a library write when custom creation fails", async () => {
+    const { repository, rpc, from } = makeRepository(null, { message: "Program version is not editable" });
+    await expect(repository.addCustomWorkoutItem({ id: "section", title: "Exercises", items: [] }, "My movement")).rejects.toThrow("Program version is not editable");
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(from).not.toHaveBeenCalled();
+  });
+
   it.each([
     { repsMin: null, repsMax: null, expected: undefined },
     { repsMin: 2, repsMax: 3, expected: "2–3" },

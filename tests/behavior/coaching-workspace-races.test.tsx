@@ -8,7 +8,7 @@ import type { CoachingRepository } from "../../lib/repository-contracts";
 
 const athlete: AthleteSummary = {
   id: "athlete-a", name: "Athlete A", initials: "AA", detailsLoaded: false,
-  assignedPrograms: [], agenda: [],
+  agenda: [],
 };
 const cursor: CoachAthleteCursor = { displayName: "Athlete A", id: athlete.id };
 const coaching = (athletes = [athlete]): CoachingWorkspaceData => ({

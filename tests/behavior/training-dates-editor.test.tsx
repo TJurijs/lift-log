@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import ProgramRunScheduleWizard from "../../app/features/program-runs/ProgramRunScheduleWizard";
+import TrainingDatesEditor from "../../app/features/program-runs/TrainingDatesEditor";
 import type { ProgramRunDetail } from "../../lib/domain";
 import { localDateOnly } from "../../lib/date-only";
 
@@ -68,7 +68,7 @@ const detail: ProgramRunDetail = {
 function renderWizard(onSave = vi.fn().mockResolvedValue(undefined)) {
   const onLoad = vi.fn().mockResolvedValue(detail);
   render(
-    <ProgramRunScheduleWizard
+    <TrainingDatesEditor
       run={detail}
       athleteName="Athlete One"
       onLoad={onLoad}
@@ -79,7 +79,20 @@ function renderWizard(onSave = vi.fn().mockResolvedValue(undefined)) {
   return { onLoad, onSave };
 }
 
-describe("ProgramRunScheduleWizard", () => {
+describe("TrainingDatesEditor", () => {
+  it("clears an existing standalone date without deleting or repeating the workout", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const single: ProgramRunDetail = { ...detail, contentType: "quick_workout", totalWorkouts: 1,
+      workouts: [{ ...detail.workouts[2], plannedDate: "2026-09-23" }] };
+    render(<TrainingDatesEditor run={single} onLoad={vi.fn().mockResolvedValue(single)} onClose={vi.fn()} onSave={onSave} />);
+    expect(await screen.findByLabelText("Date for Scheduled workout")).toHaveValue("2026-09-23");
+    await user.click(screen.getByRole("button", { name: "No date" }));
+    expect(screen.getByLabelText("Date for Scheduled workout")).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Save date" }));
+    expect(onSave).toHaveBeenCalledWith([{ workoutId: single.workouts[0].workoutId, plannedDate: undefined }], expect.any(String));
+  });
+
   it("uses a one-date flow for a single workout", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
@@ -106,7 +119,7 @@ describe("ProgramRunScheduleWizard", () => {
     };
 
     render(
-      <ProgramRunScheduleWizard
+      <TrainingDatesEditor
         run={quickWorkout}
         athleteName="Elina"
         onLoad={vi.fn().mockResolvedValue(quickWorkout)}
@@ -115,11 +128,11 @@ describe("ProgramRunScheduleWizard", () => {
       />,
     );
 
-    expect(await screen.findByText("Scheduling for Elina.")).toBeVisible();
+    expect(await screen.findByText(`${quickWorkout.title} · Elina`)).toBeVisible();
     expect(screen.queryByText("Generate a schedule")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add to calendar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save date" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: /Today/ }));
-    await user.click(screen.getByRole("button", { name: "Add to calendar" }));
+    await user.click(screen.getByRole("button", { name: "Save date" }));
     expect(onSave).toHaveBeenCalledWith(
       [{ workoutId: "quick-workout", plannedDate: localDateOnly(new Date()) }],
       expect.any(String),
@@ -162,13 +175,13 @@ describe("ProgramRunScheduleWizard", () => {
     expect(unscheduledDate).toHaveValue("");
     expect(scheduledDate).toHaveValue("2026-09-12");
     expect(screen.getByText("1 of 2 dated")).toBeVisible();
-    expect(screen.getByText("1 needs a date")).toBeVisible();
+    expect(screen.getByText("1 undated")).toBeVisible();
     expect(screen.queryByLabelText("Date for Completed workout")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Date for Skipped workout")).not.toBeInTheDocument();
 
     fireEvent.change(unscheduledDate, { target: { value: "2026-09-14" } });
     fireEvent.change(scheduledDate, { target: { value: "" } });
-    await user.click(screen.getByRole("button", { name: "Save all dates" }));
+    await user.click(screen.getByRole("button", { name: "Save dates" }));
 
     expect(onLoad).toHaveBeenCalledWith("run-1");
     expect(onSave).toHaveBeenCalledWith(
@@ -216,7 +229,7 @@ describe("ProgramRunScheduleWizard", () => {
     const unscheduledDate = await screen.findByLabelText("Date for Unscheduled workout");
 
     fireEvent.change(unscheduledDate, { target: { value: "2026-09-14" } });
-    await user.click(screen.getByRole("button", { name: "Save all dates" }));
+    await user.click(screen.getByRole("button", { name: "Save dates" }));
 
     expect(onSave).not.toHaveBeenCalled();
     expect(
@@ -236,7 +249,7 @@ describe("ProgramRunScheduleWizard", () => {
       ),
     };
     render(
-      <ProgramRunScheduleWizard
+      <TrainingDatesEditor
         run={detailWithFixedDate}
         athleteName="Athlete One"
         onLoad={vi.fn().mockResolvedValue(detailWithFixedDate)}
@@ -249,7 +262,7 @@ describe("ProgramRunScheduleWizard", () => {
       await screen.findByLabelText("Date for Unscheduled workout"),
       { target: { value: "2026-09-09" } },
     );
-    await user.click(screen.getByRole("button", { name: "Save all dates" }));
+    await user.click(screen.getByRole("button", { name: "Save dates" }));
 
     expect(onSave).not.toHaveBeenCalled();
     expect(

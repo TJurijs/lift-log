@@ -25,7 +25,6 @@ function contentInput(
     source: "self",
     contentType: "program",
     lifecycle: "published",
-    available: false,
     activeCoachOfOwner: false,
     hasAssignableAthletes: false,
     coachReadScope: "authored_only",
@@ -136,7 +135,6 @@ describe("deriveTrainingContentCapabilities", () => {
       const capabilities = deriveTrainingContentCapabilities(
         contentInput({
           lifecycle,
-          available: true,
           hasAssignableAthletes: true,
         }),
       );
@@ -152,7 +150,7 @@ describe("deriveTrainingContentCapabilities", () => {
 
     it("does not grant authoring capabilities when Own ownership and authorship disagree", () => {
       const capabilities = deriveTrainingContentCapabilities(
-        contentInput({ authorId: coachId, available: true }),
+        contentInput({ authorId: coachId }),
       );
 
       expect(capabilities).toMatchObject({
@@ -218,7 +216,6 @@ describe("deriveTrainingContentCapabilities", () => {
               authorId: coachId,
               source: "coach",
               lifecycle,
-              available: true,
             }),
           ),
         ).toEqual({
@@ -317,7 +314,6 @@ describe("deriveTrainingContentCapabilities", () => {
             viewerId: otherCoachId,
             authorId: athleteId,
             source: "self",
-            available: true,
             activeCoachOfOwner: true,
           }),
         ),
@@ -330,7 +326,6 @@ describe("deriveTrainingContentCapabilities", () => {
       deriveTrainingContentCapabilities(
         contentInput({
           archived: true,
-          available: true,
           hasAssignableAthletes: true,
         }),
       ),

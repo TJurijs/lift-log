@@ -1,158 +1,26 @@
-import { ObjectActionMenu, type ObjectAction } from "../../object-action-menu";
-import { ArrowLeft, ArrowRight, ChevronRight, CircleUserRound, LoaderCircle, Plus, Search, Settings2, Users, X } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
-import type { AthleteSummary, Program, ProgramRunSummary } from "../../../lib/domain";
+import { Activity, CalendarDays, Check, ChevronDown, CircleUserRound, History, LoaderCircle, Play, Plus, RefreshCw, Search, Settings2, UserPlus, Users, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import type { CompletedSession, Program, ProgramRunDetail, ProgramRunSummary, ProgramRunWorkout } from "../../../lib/domain";
 import type { TrainingContentCapabilities } from "../../../lib/capabilities";
+import { formatDateOnly, localDateOnly } from "../../../lib/date-only";
 import { cn, formatWorkoutCount } from "../../../lib/presentation";
-import { presentProgramProvenance } from "../../../lib/provenance";
-import { programWorkoutCount } from "../../../lib/program-tree";
-import { AsyncButton, InlineError, PageHeader, SegmentedTabs, SourceTag, StatusBadge } from "../../ui-primitives";
+import { programWorkoutCount, programWorkouts } from "../../../lib/program-tree";
+import { ObjectActionMenu, type ObjectAction } from "../../object-action-menu";
+import { AsyncButton, InlineError, PageHeader, SegmentedTabs } from "../../ui-primitives";
 import { actionUi, trainingContentUi } from "../../ui-semantics";
+import { isTrainingHistory, trainingDateSection, trainingFeed, type TrainingFeedItem } from "./training-feed";
+
 const ProgramIcon = trainingContentUi("program").icon;
 const WorkoutIcon = trainingContentUi("quick_workout").icon;
-export type ProgramSourceTab = "own" | "coach";
+export type ProgramSourceTab = "all" | "own" | "coach";
 export type ProgramAction = { id: string; kind: "delete" | "save" | "duplicate" | "edit" | "open" } | null;
-const CoachProgramRuns = lazy(() => import("../program-runs/SelfProgramRuns").then(({ CoachProgramRuns: component }) => ({ default: component })));
 
-export function ProgramRow({
-  program,
-  activeRun,
-  viewerId,
-  canEdit,
-  canDuplicate,
-  canDelete,
-  action,
-  onOpen,
-  onEdit,
-  onDuplicate,
-  onDelete,
-  deleteLabel = "Delete",
-  onSchedule,
-  onOpenActiveRun,
-}: {
-  program: Program;
-  activeRun?: ProgramRunSummary;
-  viewerId: string;
-  canEdit: boolean;
-  canDuplicate: boolean;
-  canDelete: boolean;
-  action: Exclude<ProgramAction, null>["kind"] | null;
-  onOpen: () => void;
-  onEdit: () => void;
-  onDuplicate?: () => void;
-  onDelete?: () => void;
-  deleteLabel?: "Delete" | "Unassign";
-  onSchedule?: () => void;
-  onOpenActiveRun?: () => void;
-}) {
-  const isQuickWorkout = program.contentType === "quick_workout";
-  const { label: objectLabel, icon: ObjectIcon } = trainingContentUi(program.contentType);
-  const useLabel = program.sourceType === "coach" ? "Schedule" : `Use ${objectLabel.toLowerCase()}`;
-  const workoutCount = programWorkoutCount(program);
-  const estimatedMinutes = program.weeks[0]?.workouts[0]?.durationMinutes;
-  return (
-    <article className="program-catalog-card panel">
-      <button
-        type="button"
-        className="program-card-main"
-        disabled={Boolean(action)}
-        onClick={onOpen}
-      >
-        <span className="program-card-heading">
-          <span className="program-icon">
-            <ObjectIcon size={18} />
-          </span>
-          <span>
-            <strong>{program.title}</strong>
-            {program.sourceType !== "self" && (
-              <SourceTag
-                presentation={presentProgramProvenance(program, viewerId)}
-                compact
-              />
-            )}
-          </span>
-          {action === "open" ? (
-            <span className="program-card-loading" aria-label={`Opening ${objectLabel.toLowerCase()}`}>
-              <LoaderCircle className="button-spinner" size={16} />
-            </span>
-          ) : <ChevronRight size={16} aria-hidden="true" />}
-        </span>
-        {program.description && (
-          <span className="program-card-description">{program.description}</span>
-        )}
-      </button>
-      <div className="program-card-footer">
-        <div className="program-card-status-row">
-          <span className="program-card-meta">
-            {isQuickWorkout ? (
-              estimatedMinutes ? <span>~{estimatedMinutes} min</span> : null
-            ) : (
-              <span>{formatWorkoutCount(workoutCount)}</span>
-            )}
-          </span>
-          {activeRun ? (
-            <>
-              <span className="program-card-ready">{isQuickWorkout ? "In use" : `In use · ${activeRun.completedWorkouts}/${activeRun.totalWorkouts} completed`}</span>
-              {onOpenActiveRun && <button type="button" className="program-card-active-run" disabled={Boolean(action)} onClick={onOpenActiveRun} aria-label={`View active plan for ${program.title}`}>
-                View active plan <ChevronRight size={13} />
-              </button>}
-            </>
-          ) : program.versionStatus === "draft" ? (
-            <StatusBadge status="editable" label="Template" />
-          ) : program.sourceType === "coach" ? (
-            <StatusBadge status="planned" label="Assigned to you" />
-          ) : (
-            <span className="program-card-ready">Ready to use</span>
-          )}
-        </div>
-        <ObjectActionMenu title={program.title}
-          primary={onSchedule ? { label: useLabel, accessibleLabel: `${useLabel}: ${program.title}`, icon: program.sourceType === "coach" ? actionUi.schedule.icon : actionUi.use.icon, onClick: onSchedule, disabled: Boolean(action) } : undefined}
-          actions={[
-            ...(canEdit ? [{ ...actionUi.edit, accessibleLabel: `Edit ${program.title} ${objectLabel.toLowerCase()}`, onClick: onEdit, loading: action === "edit" }] : []),
-            ...(canDuplicate && onDuplicate ? [{ ...actionUi.duplicate, accessibleLabel: `Duplicate ${program.title} ${objectLabel.toLowerCase()}`, onClick: onDuplicate, loading: action === "duplicate" }] : []),
-            ...(canDelete && onDelete ? [{ ...actionUi.delete, label: deleteLabel, accessibleLabel: `${deleteLabel} ${program.title}`, onClick: onDelete, loading: action === "delete", destructive: true }] : []),
-          ].map((item): ObjectAction => ({ ...item, disabled: Boolean(action) }))}
-        />
-      </div>
-    </article>
-  );
-}
-
-export function ProgramsHome({
-  programs,
-  programRuns,
-  hasMoreProgramRuns,
-  programRunsLoadingMore,
-  programRunsLoadError,
-  viewerId,
-  source,
-  hasCoach,
-  hasMore,
-  loadingMore,
-  loadError,
-  action,
-  capabilitiesForProgram,
-  onOpen,
-  onEdit,
-  onDuplicate,
-  onDelete,
-  onUnassign,
-  onSource,
-  onCreate,
-  onCreateWorkout,
-  onSchedule,
-  onOpenRun,
-  onScheduleRun,
-  onEndRun,
-  onRepeatRun,
-  onLoadMore,
-  onLoadMoreProgramRuns,
-}: {
+export interface ProgramsHomeProps {
   programs: Program[];
   programRuns: ProgramRunSummary[];
-  hasMoreProgramRuns: boolean;
-  programRunsLoadingMore: boolean;
-  programRunsLoadError: string;
+  hasMoreRuns: boolean;
+  runsLoading: boolean;
+  runsError: string;
   viewerId: string;
   source: ProgramSourceTab;
   hasCoach: boolean;
@@ -162,384 +30,320 @@ export function ProgramsHome({
   action: ProgramAction;
   capabilitiesForProgram: (program: Program) => TrainingContentCapabilities;
   onOpen: (program: Program) => void;
-  onEdit: (program: Program) => void;
+  onEdit: (program: Program, workoutId?: string) => void;
   onDuplicate: (program: Program) => void;
   onDelete: (program: Program) => void;
-  onUnassign: (program: Program) => void;
   onSource: (source: ProgramSourceTab) => void;
   onCreate: () => void;
   onCreateWorkout: () => void;
-  onSchedule: (program: Program) => void;
+  onSetDates: (program: Program) => void;
+  onStartProgram?: (program: Program, workoutId?: string) => void;
+  onAssign?: (program: Program) => void;
   onOpenRun: (run: ProgramRunSummary) => void;
-  onScheduleRun: (run: ProgramRunSummary) => void;
+  onSetRunDates: (run: ProgramRunSummary) => void;
+  onStartRunWorkout?: (run: ProgramRunSummary, slot?: ProgramRunWorkout) => void;
+  onEditRunWorkout?: (run: ProgramRunSummary, slot: ProgramRunWorkout) => void;
+  onRestoreRunWorkout?: (run: ProgramRunSummary, slot: ProgramRunWorkout) => void;
+  onOpenRunWorkoutResults?: (run: ProgramRunSummary, slot: ProgramRunWorkout) => void;
+  onLoadRunDetail?: (run: ProgramRunSummary) => Promise<ProgramRunDetail | null>;
+  onLoadProgramDetail?: (program: Program) => Promise<Program | null>;
   onEndRun: (run: ProgramRunSummary) => void;
   onRepeatRun: (run: ProgramRunSummary) => void;
+  onAssignRun?: (run: ProgramRunSummary) => void;
   onLoadMore: () => void;
-  onLoadMoreProgramRuns: () => void;
-}) {
-  const [contentQuery, setContentQuery] = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [selectedTypes, setSelectedTypes] = useState<
-    Array<"program" | "quick_workout">
-  >([]);
-  const [page, setPage] = useState(0);
-  const pageSize = 20;
-  const own = programs.filter((program) => program.sourceType === "self");
-  const content = source === "own" ? own : [];
-  const normalizedQuery = contentQuery.trim().toLowerCase();
-  const coachRuns = programRuns.filter(
-    (run) => run.athleteId === viewerId && run.createdById !== viewerId,
-  );
-  const activeSelfRuns = programRuns.filter(
-    (run) =>
-      run.athleteId === viewerId &&
-      run.createdById === viewerId &&
-      (run.status === "not_started" || run.status === "in_progress"),
-  );
-  const activeRunByProgramId = new Map<string, ProgramRunSummary>();
-  for (const run of activeSelfRuns) {
-    if (!activeRunByProgramId.has(run.programId)) {
-      activeRunByProgramId.set(run.programId, run);
-    }
-  }
-  const filteredCoachRuns = coachRuns.filter((run) => {
-    const contentType = run.contentType ?? "program";
-    return (
-      run.title.toLowerCase().includes(normalizedQuery) &&
-      (!selectedTypes.length || selectedTypes.includes(contentType))
-    );
-  });
-  const filteredContent = content.filter((item) => {
-    const contentType = item.contentType ?? "program";
-    return (
-      `${item.title} ${item.description}`
-        .toLowerCase()
-        .includes(normalizedQuery) &&
-      (!selectedTypes.length || selectedTypes.includes(contentType))
-    );
-  });
-  const activeFilterCount = selectedTypes.length;
-  function toggleProgramType(value: "program" | "quick_workout") {
-    setPage(0);
-    setSelectedTypes((current) =>
-      current.includes(value)
-        ? current.filter((candidate) => candidate !== value)
-        : [...current, value],
-    );
-  }
-  function resetProgramFilters() {
-    setPage(0);
-    setSelectedTypes([]);
-  }
-  function resetProgramSearchAndFilters() {
-    resetProgramFilters();
-    setContentQuery("");
-  }
-  const sortDraftsFirst = (items: Program[]) =>
-    [...items].sort(
-      (left, right) =>
-        Number(left.versionStatus !== "draft") -
-        Number(right.versionStatus !== "draft"),
-    );
-  const programItems = sortDraftsFirst(
-    filteredContent.filter((item) => item.contentType !== "quick_workout"),
-  );
-  const workoutItems = sortDraftsFirst(
-    filteredContent.filter((item) => item.contentType === "quick_workout"),
-  );
-  const orderedContent = [...programItems, ...workoutItems];
-  const pageCount = Math.max(1, Math.ceil(orderedContent.length / pageSize));
-  const currentPage = Math.min(page, pageCount - 1);
-  const visibleIds = new Set(
-    orderedContent
-      .slice(currentPage * pageSize, currentPage * pageSize + pageSize)
-      .map((item) => item.id),
-  );
-  const visibleProgramItems = programItems.filter((item) => visibleIds.has(item.id));
-  const visibleWorkoutItems = workoutItems.filter((item) => visibleIds.has(item.id));
-  const renderRow = (item: Program) => {
-    const activeRun = activeRunByProgramId.get(item.id);
-    return (
-      <ProgramRow
-      key={item.id}
-      program={item}
-      activeRun={activeRun}
-      viewerId={viewerId}
-      canEdit={!activeRun && capabilitiesForProgram(item).edit}
-      canDuplicate={capabilitiesForProgram(item).copyToOwn}
-      canDelete={!activeRun && (
-        capabilitiesForProgram(item).deleteOwn ||
-        (item.sourceType === "coach" && Boolean(item.assignmentId))
-      )}
-      action={action?.id === item.id ? action.kind : null}
-      onOpen={() => onOpen(item)}
-      onEdit={() => onEdit(item)}
-      onDuplicate={capabilitiesForProgram(item).copyToOwn ? () => onDuplicate(item) : undefined}
-      onDelete={
-        capabilitiesForProgram(item).deleteOwn
-          ? () => onDelete(item)
-          : item.sourceType === "coach" && item.assignmentId
-            ? () => onUnassign(item)
-            : undefined
-      }
-      deleteLabel={item.sourceType === "coach" ? "Unassign" : "Delete"}
-      onSchedule={capabilitiesForProgram(item).schedule ? () => onSchedule(item) : undefined}
-      onOpenActiveRun={activeRun ? () => onOpenRun(activeRun) : undefined}
-    />
-    );
-  };
-  return (
-    <>
-      <PageHeader
-        eyebrow="Your training"
-        title="Programs"
-        description="Build reusable programs and workouts. Changes are saved for future uses without altering active or completed plans."
-      >
-        <details className="program-create-menu">
-          <summary className="button primary small"><Plus size={15} />New</summary>
-          <div>
-            <button type="button" onClick={onCreate}><ProgramIcon size={15} /><span><strong>Program</strong><small>Multiple ordered workouts</small></span></button>
-            <button type="button" onClick={onCreateWorkout}><WorkoutIcon size={15} /><span><strong>Workout</strong><small>One reusable session</small></span></button>
-          </div>
-        </details>
-      </PageHeader>
-      <section className="program-source-browser panel">
-        <SegmentedTabs
-          className="program-source-tabs"
-          label="Program sources"
-          panelId="program-source-panel"
-          value={source}
-          onChange={(nextSource) => {
-            setPage(0);
-            onSource(nextSource);
-          }}
-          tabs={[
-            { value: "own", label: "My training", icon: CircleUserRound },
-            ...(hasCoach ? [{ value: "coach" as const, label: "From coach", icon: Users }] : []),
-          ]}
-        />
-        <div className="library-toolbar program-filter-toolbar">
-          <div className="library-filter-actions">
-            <label className="search-field library-search">
-              <Search size={17} />
-              <input
-                aria-label="Search programs and workouts"
-                value={contentQuery}
-                onChange={(event) => {
-                  setPage(0);
-                  setContentQuery(event.target.value);
-                }}
-                placeholder="Search programs and workouts"
-              />
-            </label>
-            <button
-              className={cn(
-                "button secondary small library-filter-trigger",
-                filtersOpen && "active",
-              )}
-              aria-expanded={filtersOpen}
-              aria-controls="program-filter-panel"
-              onClick={() => setFiltersOpen((open) => !open)}
-            >
-              <Settings2 size={15} />
-              Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}
-            </button>
-          </div>
-          {activeFilterCount > 0 && (
-            <div className="library-active-filters" aria-label="Active program filters">
-              {selectedTypes.map((type) => (
-                <button
-                  className="program-filter-type"
-                  key={type}
-                  onClick={() => toggleProgramType(type)}
-                >
-                  {type === "program" ? "Programs" : "Workouts"} <X size={12} />
-                </button>
-              ))}
-              <button className="clear" onClick={resetProgramFilters}>Clear filters</button>
-            </div>
-          )}
-          {filtersOpen && (
-            <div className="library-filter-panel program-filter-panel" id="program-filter-panel">
-              <div>
-                <span>Type</span>
-                <div className="library-filter-chip-row">
-                  {([
-                    ["program", "Programs"],
-                    ["quick_workout", "Workouts"],
-                  ] as const).map(([type, label]) => (
-                    <button
-                      className={cn(
-                        "program-filter-type",
-                        selectedTypes.includes(type) && "active",
-                      )}
-                      key={type}
-                      aria-pressed={selectedTypes.includes(type)}
-                      onClick={() => toggleProgramType(type)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="program-compact-list" id="program-source-panel" role="tabpanel">
-          {source === "coach" ? (
-            coachRuns.length > 0 && !filteredCoachRuns.length ? (
-              <div className="empty-state compact">
-                <Search size={24} />
-                <h3>No matching training</h3>
-                <p>Adjust the search or filters to see assigned programs and workouts.</p>
-                <button className="button secondary small" onClick={resetProgramSearchAndFilters}>
-                  Clear search and filters
-                </button>
-                {programRunsLoadError ? (
-                  <div className="feature-load-status error" role="alert">
-                    <span>{programRunsLoadError}</span>
-                    <button className="text-button" onClick={onLoadMoreProgramRuns}>
-                      Try again
-                    </button>
-                  </div>
-                ) : hasMoreProgramRuns ? (
-                  <button
-                    className="button secondary small library-load-more"
-                    disabled={programRunsLoadingMore}
-                    onClick={onLoadMoreProgramRuns}
-                  >
-                    {programRunsLoadingMore && (
-                      <LoaderCircle className="button-spinner" size={14} />
-                    )}
-                    {programRunsLoadingMore ? "Loading…" : "Search older training"}
-                  </button>
-                ) : null}
-              </div>
-            ) : (
-              <Suspense fallback={null}>
-                <CoachProgramRuns
-                  viewerId={viewerId}
-                  runs={filteredCoachRuns}
-                  hasMore={hasMoreProgramRuns}
-                  loadingMore={programRunsLoadingMore}
-                  loadError={programRunsLoadError}
-                  onLoadMore={onLoadMoreProgramRuns}
-                  onOpen={onOpenRun}
-                  onSchedule={onScheduleRun}
-                  onEnd={onEndRun}
-                  onRepeat={onRepeatRun}
-                />
-              </Suspense>
-            )
-          ) : filteredContent.length ? (
-            <>
-              {visibleProgramItems.length > 0 && (
-                <section className="program-content-section" aria-labelledby="program-list-heading">
-                  <div className="program-content-heading">
-                    <span><ProgramIcon size={15} /><strong id="program-list-heading">Programs</strong></span>
-                    <small>{programItems.length}</small>
-                  </div>
-                  <div className="program-content-cards">{visibleProgramItems.map(renderRow)}</div>
-                </section>
-              )}
-              {visibleWorkoutItems.length > 0 && (
-                <section className="program-content-section" aria-labelledby="workout-list-heading">
-                  <div className="program-content-heading">
-                    <span><WorkoutIcon size={15} /><strong id="workout-list-heading">Workouts</strong></span>
-                    <small>{workoutItems.length}</small>
-                  </div>
-                  <div className="program-content-cards">{visibleWorkoutItems.map(renderRow)}</div>
-                </section>
-              )}
-              {pageCount > 1 && (
-                <nav className="library-pagination" aria-label="Program pages">
-                  <button
-                    className="button secondary small"
-                    disabled={currentPage === 0}
-                    onClick={() => setPage((current) => Math.max(0, current - 1))}
-                  >
-                    <ArrowLeft size={14} /> Previous
-                  </button>
-                  <span>Page {currentPage + 1} of {pageCount}</span>
-                  <button
-                    className="button secondary small"
-                    disabled={currentPage >= pageCount - 1}
-                    onClick={() =>
-                      setPage((current) => Math.min(pageCount - 1, current + 1))
-                    }
-                  >
-                    Next <ArrowRight size={14} />
-                  </button>
-                </nav>
-              )}
-              {loadError && <InlineError>{loadError}</InlineError>}
-              {hasMore && (
-                <button
-                  className="button secondary small library-load-more"
-                  disabled={loadingMore}
-                  onClick={onLoadMore}
-                >
-                  {loadingMore && (
-                    <LoaderCircle className="button-spinner" size={14} />
-                  )}
-                  {loadingMore ? "Loading…" : "Load more programs"}
-                </button>
-              )}
-            </>
-          ) : content.length ? (
-            <div className="empty-state compact">
-              <Search size={24} />
-              <h3>No matching training content</h3>
-              <p>{hasMore ? "No matches in the programs loaded so far. Search older programs or adjust your filters." : "Adjust the search or filters to see more programs and workouts."}</p>
-              <button className="button secondary small" onClick={resetProgramSearchAndFilters}>
-                Clear search and filters
-              </button>
-              {loadError && <InlineError>{loadError}</InlineError>}
-              {hasMore && (
-                <AsyncButton className="button secondary small library-load-more" loading={loadingMore} loadingLabel="Loading…" onClick={onLoadMore}>
-                  Search older programs
-                </AsyncButton>
-              )}
-            </div>
-          ) : (
-            <div className="empty-state compact">
-              <ProgramIcon size={24} />
-              <h3>No training content yet</h3>
-              <p>Create a program or a workout when you are ready to plan training.</p>
-            </div>
-          )}
-        </div>
-      </section>
-    </>
-  );
+  onLoadMoreRuns: () => void;
+  historicalRuns?: ProgramRunSummary[];
+  historyRunsLoading?: boolean;
+  historyRunsError?: string | null;
+  historyRunsHasMore?: boolean;
+  onLoadHistoryRuns?: () => void;
+  onLoadMoreHistoryRuns?: () => void;
+  activeWorkout?: { title: string; subtitle?: string; programRunId?: string };
+  onResumeWorkout?: () => void;
+  startingTrainingId?: string | null;
+  completedSessions?: CompletedSession[];
+  completedLoading?: boolean;
+  completedError?: string | null;
+  completedHasMore?: boolean;
+  onLoadCompleted?: () => void;
+  onLoadMoreCompleted?: () => void;
+  onOpenCompleted?: (session: CompletedSession) => void;
 }
 
-export function CoachProgramEmpty({
-  athlete,
-  onCreate,
-}: {
-  athlete: AthleteSummary;
-  onCreate: () => void;
+function dateLabel(date?: string) {
+  return date ? formatDateOnly(date, { month: "short", day: "numeric" }) : "No date";
+}
+
+function Card({ title, contentType, subtitle, description, children, footer, onOpen, disabled }: {
+  title: string;
+  contentType: Program["contentType"];
+  subtitle?: string;
+  description?: string;
+  children?: ReactNode;
+  footer: ReactNode;
+  onOpen?: () => void;
+  disabled?: boolean;
 }) {
-  return (
-    <>
-      <PageHeader
-        eyebrow="My athletes"
-        title={`${athlete.name} has no program`}
-        description="Create the training content and order. The athlete will decide when each workout appears on their calendar."
-      />
-      <section className="panel empty-state coach-program-empty">
-        <Users size={28} />
-        <h3>Create a future plan</h3>
-        <p>
-          No program is created merely by opening this athlete. Start only when
-          you are ready to assign one.
-        </p>
-        <button className="button primary" onClick={onCreate}>
-          <ProgramIcon size={15} />
-          Create program for {athlete.name.split(" ")[0]}
-        </button>
-      </section>
-    </>
-  );
+  const ObjectIcon = trainingContentUi(contentType).icon;
+  return <article className="panel training-card">
+    <div className="training-card-heading"><span className="program-icon"><ObjectIcon size={18} /></span><div><h3>{onOpen ? <button type="button" className="training-card-open" aria-label={`Open ${title}`} onClick={onOpen} disabled={disabled}>{title}</button> : title}</h3>{subtitle && <p>{subtitle}</p>}</div></div>
+    {description && <p className="training-card-description">{description}</p>}
+    <div className="training-card-footer">{footer}</div>
+    {children}
+  </article>;
+}
+
+export function ProgramRow({ program, canEdit, canDuplicate, canDelete, action, starting = false, onOpen, onEdit, onDuplicate, onDelete, onSetDates, onStart, onAssign, onLoadDetail }: {
+  program: Program;
+  canEdit: boolean;
+  canDuplicate: boolean;
+  canDelete: boolean;
+  action: Exclude<ProgramAction, null>["kind"] | null;
+  starting?: boolean;
+  onOpen: () => void;
+  onEdit: (workoutId?: string) => void;
+  onDuplicate?: () => void;
+  onDelete?: () => void;
+  onSetDates?: () => void;
+  onStart?: (workoutId?: string) => void;
+  onAssign?: () => void;
+  onLoadDetail?: () => Promise<Program | null>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState(program.detailsLoaded === false ? null : program);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const quick = program.contentType === "quick_workout";
+  const object = quick ? "workout" : "program";
+  const count = programWorkoutCount(program);
+  async function loadWorkouts() {
+    if (detail || loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await onLoadDetail?.();
+      if (!result) throw new Error("Workouts could not be loaded.");
+      setDetail(result);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Workouts could not be loaded."); }
+    finally { setLoading(false); }
+  }
+  const actions: ObjectAction[] = [
+    ...(canEdit ? [{ ...actionUi.edit, accessibleLabel: `Edit ${program.title} ${object}`, onClick: () => onEdit(), loading: action === "edit" }] : []),
+    ...(onSetDates ? [{ ...actionUi.schedule, label: "Set dates", accessibleLabel: `Set dates for ${program.title}`, onClick: onSetDates }] : []),
+    ...(canDuplicate && onDuplicate ? [{ label: "Repeat", icon: RefreshCw, accessibleLabel: `Repeat ${program.title} ${object}`, onClick: onDuplicate, loading: action === "duplicate" }] : []),
+    ...(onAssign ? [{ label: "Assign to athletes", accessibleLabel: `Assign ${program.title} to athletes`, icon: UserPlus, onClick: onAssign }] : []),
+    ...(canDelete && onDelete ? [{ ...actionUi.delete, accessibleLabel: `Delete ${program.title}`, onClick: onDelete, loading: action === "delete", destructive: true }] : []),
+  ].map((item) => ({ ...item, disabled: Boolean(action) }));
+  return <Card title={program.title} contentType={program.contentType} description={program.description} onOpen={onOpen} disabled={Boolean(action)}
+    subtitle={quick ? "Workout · No date" : `${formatWorkoutCount(count)} · No date`}
+    footer={<>
+      <ObjectActionMenu compact title={program.title} primary={onStart && count > 0 ? { label: "Start workout", compactLabel: "Start", accessibleLabel: `Start workout: ${program.title}`, icon: Play, onClick: () => onStart(), disabled: Boolean(action), loading: starting } : undefined} actions={actions} />
+    </>}>
+    {!quick && count > 0 && <>
+      <button type="button" className="training-expand" aria-expanded={expanded} aria-controls={`source-workouts-${program.id}`} onClick={() => { setExpanded(!expanded); if (!expanded) void loadWorkouts(); }}>
+        {expanded ? "Hide workouts" : "Show workouts"}<ChevronDown size={15} />
+      </button>
+      {expanded && <div id={`source-workouts-${program.id}`} className="training-workout-list">
+        <LoadStatus loading={loading} error={error} onRetry={() => void loadWorkouts()} />
+        {detail && programWorkouts(detail).map((workout, index) => <div className="training-workout-row" key={workout.id}>
+          <div><strong>{index + 1}. {workout.title}</strong><small>No date</small></div>
+          <div className="training-workout-actions">
+            {canEdit && <button type="button" className="button secondary small" aria-label={`Edit ${workout.title}, workout ${index + 1}`} onClick={() => onEdit(workout.id)}>Edit</button>}
+            {onStart && <button type="button" className="button secondary small" disabled={starting} aria-label={`Start ${workout.title}, workout ${index + 1}`} onClick={() => onStart(workout.id)}><Play size={14} />Start</button>}
+          </div>
+        </div>)}
+      </div>}
+    </>}
+  </Card>;
+}
+
+function RunRow({ run, ...props }: ProgramsHomeProps & { run: ProgramRunSummary }) {
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState<ProgramRunDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const detailLoader = useRef(props.onLoadRunDetail);
+  const detailRequest = useRef(0);
+  useEffect(() => { detailLoader.current = props.onLoadRunDetail; }, [props.onLoadRunDetail]);
+  const quick = run.contentType === "quick_workout";
+  const finished = run.status === "completed" || run.status === "ended";
+  const active = props.activeWorkout?.programRunId === run.id;
+  const starting = props.startingTrainingId === run.id;
+  const canStart = !finished && Boolean(props.onStartRunWorkout) && Boolean(run.nextWorkout);
+  const loadWorkouts = useCallback(async () => {
+    const request = ++detailRequest.current;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await detailLoader.current?.(run);
+      if (request !== detailRequest.current) return null;
+      if (!result) throw new Error("Workouts could not be loaded.");
+      setDetail(result);
+      return result;
+    } catch (cause) {
+      if (request === detailRequest.current) setError(cause instanceof Error ? cause.message : "Workouts could not be loaded.");
+      return null;
+    } finally { if (request === detailRequest.current) setLoading(false); }
+  }, [run]);
+  // A changed later workout may leave every summary count and the next date unchanged.
+  // Refresh an expanded card whenever its authoritative run summary is replaced.
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      if (expanded) return loadWorkouts();
+      setLoading(false);
+    });
+    return () => { active = false; detailRequest.current += 1; };
+  }, [expanded, loadWorkouts]);
+  async function editNext() {
+    const loaded = await loadWorkouts();
+    const slot = loaded?.workouts.find((workout) => workout.id === run.nextWorkout?.id) ?? loaded?.workouts.find((workout) => workout.canEdit);
+    if (slot?.canEdit) props.onEditRunWorkout?.(run, slot);
+    else if (loaded) props.onOpenRun(run);
+  }
+  async function restoreWorkout() {
+    const loaded = await loadWorkouts();
+    const skipped = loaded?.workouts.find((workout) => workout.status === "skipped");
+    if (skipped) props.onRestoreRunWorkout?.(run, skipped);
+    else if (loaded) props.onOpenRun(run);
+  }
+  const source = run.createdById === run.athleteId ? "" : "From coach · ";
+  const subtitle = finished
+    ? `${source}${run.status === "ended" ? "Ended" : "Completed"} · ${dateLabel((run.finishedAt ?? run.endedAt ?? run.createdAt).slice(0, 10))}`
+    : `${source}${quick ? dateLabel(run.nextWorkout?.plannedDate) : `${run.completedWorkouts}/${run.totalWorkouts} completed`}`;
+  const actions: ObjectAction[] = [
+    ...(!finished && props.onEditRunWorkout && run.nextWorkout?.status !== "in_progress" ? [{ ...actionUi.edit, accessibleLabel: `Edit ${run.title} workout`, onClick: () => void editNext(), loading }] : []),
+    ...(!finished ? [{ ...actionUi.schedule, label: run.scheduledWorkouts ? "Change dates" : "Set dates", accessibleLabel: `${run.scheduledWorkouts ? "Change" : "Set"} dates for ${run.title}`, onClick: () => props.onSetRunDates(run) }] : []),
+    ...(quick && !finished && !run.nextWorkout && run.completedWorkouts < run.totalWorkouts && props.onRestoreRunWorkout ? [{ label: "Restore workout", accessibleLabel: `Restore ${run.title}`, icon: RefreshCw, onClick: () => void restoreWorkout(), loading }] : []),
+    { label: "Repeat", accessibleLabel: `Repeat ${run.title}`, icon: RefreshCw, onClick: () => props.onRepeatRun(run) },
+    ...(props.onAssignRun && run.createdById === props.viewerId ? [{ label: "Assign to athletes", accessibleLabel: `Assign ${run.title} to athletes`, icon: UserPlus, onClick: () => props.onAssignRun?.(run) }] : []),
+    ...(!finished ? [{ ...actionUi.delete, label: "Remove from training", accessibleLabel: `Remove ${run.title} from training`, onClick: () => props.onEndRun(run), destructive: true }] : []),
+  ];
+  return <Card title={run.title} contentType={run.contentType} subtitle={subtitle} onOpen={() => props.onOpenRun(run)}
+    description={!quick && !finished && run.nextWorkout ? `${dateLabel(run.nextWorkout.plannedDate)} · ${run.nextWorkout.title}` : undefined}
+    footer={<>
+      <ObjectActionMenu compact title={run.title} primary={active && props.onResumeWorkout
+        ? { label: "Resume workout", compactLabel: "Resume", accessibleLabel: `Resume ${run.title}`, icon: Play, onClick: props.onResumeWorkout }
+        : canStart ? { label: "Start workout", compactLabel: "Start", accessibleLabel: `Start workout: ${run.title}`, icon: Play, onClick: () => props.onStartRunWorkout?.(run), loading: starting }
+          : undefined} actions={actions} />
+    </>}>
+    {(quick || !expanded) && <LoadStatus loading={loading} error={error} onRetry={() => void loadWorkouts()} />}
+    {!quick && <>
+      <button type="button" className="training-expand" aria-expanded={expanded} aria-controls={`run-workouts-${run.id}`} onClick={() => setExpanded(!expanded)}>
+        {expanded ? "Hide workouts" : "Show workouts"}<ChevronDown size={15} />
+      </button>
+      {expanded && <div id={`run-workouts-${run.id}`} className="training-workout-list">
+        <LoadStatus loading={loading} error={error} onRetry={() => void loadWorkouts()} />
+        {!loading && !error && detail?.workouts.map((slot) => {
+          const completed = slot.status === "completed";
+          const resumable = slot.status === "in_progress";
+          const ready = slot.status === "scheduled" || slot.status === "unscheduled";
+          return <div className="training-workout-row" key={slot.id}>
+            <div><strong>{slot.position + 1}. {slot.title}</strong><small>{dateLabel(slot.plannedDate)}{completed ? " · Completed" : slot.status === "skipped" ? " · Skipped" : slot.status === "cancelled" ? " · Removed" : resumable ? " · In progress" : ""}</small></div>
+            <div className="training-workout-actions">
+              {!finished && slot.canEdit && props.onEditRunWorkout && <button type="button" className="button secondary small" aria-label={`Edit ${slot.title}`} onClick={() => props.onEditRunWorkout?.(run, slot)}>Edit</button>}
+              {!finished && ready && props.onStartRunWorkout && <button type="button" className="button secondary small" disabled={starting} aria-label={`Start ${slot.title}`} onClick={() => props.onStartRunWorkout?.(run, slot)}><Play size={14} />Start</button>}
+              {!finished && resumable && props.onResumeWorkout && <button type="button" className="button secondary small" onClick={props.onResumeWorkout}>Resume</button>}
+              {!finished && slot.status === "skipped" && props.onRestoreRunWorkout && <button type="button" className="button secondary small" aria-label={`Restore ${slot.title}`} onClick={() => props.onRestoreRunWorkout?.(run, slot)}>Restore</button>}
+              {completed && <button type="button" className="button secondary small" aria-label={`View results for ${slot.title}`} onClick={() => {
+                if (props.onOpenRunWorkoutResults) { props.onOpenRunWorkoutResults(run, slot); return; }
+                const session = props.completedSessions?.find((item) => item.id === slot.sessionId);
+                if (session && props.onOpenCompleted) props.onOpenCompleted(session);
+                else props.onOpenRun(run);
+              }}>Results</button>}
+            </div>
+          </div>;
+        })}
+      </div>}
+    </>}
+  </Card>;
+}
+
+function LoadStatus({ loading, error, onRetry }: { loading?: boolean; error?: string | null; onRetry?: () => void }) {
+  if (error) return <InlineError>{error}{onRetry && <button type="button" className="text-button" onClick={onRetry}>Try again</button>}</InlineError>;
+  return loading ? <div className="feature-load-status" role="status"><LoaderCircle size={16} className="spin" />Loading workouts…</div> : null;
+}
+
+export function ProgramsHome(props: ProgramsHomeProps) {
+  const [view, setView] = useState<"active" | "history">("active");
+  const [query, setQuery] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [types, setTypes] = useState<Array<"program" | "quick_workout">>([]);
+  const { programs, programRuns, viewerId, source, hasCoach, action } = props;
+  const today = localDateOnly();
+  const normalizedQuery = query.trim().toLowerCase();
+  const matches = (title: string, type: "program" | "quick_workout" = "program") => title.toLowerCase().includes(normalizedQuery) && (!types.length || types.includes(type));
+  const browseRuns = view === "history" ? props.historicalRuns ?? programRuns : programRuns;
+  const feed = trainingFeed(programs, browseRuns, viewerId, source);
+  const visible = feed.filter((item) => isTrainingHistory(item) === (view === "history") && matches(item.title, item.kind === "program" ? item.program.contentType : item.run.contentType));
+  const completed = [...(props.completedSessions ?? [])].filter((session) => {
+    const run = browseRuns.find((item) => item.id === session.programRunId);
+    const coach = session.sourceType ? session.sourceType === "coach" : run && run.createdById !== viewerId;
+    return (source === "all" || (source === "coach" ? coach : !coach)) && matches(session.workoutTitle, "quick_workout");
+  }).sort((left, right) => right.date.localeCompare(left.date) || left.id.localeCompare(right.id));
+  const finished = [...visible].filter((item) => item.kind === "run" && (item.run.contentType !== "quick_workout" || !completed.some((session) => session.programRunId === item.run.id)))
+    .sort((left, right) => {
+      const stamp = (item: TrainingFeedItem) => item.kind === "run" ? item.run.finishedAt ?? item.run.endedAt ?? item.run.createdAt : "";
+      return stamp(right).localeCompare(stamp(left));
+    });
+  const hasResults = view === "active" ? visible.length > 0 : finished.length > 0 || completed.length > 0;
+  const separateHistory = view === "history" && props.historicalRuns !== undefined;
+  const runsLoading = separateHistory ? props.historyRunsLoading : props.runsLoading;
+  const runsError = separateHistory ? props.historyRunsError : props.runsError;
+  const runsHasMore = separateHistory ? props.historyRunsHasMore : props.hasMoreRuns;
+  const loadRuns = separateHistory ? props.onLoadMoreHistoryRuns : props.onLoadMoreRuns;
+  const toggleType = (type: "program" | "quick_workout") => setTypes((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type]);
+  const renderItem = (item: TrainingFeedItem) => {
+    if (item.kind === "run") return <RunRow key={`${item.id}:${item.run.completedWorkouts}:${item.run.scheduledWorkouts}:${item.date ?? ""}:${item.run.status}`} {...props} run={item.run} />;
+    const program = item.program;
+    const capabilities = props.capabilitiesForProgram(program);
+    return <ProgramRow key={item.id} program={program} canEdit={capabilities.edit} canDuplicate={capabilities.copyToOwn} canDelete={capabilities.deleteOwn}
+      action={action?.id === program.id ? action.kind : null} starting={props.startingTrainingId === program.id} onOpen={() => props.onOpen(program)} onEdit={(workoutId) => props.onEdit(program, workoutId)}
+      onDuplicate={() => props.onDuplicate(program)} onDelete={() => props.onDelete(program)}
+      onSetDates={capabilities.schedule ? () => props.onSetDates(program) : undefined}
+      onStart={props.onStartProgram ? (workoutId) => props.onStartProgram?.(program, workoutId) : undefined}
+      onAssign={capabilities.assign && props.onAssign ? () => props.onAssign?.(program) : undefined}
+      onLoadDetail={props.onLoadProgramDetail ? () => props.onLoadProgramDetail!(program) : undefined} />;
+  };
+  return <>
+    <PageHeader eyebrow="Your training" title="Training">
+      <details className="program-create-menu"><summary className="button primary small"><Plus size={15} />New</summary><div>
+        <button type="button" onClick={props.onCreateWorkout}><WorkoutIcon size={15} /><span><strong>Workout</strong><small>One training session</small></span></button>
+        <button type="button" onClick={props.onCreate}><ProgramIcon size={15} /><span><strong>Program</strong><small>A sequence of workouts</small></span></button>
+      </div></details>
+    </PageHeader>
+    {props.activeWorkout && props.onResumeWorkout && <section className="panel training-resume" aria-label="Workout in progress">
+      <Activity size={21} /><div><small>Workout in progress</small><strong>{props.activeWorkout.title}</strong>{props.activeWorkout.subtitle && <p>{props.activeWorkout.subtitle}</p>}</div>
+      <button type="button" className="button primary" onClick={props.onResumeWorkout}><Play size={15} />Resume workout</button>
+    </section>}
+    <section className="panel program-source-browser training-browser">
+      <SegmentedTabs label="Training view" panelId="training-feed" value={view} onChange={(next) => { setView(next); if (next === "history") { props.onLoadCompleted?.(); props.onLoadHistoryRuns?.(); } }} tabs={[
+        { value: "active", label: "Active", icon: Activity }, { value: "history", label: "History", icon: History },
+      ]} />
+      <div className="library-toolbar program-filter-toolbar">
+        <div className="library-filter-actions"><label className="search-field library-search"><Search size={17} /><input aria-label="Search programs and workouts" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search training" /></label>
+          <button type="button" className={cn("button secondary small library-filter-trigger", filtersOpen && "active")} aria-expanded={filtersOpen} aria-controls="program-filter-panel" onClick={() => setFiltersOpen(!filtersOpen)}><Settings2 size={15} />Filters{types.length ? ` · ${types.length}` : ""}</button>
+        </div>
+        {hasCoach && <SegmentedTabs label="Training sources" selectionMode="buttons" value={source} onChange={props.onSource} tabs={[{ value: "all", label: "All training" }, { value: "own", label: "My training", icon: CircleUserRound }, { value: "coach", label: "From coach", icon: Users }]} />}
+        {types.length > 0 && <div className="library-active-filters" aria-label="Active training filters">{types.map((type) => <button type="button" className="program-filter-type" key={type} onClick={() => toggleType(type)}>{type === "program" ? "Programs" : "Workouts"} <X size={12} /></button>)}<button type="button" className="clear" onClick={() => setTypes([])}>Clear filters</button></div>}
+        {filtersOpen && <div className="library-filter-panel program-filter-panel" id="program-filter-panel"><div><span>Type</span><div className="library-filter-chip-row">{(["program", "quick_workout"] as const).map((type) => <button type="button" key={type} className={cn("program-filter-type", types.includes(type) && "active")} aria-pressed={types.includes(type)} onClick={() => toggleType(type)}>{type === "program" ? "Programs" : "Workouts"}</button>)}</div></div></div>}
+      </div>
+      <div id="training-feed" role="tabpanel" aria-labelledby={`training-feed-${view}-tab`} className="training-feed">
+        {view === "active" ? (["Today and overdue", "Upcoming", "No date"] as const).map((title) => {
+          const items = visible.filter((item) => trainingDateSection(item, today) === title);
+          return items.length > 0 && <section className="training-feed-section" aria-label={title} key={title}><div className="program-content-heading"><span><CalendarDays size={15} /><strong>{title}</strong></span><small>{items.length}</small></div><div className="training-card-list">{items.map(renderItem)}</div></section>;
+        }) : <>
+          {finished.length > 0 && <section className="training-feed-section" aria-label="Finished training"><h2>Finished training</h2><div className="training-card-list">{finished.map(renderItem)}</div></section>}
+          {completed.length > 0 && <section className="training-feed-section" aria-label="Completed workouts"><h2>Completed workouts</h2><div className="training-card-list">{completed.map((session) => <Card key={session.id} title={session.workoutTitle} contentType="quick_workout" subtitle={`Completed · ${dateLabel(session.date)}`} footer={<button type="button" className="button secondary small" aria-label={`View results for ${session.workoutTitle}`} onClick={() => props.onOpenCompleted?.(session)}><Check size={15} />View results</button>} />)}</div></section>}
+          <LoadStatus loading={props.completedLoading} error={props.completedError} onRetry={props.completedHasMore ? props.onLoadMoreCompleted : props.onLoadCompleted} />
+          {props.completedHasMore && !props.completedError && <AsyncButton className="button secondary library-load-more" loading={props.completedLoading} loadingLabel="Loading history…" onClick={props.onLoadMoreCompleted}>Load older workouts</AsyncButton>}
+        </>}
+        {!hasResults && !runsLoading && !runsError && !(view === "history" && (props.completedLoading || props.completedError)) && <div className="empty-state compact"><Search size={24} /><h3>{query || types.length ? "No matching training" : view === "history" ? "No training history yet" : source === "coach" ? "No coach training" : "No workouts or programs yet"}</h3><p>{query || types.length ? "Adjust the search or filters to see more training." : view === "history" ? "Completed workouts and finished programs appear here." : source === "coach" ? "Training assigned by your coach will appear here." : "Create a workout, or a program with several workouts. Dates are optional."}</p>{(query || types.length > 0) && <button type="button" className="button secondary small" onClick={() => { setQuery(""); setTypes([]); }}>Clear search and filters</button>}</div>}
+        <LoadStatus loading={runsLoading} error={runsError} onRetry={separateHistory && !props.historyRunsHasMore ? props.onLoadHistoryRuns : loadRuns} />
+        {runsHasMore && !runsError && <AsyncButton className="button secondary library-load-more" loading={runsLoading} loadingLabel="Loading training…" onClick={loadRuns}>Load more training</AsyncButton>}
+        {source !== "coach" && view === "active" && <><LoadStatus error={props.loadError} onRetry={props.onLoadMore} />{props.hasMore && <AsyncButton className="button secondary library-load-more" loading={props.loadingMore} loadingLabel="Loading…" onClick={props.onLoadMore}>Load more workouts and programs</AsyncButton>}</>}
+      </div>
+    </section>
+  </>;
 }

@@ -67,10 +67,22 @@ try {
   transactionOpen = true;
   const before = await snapshot();
   await executeMigration(recordingSql);
-  await executeMigration(catalogSql);
   await executeMigration(instructionsSql);
   await executeMigration(extendedSetGuardSql);
   await executeMigration(extendedSetGuardSql);
+  // Replay this historical guarded correction against its reviewed input,
+  // separately from newer catalog defaults. Keep all setup inside a savepoint
+  // so a later migration's intended defaults are restored after this check.
+  await db.unsafe('savepoint historical_catalog_defaults');
+  for (const reviewed of registry.overrides) {
+    await db`update public.exercises
+      set default_entry_mode = ${reviewed.expected.mode},
+        default_tracking_fields = ${reviewed.expected.fields}::text[]
+      where scope = 'global' and owner_id is null
+        and source_provider = ${reviewed.sourceProvider}
+        and source_external_id = ${reviewed.sourceExternalId}`;
+  }
+  await executeMigration(catalogSql);
   assert.deepEqual(await snapshot(), before, 'Migrations must preserve all existing snapshots and untargeted exercises');
   for (const reviewed of registry.overrides) {
     const [exercise] = await db`select name, default_entry_mode, default_tracking_fields
@@ -93,6 +105,8 @@ try {
   await assert.rejects(() => executeMigration(catalogSql), /unexpected identity or fields/);
   await db.unsafe('rollback to savepoint catalog_identity_guard');
   await db.unsafe('release savepoint catalog_identity_guard');
+  await db.unsafe('rollback to savepoint historical_catalog_defaults');
+  await db.unsafe('release savepoint historical_catalog_defaults');
 
   await db`insert into auth.users (id, email, raw_app_meta_data, raw_user_meta_data)
     values (${owner}::uuid, ${`recording-${owner}@example.test`}, '{}'::jsonb,

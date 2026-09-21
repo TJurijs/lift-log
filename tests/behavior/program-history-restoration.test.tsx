@@ -48,8 +48,8 @@ afterEach(() => {
 });
 
 describe("program detail browser-history restoration", () => {
-  it.each(["Programs", "Exercises"])("keeps %s open when an earlier program request finishes", async (destination) => {
-    window.history.replaceState({}, "", "/#/program");
+  it.each(["Training", "Exercises"])("keeps %s open when an earlier program request finishes", async (destination) => {
+    window.history.replaceState({}, "", "/#/training");
     vi.stubGlobal("scrollTo", vi.fn());
     const user = userEvent.setup();
     const summary: Program = { ...initialProgram, detailsLoaded: false, weeks: [] };
@@ -67,8 +67,7 @@ describe("program detail browser-history restoration", () => {
       schedulablePrograms: [],
     });
 
-    const programTitle = await screen.findByText(initialProgram.title);
-    await user.click(programTitle.closest("button")!);
+    await user.click(await screen.findByRole("button", { name: `Open ${initialProgram.title}` }));
     await waitFor(() => expect(loadProgramDetail).toHaveBeenCalledOnce());
     const navigation = screen.getByRole("navigation", { name: "Main navigation" });
     await user.click(within(navigation).getByRole("button", { name: destination }));
@@ -76,24 +75,24 @@ describe("program detail browser-history restoration", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: destination })).toBeVisible();
     expect(screen.queryByRole("textbox", { name: "Program name" })).not.toBeInTheDocument();
-    expect(window.location.hash).toBe(destination === "Programs" ? "#/program" : "#/exercises");
+    expect(window.location.hash).toBe(destination === "Training" ? "#/training" : "#/exercises");
   });
 
-  it("reloads the exact template revision from a restored history entry", async () => {
-    window.history.replaceState({}, "", "/#/program");
+  it("reloads the exact workout/program revision from a restored history entry", async () => {
+    window.history.replaceState({}, "", "/#/training");
     vi.stubGlobal("scrollTo", vi.fn());
     const loadProgramDetail = vi.fn().mockResolvedValue(initialProgram);
     const repository = repositoryForHistoryRestore({ loadProgramDetail });
     renderApp(repository);
 
-    pushAppDetailHistory("program", "program", {
+    pushAppDetailHistory("program", "training", {
       data: {
         kind: "program",
         programId: initialProgram.id,
         programVersionId: initialProgram.versionId,
         athleteId: initialProgram.athleteId,
         workoutId: initialProgram.weeks[0].workouts[0].id,
-        returnView: "program",
+        returnView: "training",
       },
     });
     window.dispatchEvent(new PopStateEvent("popstate"));
@@ -107,24 +106,24 @@ describe("program detail browser-history restoration", () => {
       ),
     );
     expect(
-      await screen.findByRole("textbox", { name: "Program name" }),
-    ).toHaveValue(initialProgram.title);
+      await screen.findByRole("heading", { level: 1, name: initialProgram.title }),
+    ).toBeVisible();
 
     act(() => window.history.back());
     expect(
-      await screen.findByRole("heading", { level: 1, name: "Programs" }),
+      await screen.findByRole("heading", { level: 1, name: "Training" }),
     ).toBeVisible();
     loadProgramDetail.mockClear();
 
     act(() => window.history.forward());
     await waitFor(() => expect(loadProgramDetail).toHaveBeenCalledOnce());
     expect(
-      await screen.findByRole("textbox", { name: "Program name" }),
-    ).toHaveValue(initialProgram.title);
+      await screen.findByRole("heading", { level: 1, name: initialProgram.title }),
+    ).toBeVisible();
   });
 
   it("reloads exact immutable run content and progress from its history entry", async () => {
-    window.history.replaceState({}, "", "/#/program");
+    window.history.replaceState({}, "", "/#/training");
     vi.stubGlobal("scrollTo", vi.fn());
     const firstWorkout = initialProgram.weeks[0].workouts[0];
     const run: ProgramRunDetail = {
@@ -163,7 +162,7 @@ describe("program detail browser-history restoration", () => {
     });
     renderApp(repository);
 
-    pushAppDetailHistory("program", "program", {
+    pushAppDetailHistory("program", "training", {
       data: {
         kind: "program",
         programId: initialProgram.id,
@@ -171,7 +170,7 @@ describe("program detail browser-history restoration", () => {
         athleteId: initialProgram.athleteId,
         programRunId: run.id,
         workoutId: firstWorkout.id,
-        returnView: "today",
+        returnView: "training",
       },
     });
     window.dispatchEvent(new PopStateEvent("popstate"));

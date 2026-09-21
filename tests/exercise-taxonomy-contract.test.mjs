@@ -29,10 +29,11 @@ const migrationPath = new URL(
 );
 
 test("exercise browsing uses three primary disciplines with compact rows and tags", async () => {
-  const [app, repository, migration] = await Promise.all([
+  const [app, repository, migration, workoutPicker] = await Promise.all([
     readAppSource(),
     readFile(repositoryPath, "utf8"),
     readFile(migrationPath, "utf8"),
+    readFile(new URL("../app/features/authoring/WorkoutExercisePicker.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(migration, /discipline in \('weightlifting', 'gym', 'functional'\)/);
@@ -79,10 +80,11 @@ test("exercise browsing uses three primary disciplines with compact rows and tag
   assert.match(app, /<span>Record<\/span>/);
   assert.match(app, /Customize optional fields/);
   assert.match(app, /function ExerciseCategoryIcon/);
-  assert.match(app, /function ExercisePickerRow[\s\S]*?<ExerciseCategoryMark category=\{exercise\.category\}/);
+  assert.match(app, /<WorkoutExercisePicker[\s\S]*onSearch=\{onSearchExercises\}[\s\S]*onSelect=\{onAddExercise\}/);
+  assert.match(workoutPicker, /results\.map\(\(exercise\) =>[\s\S]*?<ExerciseCategoryMark category=\{exercise\.category\}/);
   assert.match(app, /exercise-list-identity[\s\S]*?<ExerciseCategoryMark category=\{exercise\.category\}/);
   assert.match(app, /const WorkoutLogItem[\s\S]*?<ExerciseCategoryMark category=\{category \?\? item\.category\}/);
-  assert.doesNotMatch(app, /function ExercisePickerRow[\s\S]*?<SourceTag source=\{sourceFromExercise\(exercise\)\} compact \/>/);
+  assert.doesNotMatch(workoutPicker, /<SourceTag/);
   assert.doesNotMatch(app, /Filter exercises by category/);
   assert.doesNotMatch(app, /className="exercise-grid"/);
 });

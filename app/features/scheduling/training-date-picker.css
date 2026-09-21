@@ -1,0 +1,10 @@
+.training-date-picker { width: min(600px, 100%); }
+.training-date-search { margin: 0 0 12px; }
+.training-date-choices { display: grid; gap: 8px; max-height: 50dvh; overflow-y: auto; overscroll-behavior: contain; margin-bottom: 12px; }
+.training-date-choice { display: grid; grid-template-columns: 20px minmax(0, 1fr) 16px; gap: 12px; align-items: center; min-height: 64px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel-soft); color: var(--text); text-align: left; }
+.training-date-choice:hover { border-color: var(--accent); }
+.training-date-choice > svg { color: var(--accent); }
+.training-date-choice > span { display: grid; min-width: 0; gap: 4px; }
+.training-date-choice strong { overflow-wrap: anywhere; }
+.training-date-choice small, .training-date-empty { color: var(--muted); font-size: var(--font-caption); }
+.training-date-empty { padding: 20px 12px; text-align: center; }

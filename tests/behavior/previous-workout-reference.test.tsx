@@ -57,7 +57,7 @@ describe("previous workout references", () => {
     const squat = schedule.workout.sections.flatMap((section) => section.items).find((item) => item.title === "Back squat")!;
     expect(previousDemoWorkoutValues(schedule.workout, previous)?.items[squat.id].setLogs[0].load).toBe("37.5");
     render(<LiftLogApp viewer={demoViewer} onSignOut={vi.fn()} repository={null} initialWorkspace={workspace} initialDemoSessions={[previous]} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Start workout" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start workout: Strength + core" }));
     const reps = await screen.findByLabelText("Back squat, set 1, reps");
     await waitFor(() => expect(reps).toBeEnabled());
     const load = screen.getByLabelText("Back squat, set 1, load in kg");
@@ -73,9 +73,9 @@ describe("previous workout references", () => {
     fireEvent.click(screen.getByRole("button", { name: "Finish and save session" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Finish and save session" })).not.toBeInTheDocument());
     expect(screen.queryByText("Finish with unrecorded results?")).not.toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "Show completed" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "History" }));
     const history = screen.getByRole("region", { name: "Completed workouts" });
-    fireEvent.click(within(history).getByRole("button", { name: /Workout results/ }));
+    fireEvent.click(within(history).getByRole("button", { name: /View results/ }));
     expect(await screen.findByText("42.5")).toBeVisible();
     expect(screen.queryByText("37.5")).not.toBeInTheDocument();
     expect(screen.queryByText(/Last:/)).not.toBeInTheDocument();

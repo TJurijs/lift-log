@@ -1,0 +1,70 @@
+.training-feed,
+.training-feed-section,
+.training-card-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.training-feed { gap: 24px; }
+.training-feed-section h2 { margin: 0; font-size: var(--font-body); }
+.training-card {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  overflow: visible;
+}
+.training-card-open { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.training-card-open::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; }
+.training-card-open:focus-visible { outline: none; }
+.training-card-open:focus-visible::after { outline: 2px solid var(--accent); outline-offset: 3px; }
+.training-card-open:disabled { cursor: default; }
+.training-card .program-card-actions,
+.training-card button:not(.training-card-open) { position: relative; z-index: 2; }
+.training-card-heading,
+.training-resume {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.training-card-heading > div,
+.training-resume > div { min-width: 0; flex: 1; }
+.training-card-heading h3 { margin: 0; font-size: var(--font-body); line-height: 1.4; overflow-wrap: anywhere; }
+.training-card-heading p,
+.training-card-description,
+.training-resume p { margin: 3px 0 0; font-size: var(--font-caption); line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+.training-card-description { margin: 0; color: var(--text-soft); white-space: pre-line; }
+.training-card-footer,
+.training-workout-row,
+.training-workout-actions { display: flex; align-items: center; gap: 8px; }
+.training-card-footer { justify-content: flex-end; flex-wrap: wrap; }
+.training-card-footer .program-card-actions { flex-wrap: wrap; }
+.training-card .button,
+.training-expand { min-height: 44px; }
+.training-expand { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0 0; border: 0; border-top: 1px solid var(--line); color: var(--text-soft); background: transparent; text-align: left; cursor: pointer; }
+.training-expand[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.training-workout-list { display: grid; gap: 10px; }
+.training-workout-row { padding: 10px 0; border-top: 1px solid var(--line); justify-content: space-between; }
+.training-workout-row > div:first-child { min-width: 0; display: grid; gap: 4px; }
+.training-workout-row strong { font-size: var(--font-control); overflow-wrap: anywhere; }
+.training-workout-row small { font-size: var(--font-caption); color: var(--muted); }
+.training-workout-actions { flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.training-resume { padding: 16px; border-color: var(--accent); margin-bottom: 16px; }
+.training-resume strong,
+.training-resume small { display: block; overflow-wrap: anywhere; }
+.training-resume small { color: var(--accent); font-size: var(--font-caption); margin-bottom: 4px; }
+.training-browser .library-toolbar > .segmented-control { margin-top: 10px; }
+
+@media (max-width: 700px) {
+  .training-card { padding: 12px; }
+  .training-workout-row { align-items: flex-start; flex-wrap: wrap; }
+  .training-workout-row > div:first-child { flex: 1 1 150px; }
+  .training-workout-actions { margin-left: auto; }
+  .training-card-footer { flex-wrap: nowrap; gap: 6px; align-items: flex-start; }
+  .training-card-footer .button { padding-right: 10px; padding-left: 10px; }
+  .training-card-footer > .program-card-actions { margin-left: auto; }
+  .training-resume { flex-wrap: wrap; }
+  .training-resume > .button { width: 100%; }
+}

@@ -56,7 +56,6 @@ export default function ExercisesHome({
       <PageHeader
         eyebrow="Exercise library"
         title="Exercises"
-        description="Browse provided movements or build your own reusable exercise collection."
       >
         <button className="button primary" onClick={onAdd}>
           <Plus size={16} />

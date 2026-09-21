@@ -76,7 +76,9 @@ test("keeps user data behind Supabase and wires every MVP mutation", async () =>
     "loadBootstrap",
     "listProgramSummaries",
     "getProgramVersionDetail",
-    "listSchedulableWorkouts",
+    "listProgramRuns",
+    "ensureOwnTrainingRun",
+    "startTrainingWorkout",
     "listCalendarOccurrences",
     "listCalendarSessionSummaries",
     "listCompletedSessionSummaries",
@@ -100,9 +102,11 @@ test("keeps user data behind Supabase and wires every MVP mutation", async () =>
     "endCoachRelationship",
     "updateOwnProfile",
     "createBlankProgram",
-    "createProgramFromTemplate",
+    "copyCompletedWorkoutToOwn",
+    "prepareProgramRunWorkoutEdit",
+    "assignProgramRun",
     "scheduleWorkout",
-    "deactivateProgram",
+    "endProgramRun",
     "updateWorkout",
     "deleteOwnProgram",
     "copyProgramToOwn",
@@ -127,7 +131,7 @@ test("keeps user data behind Supabase and wires every MVP mutation", async () =>
   assert.match(app, /changes save automatically/i);
   // Autosave wiring, reload recovery, conflict rebasing, and completion are
   // exercised by the rendered active-workout behavior suite.
-  assert.match(app, /repository\.loadProgramForAthlete/);
+  assert.match(app, /repository\.loadProgramForRun/);
   assert.match(
     repository,
     /async deleteOwnProgram[\s\S]*\.rpc\("delete_own_program",[\s\S]*target_program_id: programId/i,

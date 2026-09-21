@@ -15,34 +15,6 @@ export interface WorkoutFocus {
   plannedDate?: string;
 }
 
-/**
- * Calendar workouts that are still ahead of the athlete. The Next workouts
- * page intentionally shows every dated planned, active, or skipped occurrence
- * from today onward, not just the earliest one. Active occurrences remain in
- * the list so an athlete can leave the workout screen and resume later.
- */
-export function listUpcomingWorkouts(
-  schedules: ScheduledWorkout[],
-  today = localDateOnly(),
-) {
-  return schedules
-    .filter(
-      (schedule) =>
-        (schedule.status === "planned" ||
-          schedule.status === "in_progress" ||
-          schedule.status === "skipped") &&
-        Boolean(schedule.plannedDate) &&
-        String(schedule.plannedDate) >= today,
-    )
-    .slice()
-    .sort(
-      (left, right) =>
-        String(left.plannedDate).localeCompare(String(right.plannedDate)) ||
-        left.sequenceNumber - right.sequenceNumber ||
-        left.id.localeCompare(right.id),
-    );
-}
-
 function findProgramWorkout(
   programs: Program[],
   activeSession: ActiveSession,
@@ -81,7 +53,7 @@ function matchingActiveSchedule(
 }
 
 /**
- * Chooses the workout that belongs on the Next workout screen.
+ * Resolves the active recorder's workout or its next dated fallback.
  *
  * An active session always wins, even when its scheduled date is in the future
  * or its scheduled occurrence is undated. Without an active session, only

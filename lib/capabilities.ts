@@ -9,8 +9,6 @@ export interface TrainingContentPolicyInput {
   source: Program["sourceType"];
   contentType: NonNullable<Program["contentType"]>;
   lifecycle: Program["versionStatus"];
-  /** Retained only for callers compiled against the pre-simplification policy. */
-  available?: boolean;
   archived?: boolean;
   activeCoachOfOwner: boolean;
   hasAssignableAthletes?: boolean;

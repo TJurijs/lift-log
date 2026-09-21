@@ -6,8 +6,6 @@ import type {
   CalendarWorkspaceData,
   CoachAthleteCursor,
   CoachAgendaEntry,
-  CoachAssignedProgramStatus,
-  CoachAssignedProgramSummary,
   CoachConnection,
   CoachingWorkspaceData,
   CoachInviteReceipt,
@@ -20,7 +18,6 @@ import type {
   ExerciseVideoLink,
   ExerciseCursor,
   ExerciseWorkspaceData,
-  FrequentSchedulableWorkoutCandidate,
   OwnProfile,
   OutgoingCoachInvite,
   PendingCoachInvite,
@@ -38,10 +35,7 @@ import type {
   ProgramRunWorkout,
   ProgramRunWorkoutDate,
   ProgramRunWorkoutStatus,
-  ProgramWorkspaceData,
   ScheduledWorkout,
-  SchedulableWorkoutCandidate,
-  SchedulableWorkoutCursor,
   SessionSetValue,
   TrackingField,
   HistoryCursor,
@@ -110,6 +104,7 @@ interface PrescriptionRow {
 
 interface SessionRow {
   id: string;
+  source_type?: string | null;
   draft_revision?: NumericValue;
   program_run_id?: string | null;
   program_run_workout_id?: string | null;
@@ -204,16 +199,12 @@ export interface ProgramRunPageOptions {
   limit?: number;
   cursor?: ProgramRunCursor;
   creatorScope?: "all" | "self" | "coach";
+  statusScope?: "all" | "active" | "history";
 }
 
 export interface CalendarPageOptions {
   limit?: number;
   cursor?: CalendarCursor;
-}
-
-export interface SchedulableWorkoutPageOptions {
-  limit?: number;
-  cursor?: SchedulableWorkoutCursor;
 }
 
 export interface HistoryPageOptions {
@@ -391,7 +382,7 @@ function parseScheduledWorkoutSummary(
   const sequenceNumber =
     jsonInteger(row, "sequence_number", "sequenceNumber") ?? 0;
   const estimatedMinutes =
-    jsonInteger(row, "estimated_minutes", "estimatedMinutes") ?? 0;
+    jsonInteger(row, "estimated_minutes", "estimatedMinutes") ?? undefined;
   const assignmentId =
     jsonNullableString(row, "assignment_id", "assignmentId") ?? undefined;
   return {
@@ -453,6 +444,7 @@ function parseSessionRow(value: unknown): SessionRow | null {
   if (!id || !workoutTitle || !startedAt) return null;
   return {
     id,
+    source_type: jsonNullableString(row, "source_type", "sourceType"),
     program_run_id: jsonNullableString(
       row,
       "program_run_id",
@@ -483,94 +475,6 @@ function parseSessionRow(value: unknown): SessionRow | null {
       "completedForDate",
     ),
     session_rpe: jsonNumeric(row, "session_rpe", "sessionRpe"),
-  };
-}
-
-function parseSchedulableWorkoutCandidate(
-  row: JsonRecord,
-): SchedulableWorkoutCandidate | null {
-  const kind = jsonString(row, "kind");
-  const programId = jsonString(row, "program_id", "programId");
-  const versionId = jsonString(
-    row,
-    "program_version_id",
-    "programVersionId",
-  );
-  const workoutId = jsonString(row, "workout_id", "workoutId");
-  const programTitle = jsonString(row, "program_title", "programTitle");
-  const workoutTitle = jsonString(row, "workout_title", "workoutTitle");
-  if (
-    (kind !== "program" && kind !== "assignment") ||
-    !programId ||
-    !versionId ||
-    !workoutId ||
-    !programTitle ||
-    !workoutTitle
-  ) {
-    return null;
-  }
-  const latestStatus = jsonNullableString(
-    row,
-    "latest_status",
-    "latestStatus",
-  );
-  const latestId = jsonNullableString(
-    row,
-    "latest_occurrence_id",
-    "latestOccurrenceId",
-  );
-  const normalizedLatestStatus: ScheduledWorkout["status"] | undefined =
-    latestStatus === "planned" ||
-    latestStatus === "in_progress" ||
-    latestStatus === "completed" ||
-    latestStatus === "skipped"
-      ? latestStatus
-      : undefined;
-  const latestOccurrence =
-    latestId && normalizedLatestStatus
-      ? {
-          id: latestId,
-          plannedDate:
-            jsonNullableString(
-              row,
-              "latest_planned_date",
-              "latestPlannedDate",
-            ) ?? undefined,
-          status: normalizedLatestStatus,
-          sequenceNumber:
-            jsonInteger(
-              row,
-              "latest_sequence_number",
-              "latestSequenceNumber",
-            ) ?? 0,
-        }
-      : undefined;
-  const contentType =
-    jsonString(row, "content_type", "contentType") === "quick_workout"
-      ? "quick_workout"
-      : "program";
-  return {
-    kind,
-    programId,
-    assignmentId:
-      jsonNullableString(row, "assignment_id", "assignmentId") ?? undefined,
-    programVersionId: versionId,
-    workoutId,
-    programTitle,
-    workoutTitle,
-    contentType,
-    isQuickWorkout:
-      jsonBoolean(row, "is_quick_workout", "isQuickWorkout") ??
-      contentType === "quick_workout",
-    weekIndex: jsonInteger(row, "week_index", "weekIndex") ?? 1,
-    weekLabel: jsonString(row, "week_label", "weekLabel") ?? "Week 1",
-    workoutPosition:
-      jsonInteger(row, "workout_position", "workoutPosition") ?? 0,
-    scheduleLabel:
-      jsonString(row, "schedule_label", "scheduleLabel") ?? "",
-    estimatedMinutes:
-      jsonInteger(row, "estimated_minutes", "estimatedMinutes") ?? 45,
-    latestOccurrence,
   };
 }
 
@@ -609,10 +513,14 @@ function parseProgramRunWorkout(value: unknown): ProgramRunWorkout | null {
     id,
     runId,
     workoutId,
+    effectiveWorkoutId: jsonNullableString(row, "effectiveWorkoutId", "effective_workout_id") ?? undefined,
+    effectiveProgramId: jsonNullableString(row, "effectiveProgramId", "effective_program_id") ?? undefined,
+    effectiveProgramVersionId: jsonNullableString(row, "effectiveProgramVersionId", "effective_program_version_id") ?? undefined,
+    canEdit: jsonBoolean(row, "canEdit") ?? false,
     title,
     position: jsonInteger(row, "position") ?? 0,
     estimatedMinutes:
-      jsonInteger(row, "estimatedMinutes", "estimated_minutes") ?? 0,
+      jsonInteger(row, "estimatedMinutes", "estimated_minutes") ?? undefined,
     plannedDate:
       jsonNullableString(row, "plannedDate", "planned_date") ?? undefined,
     status: status as ProgramRunWorkoutStatus,
@@ -726,7 +634,20 @@ function parseProgramRunSummary(value: unknown): ProgramRunSummary | null {
     finishedAt:
       jsonNullableString(row, "finishedAt", "finished_at") ?? undefined,
     endedAt: jsonNullableString(row, "endedAt", "ended_at") ?? undefined,
+    sortDate: jsonNullableString(row, "sortDate", "sort_date") ?? undefined,
   };
+}
+
+function parseProgramRunMutation(value: unknown): ProgramRunMutation | null {
+  const row = jsonRecord(value);
+  if (!row) return null;
+  const athleteId = jsonString(row, "athleteId", "athlete_id");
+  const runId = jsonString(row, "runId", "run_id");
+  const programId = jsonString(row, "programId", "program_id");
+  const programVersionId = jsonString(row, "programVersionId", "program_version_id");
+  return athleteId && runId && programId && programVersionId
+    ? { athleteId, runId, programId, programVersionId, created: jsonBoolean(row, "created") ?? false }
+    : null;
 }
 
 function parseProgramRunDetail(value: unknown): ProgramRunDetail | null {
@@ -788,30 +709,6 @@ function parseCoachCompletedAgendaEntry(value: unknown): CoachAgendaEntry | null
       ) ?? undefined,
     sessionId,
   };
-}
-
-function isMissingProgramRunsRpc(error: unknown) {
-  const row = jsonRecord(error);
-  const code = row ? jsonString(row, "code") : undefined;
-  const message = row ? jsonString(row, "message") : undefined;
-  return (
-    code === "PGRST202" ||
-    code === "42883" ||
-    /could not find the function|does not exist/i.test(message ?? "")
-  );
-}
-
-function isMissingProgramRunsColumn(error: unknown) {
-  const row = jsonRecord(error);
-  const code = row ? jsonString(row, "code") : undefined;
-  const message = row ? jsonString(row, "message") : undefined;
-  return (
-    code === "PGRST204" ||
-    code === "42703" ||
-    /program_run_(?:workout_)?id.*does not exist|could not find.*program_run_/i.test(
-      message ?? "",
-    )
-  );
 }
 
 const entryModes = new Set<EntryMode>([
@@ -967,6 +864,7 @@ function mapCompletedSession(
   const end = session.completed_at ? new Date(session.completed_at) : start;
   return {
     id: session.id,
+    ...(session.source_type === "self" || session.source_type === "coach" ? { sourceType: session.source_type } : {}),
     programRunId: session.program_run_id ?? undefined,
     programRunWorkoutId: session.program_run_workout_id ?? undefined,
     programVersionId: session.program_version_id ?? undefined,
@@ -1217,7 +1115,9 @@ function parseWorkoutPayload(
 
   return {
     id,
-    programVersionId,
+    programVersionId: jsonString(workout, "programVersionId", "program_version_id") ?? programVersionId,
+    runWorkoutId: jsonNullableString(workout, "runWorkoutId", "run_workout_id") ?? undefined,
+    originalWorkoutId: jsonNullableString(workout, "originalWorkoutId", "original_workout_id") ?? undefined,
     scheduledWorkoutId: occurrence?.id,
     plannedDate: occurrence?.plannedDate,
     title,
@@ -1227,7 +1127,7 @@ function parseWorkoutPayload(
         ? `Session ${occurrence.sequenceNumber}`
         : `Workout ${position + 1}`),
     durationMinutes:
-      jsonInteger(workout, "estimatedMinutes", "estimated_minutes") ?? 45,
+      jsonInteger(workout, "estimatedMinutes", "estimated_minutes") ?? undefined,
     sections,
   };
 }
@@ -1322,6 +1222,8 @@ function parseProgramDetailPayload(
           ? "Library"
           : "Assigned by coach",
     assignmentId: assignmentId ?? undefined,
+    editableRunId: jsonNullableString(row, "editableRunId", "editable_run_id") ?? undefined,
+    editableRunWorkoutId: jsonNullableString(row, "editableRunWorkoutId", "editable_run_workout_id") ?? undefined,
     programRunId:
       jsonNullableString(row, "programRunId", "program_run_id") ?? undefined,
     customizedProgramId:
@@ -1731,7 +1633,7 @@ export class LiftLogRepository {
               dayLabel: `Session ${sequenceNumber || 1}`,
               durationMinutes:
                 jsonInteger(row, "estimatedMinutes", "estimated_minutes") ??
-                0,
+                undefined,
               sections: [],
             };
       return [
@@ -1827,52 +1729,18 @@ export class LiftLogRepository {
     );
   }
 
-  async loadProgramWorkspace(): Promise<ProgramWorkspaceData> {
-    const [programPage, programRunPage, coachProgramRunPage] = await Promise.all([
-      this.listProgramSummaries(),
-      this.listProgramRuns(),
-      this.listProgramRuns(undefined, { creatorScope: "coach" }),
-    ]);
-    const programCatalog = programPage.items;
-    const schedulablePrograms = programCatalog.filter(
-      (program) =>
-        program.versionStatus === "published" && program.sourceType !== "library",
-    );
-    return {
-      programCatalog,
-      schedulableProgramIds: schedulablePrograms.map((program) => program.id),
-      schedulablePrograms,
-      draftProgram:
-        programCatalog.find((program) => program.versionStatus === "draft") ?? null,
-      activeProgram:
-        programCatalog.find(
-          (program) =>
-            program.sourceType !== "library" &&
-            program.versionStatus === "published",
-        ) ?? null,
-      programRuns: programRunPage.items,
-      programRunCursor: programRunPage.nextCursor,
-      hasMoreProgramRuns: programRunPage.hasMore,
-      coachProgramRuns: coachProgramRunPage.items,
-      coachProgramRunCursor: coachProgramRunPage.nextCursor,
-      hasMoreCoachProgramRuns: coachProgramRunPage.hasMore,
-    };
-  }
-
-  /**
-   * Lists one athlete's concrete program runs. Missing-RPC fallback keeps an
-   * older backend usable during the additive database/frontend rollout.
-   */
+  /** Lists one athlete's concrete training with a bounded server cursor. */
   async listProgramRuns(
     athleteId?: string,
     options: ProgramRunPageOptions = {},
   ): Promise<CursorPage<ProgramRunSummary, ProgramRunCursor>> {
     const limit = Math.min(Math.max(Math.trunc(options.limit ?? 25), 1), 50);
     const creatorScope = options.creatorScope ?? "all";
+    const statusScope = options.statusScope ?? "all";
     const cursorKey = options.cursor
-      ? `${options.cursor.createdAt}:${options.cursor.id}`
+      ? `${options.cursor.sortDate ?? ""}:${options.cursor.createdAt}:${options.cursor.id}`
       : "first";
-    const cacheKey = `program-runs:${athleteId ?? "self"}:${creatorScope}:${limit}:${cursorKey}`;
+    const cacheKey = `program-runs:${athleteId ?? "self"}:${creatorScope}:${statusScope}:${limit}:${cursorKey}`;
     return this.queryCache.getOrLoad(
       cacheKey,
       async () => {
@@ -1882,13 +1750,10 @@ export class LiftLogRepository {
           after_created_at: options.cursor?.createdAt ?? null,
           after_id: options.cursor?.id ?? null,
           creator_scope: creatorScope,
+          ...(statusScope !== "all" ? { status_scope: statusScope } : {}),
+          ...(statusScope === "active" ? { after_sort_date: options.cursor?.sortDate ?? null } : {}),
         });
-        if (result.error) {
-          if (isMissingProgramRunsRpc(result.error)) {
-            return { items: [], hasMore: false };
-          }
-          fail("Could not load program runs", result.error);
-        }
+        if (result.error) fail("Could not load training", result.error);
         const runs = jsonRecords(result.data)
           .map(parseProgramRunSummary)
           .filter((run): run is ProgramRunSummary => run !== null);
@@ -1899,7 +1764,8 @@ export class LiftLogRepository {
           items,
           hasMore,
           ...(hasMore && last
-            ? { nextCursor: { createdAt: last.createdAt, id: last.id } }
+            ? { nextCursor: { createdAt: last.createdAt, id: last.id,
+                ...(statusScope === "active" ? { sortDate: last.sortDate ?? "9999-12-31" } : {}) } }
             : {}),
         };
       },
@@ -2039,6 +1905,7 @@ export class LiftLogRepository {
               weekCount,
               workoutCount,
               workoutIds: [],
+              hasOwnRuns: jsonBoolean(row, "hasOwnRuns", "has_own_runs") ?? false,
               detailsLoaded: false,
             },
           ];
@@ -2078,75 +1945,9 @@ export class LiftLogRepository {
     if (result.error) fail("Could not load your calendar", result.error);
     const rows = jsonRecords(result.data);
     const visibleRows = rows.slice(0, limit);
-    const items = visibleRows.flatMap((row): ScheduledWorkout[] => {
-      const id = jsonString(row, "id");
-      const programId = jsonString(row, "program_id", "programId");
-      const versionId = jsonString(row, "program_version_id", "programVersionId");
-      const programTitle = jsonString(row, "program_title", "programTitle");
-      const workoutId = jsonString(row, "workout_id", "workoutId");
-      const workoutTitle = jsonString(row, "workout_title", "workoutTitle");
-      const plannedDate = jsonString(row, "planned_date", "plannedDate");
-      const status = jsonString(row, "status");
-      if (
-        !id ||
-        !programId ||
-        !versionId ||
-        !programTitle ||
-        !workoutId ||
-        !workoutTitle ||
-        !plannedDate ||
-        (status !== "planned" &&
-          status !== "in_progress" &&
-          status !== "completed" &&
-          status !== "skipped")
-      ) {
-        return [];
-      }
-      const sequenceNumber =
-        jsonInteger(row, "sequence_number", "sequenceNumber") ?? 0;
-      const assignmentId =
-        jsonNullableString(row, "assignment_id", "assignmentId") ?? undefined;
-      return [
-        {
-          id,
-          assignmentId,
-          programRunId:
-            jsonNullableString(row, "program_run_id", "programRunId") ??
-            undefined,
-          programRunWorkoutId:
-            jsonNullableString(
-              row,
-              "program_run_workout_id",
-              "programRunWorkoutId",
-            ) ?? undefined,
-          programId,
-          programTitle,
-          programVersionId: versionId,
-          workoutId,
-          workoutTitle,
-          slotLabel: `${programTitle} · ${workoutTitle}`,
-          plannedDate,
-          sequenceNumber,
-          status,
-          sourceType: scheduledWorkoutSourceType(
-            row,
-            assignmentId,
-            this.viewerId,
-          ),
-          workout: {
-            id: workoutId,
-            programVersionId: versionId,
-            scheduledWorkoutId: id,
-            plannedDate,
-            title: workoutTitle,
-            dayLabel: `Session ${sequenceNumber || 1}`,
-            durationMinutes: 45,
-            sections: [],
-          },
-          detailsLoaded: false,
-        },
-      ];
-    });
+    const items = visibleRows
+      .map((row) => parseScheduledWorkoutSummary(row, this.viewerId))
+      .filter((workout): workout is ScheduledWorkout => workout !== null);
     const last = visibleRows.at(-1);
     const nextCursor =
       rows.length > limit && last
@@ -2161,55 +1962,6 @@ export class LiftLogRepository {
       hasMore: Boolean(nextCursor?.plannedDate && nextCursor.id),
       ...(nextCursor?.plannedDate && nextCursor.id ? { nextCursor } : {}),
     };
-  }
-
-  /**
-   * Pages every current/future occurrence for Next with a stable date/id
-   * cursor. The bootstrap intentionally remains tiny; this is the complete,
-   * lazy path for larger training calendars.
-   */
-  async listUpcomingScheduledWorkouts(
-    options: CalendarPageOptions = {},
-  ): Promise<CursorPage<ScheduledWorkout, CalendarCursor>> {
-    const limit = Math.min(Math.max(Math.trunc(options.limit ?? 20), 1), 99);
-    const cursorKey = options.cursor
-      ? `${options.cursor.plannedDate}:${options.cursor.id}`
-      : "first";
-    return this.queryCache.getOrLoad(
-      `upcoming-schedule-page:${limit}:${cursorKey}`,
-      async () => {
-        const result = await this.client.rpc(
-          "list_upcoming_scheduled_workouts",
-          {
-            page_limit: limit + 1,
-            after_planned_date: options.cursor?.plannedDate ?? null,
-            after_id: options.cursor?.id ?? null,
-          },
-        );
-        if (result.error)
-          fail("Could not load your upcoming workouts", result.error);
-        const rows = jsonRecords(result.data);
-        const visibleRows = rows.slice(0, limit);
-        const items = visibleRows
-          .map((row) => parseScheduledWorkoutSummary(row, this.viewerId))
-          .filter((item): item is ScheduledWorkout => item !== null);
-        const last = visibleRows.at(-1);
-        const nextCursor =
-          rows.length > limit && last
-            ? {
-                plannedDate:
-                  jsonString(last, "planned_date", "plannedDate") ?? "",
-                id: jsonString(last, "id") ?? "",
-              }
-            : undefined;
-        return {
-          items,
-          hasMore: Boolean(nextCursor?.plannedDate && nextCursor.id),
-          ...(nextCursor?.plannedDate && nextCursor.id ? { nextCursor } : {}),
-        };
-      },
-      { ttlMs: 15_000 },
-    );
   }
 
   async listCalendarSessionSummaries(
@@ -2245,70 +1997,6 @@ export class LiftLogRepository {
             id: jsonString(last, "id") ?? "",
           } : undefined,
         };
-      },
-    );
-  }
-
-  async listSchedulableWorkouts(
-    options: SchedulableWorkoutPageOptions = {},
-  ): Promise<CursorPage<SchedulableWorkoutCandidate, SchedulableWorkoutCursor>> {
-    const limit = Math.min(Math.max(Math.trunc(options.limit ?? 50), 1), 99);
-    const result = await this.client.rpc("list_schedulable_workouts", {
-      page_limit: limit + 1,
-      after_program_title: options.cursor?.programTitle ?? null,
-      after_week_index: options.cursor?.weekIndex ?? null,
-      after_workout_position: options.cursor?.workoutPosition ?? null,
-      after_id: options.cursor?.id ?? null,
-    });
-    if (result.error)
-      fail("Could not load workouts available to schedule", result.error);
-    const rows = jsonRecords(result.data);
-    const visibleRows = rows.slice(0, limit);
-    const items = visibleRows.flatMap((row): SchedulableWorkoutCandidate[] => {
-      const candidate = parseSchedulableWorkoutCandidate(row);
-      return candidate ? [candidate] : [];
-    });
-    const last = visibleRows.at(-1);
-    const nextCursor =
-      rows.length > limit && last
-        ? {
-            programTitle:
-              jsonString(last, "program_title", "programTitle") ?? "",
-            weekIndex: jsonInteger(last, "week_index", "weekIndex") ?? 0,
-            workoutPosition:
-              jsonInteger(last, "workout_position", "workoutPosition") ?? 0,
-            id: jsonString(last, "workout_id", "workoutId") ?? "",
-          }
-        : undefined;
-    return {
-      items,
-      hasMore: Boolean(nextCursor?.programTitle && nextCursor.id),
-      ...(nextCursor?.programTitle && nextCursor.id ? { nextCursor } : {}),
-    };
-  }
-
-  async listFrequentSchedulableWorkouts(
-    limit = 6,
-  ): Promise<FrequentSchedulableWorkoutCandidate[]> {
-    const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 12);
-    const result = await this.client.rpc("list_frequent_schedulable_workouts", {
-      page_limit: boundedLimit,
-    });
-    if (result.error)
-      fail("Could not load frequently used workouts", result.error);
-    return jsonRecords(result.data).flatMap(
-      (row): FrequentSchedulableWorkoutCandidate[] => {
-        const candidate = parseSchedulableWorkoutCandidate(row);
-        const usageCount = jsonInteger(row, "usage_count", "usageCount");
-        const lastUsedAt = jsonString(row, "last_used_at", "lastUsedAt");
-        if (
-          !candidate?.isQuickWorkout ||
-          usageCount === undefined ||
-          usageCount < 1 ||
-          !lastUsedAt
-        )
-          return [];
-        return [{ ...candidate, usageCount, lastUsedAt }];
       },
     );
   }
@@ -2490,7 +2178,6 @@ export class LiftLogRepository {
               jsonNumeric(row, "assigned_program_count", "assignedProgramCount"),
             ) ?? 0,
           detailsLoaded: false,
-          assignedPrograms: [],
           agenda: [],
         },
       ];
@@ -2513,6 +2200,10 @@ export class LiftLogRepository {
 
   invalidatePrograms(programId?: string) {
     this.queryCache.invalidate("program-page:");
+    // An editor can belong to one planned workout. Its plan and calendar previews
+    // must stop serving the previous exercise tree after any authoring mutation.
+    this.queryCache.invalidate("program-run-content:");
+    this.invalidateProgramRunProgress();
     if (programId) {
       this.queryCache.invalidate(`program-detail:program:${programId}:`);
     } else {
@@ -2524,8 +2215,6 @@ export class LiftLogRepository {
 
   private invalidateCalendarMutation(scheduleId?: string) {
     this.queryCache.invalidate("feature:calendar:");
-    this.queryCache.invalidate("upcoming-schedule-page:");
-    this.queryCache.invalidate("schedulable-page:");
     this.queryCache.invalidate(
       scheduleId ? `schedule-detail:${scheduleId}` : "schedule-detail:",
     );
@@ -2687,21 +2376,6 @@ export class LiftLogRepository {
     assignmentId?: string,
   ): Promise<Program | null> {
     const inferred = this.programSelectors.get(programId);
-    const selectedAssignmentId = assignmentId ?? inferred?.assignmentId;
-    return this.getProgramVersionDetail(
-      selectedAssignmentId
-        ? { assignmentId: selectedAssignmentId, versionId }
-        : { programId: inferred?.programId ?? programId, versionId },
-    );
-  }
-
-  async loadOwnScheduledProgramVersionById(
-    programId: string,
-    versionId: string,
-    assignmentId?: string,
-  ): Promise<Program | null> {
-    const inferred = this.programSelectors.get(`${programId}:${versionId}`) ??
-      this.programSelectors.get(programId);
     const selectedAssignmentId = assignmentId ?? inferred?.assignmentId;
     return this.getProgramVersionDetail(
       selectedAssignmentId
@@ -2881,16 +2555,6 @@ export class LiftLogRepository {
     this.invalidatePrograms(programId);
   }
 
-  async createProgramFromTemplate(templateId: string) {
-    const result = await this.client.rpc("create_program_from_template", {
-      target_template_id: templateId,
-    });
-    if (result.error || !result.data)
-      fail("Could not start the library program", result.error);
-    this.invalidateProgramRunMutation();
-    return String(result.data);
-  }
-
   async deleteOwnProgram(programId: string) {
     const result = await this.client.rpc("delete_own_program", {
       target_program_id: programId,
@@ -2920,6 +2584,45 @@ export class LiftLogRepository {
     return programId;
   }
 
+  async prepareProgramRunWorkoutEdit(runWorkoutId: string): Promise<Program> {
+    const result = await this.client.rpc("prepare_program_run_workout_edit", {
+      target_run_workout_id: runWorkoutId,
+    });
+    if (result.error) fail("Could not open this workout for editing", result.error);
+    const row = firstJsonRecord(result.data);
+    const programId = row && jsonString(row, "programId");
+    const runId = row && jsonString(row, "runId");
+    if (!programId || !runId) fail("Could not open this workout for editing", null);
+    this.invalidateProgramRunMutation(runId);
+    const program = await this.loadEditableProgram(this.viewerId, programId);
+    return { ...program, editableRunId: runId, editableRunWorkoutId: runWorkoutId };
+  }
+
+  async copyCompletedWorkoutToOwn(sessionId: string): Promise<string> {
+    const result = await this.client.rpc("copy_completed_workout_to_own", { target_session_id: sessionId });
+    if (result.error || !result.data) fail("Could not repeat this workout", result.error);
+    this.invalidatePrograms();
+    return String(result.data);
+  }
+
+  async assignProgramRun(runId: string, athleteIds: string[], workoutDates: ProgramRunWorkoutDate[], idempotencyKey: string): Promise<ProgramRunMutation[]> {
+    const result = await this.client.rpc("assign_program_run", {
+      target_run_id: runId,
+      target_athlete_ids: [...new Set(athleteIds)],
+      target_workout_dates: workoutDates.map(date => ({ workoutId: date.workoutId, plannedDate: date.plannedDate ?? null })),
+      target_idempotency_key: idempotencyKey,
+    });
+    if (result.error) fail("Could not assign this training", result.error);
+    const mutations = jsonRecords(result.data).map(row => {
+      const mutation = parseProgramRunMutation(row);
+      if (!mutation) fail("Could not read the assigned training", null);
+      return mutation;
+    });
+    if (!mutations.length) fail("No training was assigned", null);
+    this.invalidateProgramRunMutation();
+    return mutations;
+  }
+
   async createProgramRuns(
     programId: string,
     athleteIds: string[],
@@ -2940,91 +2643,48 @@ export class LiftLogRepository {
       target_repeated_from_run_id: repeatedFromRunId ?? null,
     });
     if (result.error) fail("Could not start the program", result.error);
-    const mutations = jsonRecords(result.data).flatMap((row) => {
-      const athleteId = jsonString(row, "athleteId", "athlete_id");
-      const runId = jsonString(row, "runId", "run_id");
-      const returnedProgramId = jsonString(row, "programId", "program_id");
-      const programVersionId = jsonString(
-        row,
-        "programVersionId",
-        "program_version_id",
-      );
-      return athleteId && runId && returnedProgramId && programVersionId
-        ? [{
-            athleteId,
-            runId,
-            programId: returnedProgramId,
-            programVersionId,
-            created: jsonBoolean(row, "created") ?? false,
-          } satisfies ProgramRunMutation]
-        : [];
-    });
+    const mutations = jsonRecords(result.data)
+      .map(parseProgramRunMutation)
+      .filter((mutation): mutation is ProgramRunMutation => mutation !== null);
     if (!mutations.length) fail("Could not start the program", null);
     this.invalidateProgramRunMutation();
     return mutations;
   }
 
-  /**
-   * Calendar one-off scheduling is deliberately limited to reusable quick
-   * workouts. It still creates a normal run so self and coach history share
-   * one lifecycle model.
-   */
-  async createScheduledQuickWorkoutRun(
+  /** Setting the first date creates this training's own occurrence once. */
+  async ensureOwnTrainingRun(
     programId: string,
-    plannedDate: string,
-    idempotencyKey: string = crypto.randomUUID(),
-  ): Promise<ScheduledWorkout> {
-    const source = await this.loadEditableProgram(this.viewerId, programId);
-    const workouts = source.weeks.flatMap((week) => week.workouts);
-    if (source.contentType !== "quick_workout" || workouts.length !== 1) {
-      throw new Error("Choose a reusable quick workout for a calendar date.");
-    }
-    const [created] = await this.createProgramRuns(
-      programId,
-      [this.viewerId],
-      [{ workoutId: workouts[0].id, plannedDate }],
-      idempotencyKey,
-    );
-    if (!created) fail("Could not schedule the workout", null);
-    const run = await this.loadProgramRunDetail(created.runId);
-    const scheduleId = run?.workouts[0]?.scheduledWorkoutId;
-    if (!scheduleId) fail("Could not load the scheduled workout", null);
-    const schedule = await this.loadScheduledWorkoutDetail(scheduleId);
-    if (!schedule) fail("Could not load the scheduled workout", null);
-    return schedule;
-  }
-
-  async repeatProgramRun(
-    runId: string,
     workoutDates: ProgramRunWorkoutDate[] = [],
     idempotencyKey: string = crypto.randomUUID(),
   ): Promise<ProgramRunMutation> {
-    const result = await this.client.rpc("repeat_program_run", {
-      target_run_id: runId,
-      target_workout_dates: workoutDates.map((date) => ({
-        workoutId: date.workoutId,
-        plannedDate: date.plannedDate ?? null,
-      })),
+    const result = await this.client.rpc("ensure_own_training_run", {
+      target_program_id: programId,
+      target_workout_dates: workoutDates.map(date => ({ workoutId: date.workoutId, plannedDate: date.plannedDate ?? null })),
       target_idempotency_key: idempotencyKey,
     });
-    if (result.error) fail("Could not repeat the program", result.error);
-    const row = firstJsonRecord(result.data);
-    const athleteId = row ? jsonString(row, "athleteId", "athlete_id") : undefined;
-    const createdRunId = row ? jsonString(row, "runId", "run_id") : undefined;
-    const programId = row ? jsonString(row, "programId", "program_id") : undefined;
-    const programVersionId = row
-      ? jsonString(row, "programVersionId", "program_version_id")
-      : undefined;
-    if (!row || !athleteId || !createdRunId || !programId || !programVersionId)
-      fail("Could not repeat the program", null);
-    this.invalidateProgramRunMutation(createdRunId);
-    return {
-      athleteId,
-      runId: createdRunId,
-      programId,
-      programVersionId,
-      created: jsonBoolean(row, "created") ?? false,
-    };
+    if (result.error) fail("Could not update training dates", result.error);
+    const mutation = parseProgramRunMutation(firstJsonRecord(result.data));
+    if (!mutation) fail("Could not load the training", null);
+    this.invalidateProgramRunMutation(mutation.runId);
+    return mutation;
+  }
+
+  /** Atomically materialize and start an undated selected workout, or resume it. */
+  async startTrainingWorkout(input: {
+    programId?: string; workoutId?: string; runWorkoutId?: string; plannedDate?: string;
+  }): Promise<ActiveSession> {
+    const result = await this.client.rpc("start_training_workout", {
+      target_program_id: input.programId ?? null,
+      target_workout_id: input.workoutId ?? null,
+      target_run_workout_id: input.runWorkoutId ?? null,
+      target_planned_date: input.plannedDate ?? localDateOnly(new Date()),
+    });
+    if (result.error) fail("Could not start the workout", result.error);
+    this.invalidateProgramRunMutation();
+    const activeSession = (await this.loadBootstrapData()).activeSession;
+    if (!activeSession || activeSession.id !== String(result.data))
+      fail("Could not restore the active workout", null);
+    return activeSession;
   }
 
   async scheduleProgramRunWorkouts(
@@ -3051,28 +2711,6 @@ export class LiftLogRepository {
     });
     if (result.error) fail("Could not end the program", result.error);
     this.invalidateProgramRunMutation(runId);
-  }
-
-  async updateProgramRunWorkoutOverrides(
-    runWorkoutId: string,
-    overrides: Record<string, unknown>,
-  ): Promise<ProgramRunDetail | null> {
-    const result = await this.client.rpc(
-      "update_program_run_workout_overrides",
-      {
-        target_program_run_workout_id: runWorkoutId,
-        target_overrides: overrides,
-      },
-    );
-    if (result.error) fail("Could not adjust the workout", result.error);
-    const detail = parseProgramRunDetail(result.data);
-    const returnedRunId =
-      detail?.id ??
-      jsonString(firstJsonRecord(result.data) ?? {}, "runId", "run_id");
-    this.invalidateProgramRunMutation(returnedRunId);
-    return detail ?? (returnedRunId
-      ? await this.loadProgramRunDetail(returnedRunId)
-      : null);
   }
 
   async deleteWorkout(workoutId: string) {
@@ -3117,19 +2755,6 @@ export class LiftLogRepository {
     this.queryCache.invalidate(`schedule-detail:${scheduledWorkoutId}`);
   }
 
-  async unassignProgram(assignmentId: string): Promise<void> {
-    const result = await this.client.rpc("unassign_program_assignment", {
-      target_assignment_id: assignmentId,
-    });
-    if (result.error) fail("Could not unassign the program", result.error);
-    this.queryCache.invalidate("coach-athlete:");
-    this.queryCache.invalidate("feature:coaching:");
-    this.queryCache.invalidate("program-page:");
-    this.queryCache.invalidate(`program-detail:assignment:${assignmentId}:`);
-    this.invalidateCalendarMutation();
-    this.queryCache.delete("bootstrap");
-  }
-
   async setScheduledWorkoutStatus(
     scheduledWorkoutId: string,
     status: "planned" | "skipped",
@@ -3144,14 +2769,6 @@ export class LiftLogRepository {
     this.queryCache.invalidate(`schedule-detail:${scheduledWorkoutId}`);
   }
 
-  async deactivateProgram(programId: string) {
-    const result = await this.client.rpc("deactivate_current_program", {
-      target_program_id: programId,
-    });
-    if (result.error)
-      fail("Could not deactivate the current program", result.error);
-    this.invalidateProgramRunMutation();
-  }
 
   async createPersonalExercise(input: CreateExerciseInput) {
     const fields = trackingFieldsForMode(input.mode, input.fields);
@@ -3257,13 +2874,13 @@ export class LiftLogRepository {
   async updateWorkout(
     workoutId: string,
     title: string,
-    durationMinutes: number,
+    durationMinutes?: number | null,
   ) {
     const result = await this.client
       .from("workouts")
       .update({
         title,
-        estimated_minutes: durationMinutes,
+        estimated_minutes: durationMinutes ?? null,
       })
       .eq("id", workoutId)
       .select("id")
@@ -3280,6 +2897,26 @@ export class LiftLogRepository {
     const result = await this.client.rpc("append_workout_exercise", {
       target_section_id: section.id,
       target_exercise_id: exercise.id,
+    });
+    if (result.error)
+      fail("Could not add the exercise to the workout", result.error);
+    const item = parseWorkoutItemPayload(result.data);
+    if (!item) fail("Could not add the exercise to the workout", null);
+    this.invalidatePrograms();
+    return item;
+  }
+
+  async addCustomWorkoutItem(
+    section: WorkoutSection,
+    name: string,
+  ): Promise<WorkoutItem> {
+    const title = name.trim();
+    if (!title || title.length > 160) {
+      throw new Error("Exercise name must be between 1 and 160 characters");
+    }
+    const result = await this.client.rpc("append_custom_workout_exercise", {
+      target_section_id: section.id,
+      target_name: title,
     });
     if (result.error)
       fail("Could not add the exercise to the workout", result.error);
@@ -3500,7 +3137,7 @@ export class LiftLogRepository {
       return detail;
     }
 
-    let sessionResult = await this.client
+    const sessionResult = await this.client
       .from("workout_sessions")
       .select(
         "id, draft_revision, program_run_id, program_run_workout_id, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, completed_for_date, session_rpe",
@@ -3509,17 +3146,6 @@ export class LiftLogRepository {
       .eq("athlete_id", this.viewerId)
       .eq("status", "completed")
       .maybeSingle();
-    if (sessionResult.error && isMissingProgramRunsColumn(sessionResult.error)) {
-      sessionResult = await this.client
-        .from("workout_sessions")
-        .select(
-          "id, draft_revision, program_version_id, workout_id, scheduled_workout_id, workout_title, started_at, completed_at, completed_for_date, session_rpe",
-        )
-        .eq("id", sessionId)
-        .eq("athlete_id", this.viewerId)
-        .eq("status", "completed")
-        .maybeSingle();
-    }
     if (sessionResult.error)
       fail("Could not load workout results", sessionResult.error);
     if (!sessionResult.data) return null;
@@ -3702,71 +3328,6 @@ export class LiftLogRepository {
       ? jsonString(athlete, "displayName", "display_name")
       : undefined;
     if (!payload || !athlete || !id || !name) return null;
-    const assignedPrograms = jsonRecords(jsonField(payload, "programs")).flatMap(
-      (row): CoachAssignedProgramSummary[] => {
-        const identity = jsonString(row, "id");
-        const programId = jsonString(row, "programId", "program_id");
-        const assignmentId =
-          jsonNullableString(row, "assignmentId", "assignment_id") ??
-          undefined;
-        const versionId = jsonString(row, "versionId", "version_id");
-        const title = jsonString(row, "title");
-        const assignedAt = jsonString(row, "assignedAt", "assigned_at");
-        if (!identity || !programId || !versionId || !title || !assignedAt)
-          return [];
-        this.programSelectors.set(identity, {
-          programId,
-          assignmentId,
-          versionId,
-        });
-        const totalWorkouts =
-          jsonInteger(row, "totalWorkouts", "total_workouts") ?? 0;
-        const scheduledWorkouts =
-          jsonInteger(row, "scheduledWorkouts", "scheduled_workouts") ?? 0;
-        const completedWorkouts =
-          jsonInteger(row, "completedWorkouts", "completed_workouts") ?? 0;
-        const next = jsonRecord(jsonField(row, "nextWorkout", "next_workout"));
-        const nextStatus = next ? jsonString(next, "status") : undefined;
-        const status: CoachAssignedProgramStatus =
-          totalWorkouts > 0 && completedWorkouts >= totalWorkouts
-            ? "completed"
-            : nextStatus === "in_progress"
-              ? "in_progress"
-              : nextStatus === "planned"
-                ? "scheduled"
-                : "awaiting_schedule";
-        const nextId = next ? jsonString(next, "id") : undefined;
-        const nextTitle = next
-          ? jsonString(next, "workoutTitle", "workout_title")
-          : undefined;
-        const nextDate = next
-          ? jsonString(next, "plannedDate", "planned_date")
-          : undefined;
-        return [
-          {
-            id: identity,
-            programId,
-            assignmentId,
-            versionId,
-            title,
-            assignedAt,
-            status,
-            totalWorkouts,
-            scheduledWorkouts,
-            scheduledPercent: totalWorkouts
-              ? Math.round((scheduledWorkouts / totalWorkouts) * 100)
-              : 0,
-            completedWorkouts,
-            completionPercent: totalWorkouts
-              ? Math.round((completedWorkouts / totalWorkouts) * 100)
-              : 0,
-            ...(nextId && nextTitle && nextDate
-              ? { nextWorkout: { id: nextId, title: nextTitle, date: nextDate } }
-              : {}),
-          },
-        ];
-      },
-    );
     const today = localDateOnly();
     const upcoming: CoachAgendaEntry[] = jsonRecords(
       jsonField(payload, "upcoming"),
@@ -3838,11 +3399,9 @@ export class LiftLogRepository {
         numberValue(
           jsonNumeric(payload, "assignedProgramCount", "assigned_program_count"),
         ) ?? 0,
-        assignedPrograms.length,
         programRunPage.items.length,
       ),
       detailsLoaded: true,
-      assignedPrograms,
       programRuns: programRunPage.items,
       programRunCursor: programRunPage.nextCursor,
       hasMoreProgramRuns: programRunPage.hasMore,

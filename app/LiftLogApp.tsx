@@ -1,18 +1,16 @@
-import { useScheduleCandidates } from "./features/scheduling/useScheduleCandidates";
+import { useTrainingHistory } from "./features/history/useTrainingHistory";
+import { sourceDateDetail, occurrenceDateDetail, type TrainingDateTarget } from "./features/scheduling/training-date-target";
 import { useCoachingWorkspace } from "./features/coaching/useCoachingWorkspace";
-import { ProgramsHome, CoachProgramEmpty, type ProgramAction, type ProgramSourceTab } from "./features/programs/ProgramsHome";
+import type { ProgramAction, ProgramSourceTab } from "./features/programs/ProgramsHome";
 import { useProgramMetadataDraft, type ProgramMetadata } from "./features/programs/useProgramMetadataDraft";
 import { navigationItems, destinationLabel, actionUi, trainingContentUi } from "./ui-semantics";
 import { ObjectActionMenu, type ObjectAction } from "./object-action-menu";
 import {
   Activity,
-  BookOpen,
-  CalendarDays,
   CalendarMinus,
   Check,
   Clock3,
   Copy,
-  Dumbbell,
   Gauge,
   Info,
   LoaderCircle,
@@ -22,10 +20,8 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Search,
   Trash2,
   UserPlus,
-  Users,
   X,
 } from "lucide-react";
 import {
@@ -42,7 +38,6 @@ import {
 import type {
   ActiveSession,
   AthleteSummary,
-  CalendarCursor,
   CalendarWorkspaceData,
   CoachAgendaEntry,
   CoachConnection,
@@ -53,7 +48,6 @@ import type {
   EntryMode,
   Exercise,
   ExerciseDiscipline,
-  FrequentSchedulableWorkoutCandidate,
   OwnProfile,
   OutgoingCoachInvite,
   PendingCoachInvite,
@@ -61,13 +55,12 @@ import type {
   PreviousWorkoutValues,
   PrescriptionEntry,
   Program,
-  ProgramAssignment,
   ProgramCursor,
   ProgramRunDetail,
   ProgramRunSummary,
+  ProgramRunWorkout,
   ProgramRunWorkoutDate,
   ScheduledWorkout,
-  SchedulableWorkoutCandidate,
   SessionSetValue,
   TrackingField,
   ViewName,
@@ -97,7 +90,6 @@ import {
 import { localDateOnly } from "../lib/date-only";
 import {
   cn,
-  formatDuration,
   getInitials,
 } from "../lib/presentation";
 import {
@@ -110,14 +102,13 @@ import {
   weightInputValue,
 } from "../lib/units";
 import {
-  programWorkoutCount,
   programWorkouts,
   reorderProgramWorkoutItems,
   reorderProgramWorkoutSequence,
 } from "../lib/program-tree";
 import { nextIncompleteRunWorkoutId } from "../lib/program-progress";
+import { copyTrainingForViewer } from "../lib/training-copy";
 import {
-  listUpcomingWorkouts,
   selectNextWorkoutFocus,
 } from "../lib/workout-focus";
 import {
@@ -160,8 +151,8 @@ import { completeDemoWorkout, createDemoWorkoutSession } from "./features/active
 import { RpeChoiceButtons, RpeLegend, RpeSelect, rpeTone, wholeRpe } from "./features/active-workout/RpeInputs";
 export { PlannedRpeSelect, RpeChoiceButtons, RpeSelect } from "./features/active-workout/RpeInputs";
 import type { CoachWorkspaceProgram } from "./features/coaching/CoachWorkspace";
-import type { ProgramRunWizardSubmission } from "./features/program-runs/ProgramRunWizard";
-import { useCompletedHistory } from "./features/next-workouts/useCompletedHistory";
+import type { AssignTrainingSubmission } from "./features/program-runs/AssignTrainingDialog";
+import { useCompletedHistory } from "./features/history/useCompletedHistory";
 import "./features/feature-styles.css";
 
 import { emptyExerciseLibraryFilters, exerciseTrainingStyleLabel, filterCompleteExerciseLibrary, inferredExerciseDiscipline, type ExerciseLibraryFilters } from "./features/exercises/exercise-library";
@@ -175,7 +166,8 @@ const ProgramModal = lazy(() => loadAuthoringDialogs().then(({ ProgramModal: com
 const WorkoutModal = lazy(() => loadAuthoringDialogs().then(({ WorkoutModal: component }) => ({ default: component })));
 const WorkoutSettingsModal = lazy(() => loadAuthoringDialogs().then(({ WorkoutSettingsModal: component }) => ({ default: component })));
 const CalendarView = lazy(() => import("./features/calendar/CalendarView"));
-const NextWorkoutsView = lazy(() => import("./features/next-workouts/NextWorkoutsView"));
+const loadProgramsHome = () => import("./features/programs/ProgramsHome");
+const ProgramsHome = lazy(() => loadProgramsHome().then(({ ProgramsHome: component }) => ({ default: component })));
 const loadProgramView = () => import("./features/programs/ProgramView");
 const ProgramView = lazy(loadProgramView);
 const CoachWorkspace = lazy(() =>
@@ -183,12 +175,11 @@ const CoachWorkspace = lazy(() =>
     ({ CoachWorkspace: component }) => ({ default: component }),
   ),
 );
-const ProgramRunWizard = lazy(() =>
-  import("./features/program-runs/ProgramRunWizard"),
+const AssignTrainingDialog = lazy(() =>
+  import("./features/program-runs/AssignTrainingDialog"),
 );
-const ProgramRunScheduleWizard = lazy(() =>
-  import("./features/program-runs/ProgramRunScheduleWizard"),
-);
+const TrainingDatesEditor = lazy(() => import("./features/program-runs/TrainingDatesEditor"));
+const TrainingDatePicker = lazy(() => import("./features/scheduling/TrainingDatePicker").then(({ TrainingDatePicker: component }) => ({ default: component })));
 
 type ModalName =
   | "exercise"
@@ -200,17 +191,15 @@ type ModalName =
   | "delete-content"
   | "invite"
   | "assign-program"
-  | "run-schedule"
+  | "training-dates"
   | "program"
   | "quick-workout"
-  | "deactivate-program"
-  | "schedule"
+  | "date-picker"
   | "account"
   | null;
 type ContentDeleteTarget =
   | { kind: "workout"; id: string; title: string }
   | { kind: "workout-item"; id: string; title: string }
-  | { kind: "assignment"; id: string; title: string }
   | {
       kind: "program-run";
       id: string;
@@ -265,32 +254,16 @@ type CompletedWorkoutViewState = {
   detail: CompletedSessionDetail | null;
   loading: boolean;
   error: string;
-  returnView: "today" | "calendar" | "coaching" | "program";
+  returnView: "training" | "calendar" | "coaching";
 };
 type DetailState =
   | {
       kind: "workout-preview";
       schedule: ScheduledWorkout;
-      returnView: "today" | "calendar";
+      returnView: "training" | "calendar";
     }
   | ({ kind: "completed-workout" } & CompletedWorkoutViewState)
   | null;
-type ScheduleCandidate = {
-  id: string;
-  scheduleId?: string;
-  programId: string;
-  assignmentId?: string;
-  programVersionId: string;
-  programTitle: string;
-  workoutId: string;
-  workoutTitle: string;
-  scheduleLabel: string;
-  estimatedMinutes: number;
-  quickWorkout: boolean;
-  plannedDate?: string;
-  usageCount?: number;
-  lastUsedAt?: string;
-};
 type LazyWorkspaceFeature = "programs" | "exercises" | "calendar" | "coaching";
 
 function prescriptionEntries(item: WorkoutItem) {
@@ -402,9 +375,13 @@ export default function LiftLogApp({
   repository: LiftLogRepository | null;
   initialDemoSessions?: CompletedSessionDetail[];
 }) {
-  const [activeView, setActiveView] = useState<ViewName>(() =>
-    typeof window === "undefined" ? "today" : parseAppView(window.location.hash),
-  );
+  const [activeView, setActiveView] = useState<ViewName>(() => {
+    if (typeof window === "undefined") return "training";
+    const view = parseAppView(window.location.hash);
+    const entry = appDetailFromHistory();
+    if (entry === "workout" && initialWorkspace.activeSession) return "workout";
+    return view === "workout" && !initialWorkspace.activeSession && (!entry || entry === "workout") ? "training" : view;
+  });
   const [workspace, setWorkspace] = useState<WorkspaceData>(initialWorkspace);
   const [calendarRangeData, setCalendarRangeData] =
     useState<CalendarWorkspaceData>({
@@ -412,6 +389,7 @@ export default function LiftLogApp({
       completedSessions: initialWorkspace.completedSessions,
     });
   const [program, setProgram] = useState<Program | null>(null);
+  const [programEditing, setProgramEditing] = useState(false);
   const programMetadata = useProgramMetadataDraft(program);
   const guardProgramNavigation = programMetadata.guard;
   const [viewingProgramRunId, setViewingProgramRunId] = useState<string | null>(
@@ -420,7 +398,7 @@ export default function LiftLogApp({
   const [viewingProgramRunDetail, setViewingProgramRunDetail] =
     useState<ProgramRunDetail | null>(null);
   const [programReturnView, setProgramReturnView] =
-    useState<ViewName>("program");
+    useState<ViewName>("training");
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [selectedWorkoutId, setSelectedWorkoutId] = useState("");
   const [selectedSectionId, setSelectedSectionId] = useState("");
@@ -459,7 +437,7 @@ export default function LiftLogApp({
   const [activeWorkoutVisible, setActiveWorkoutVisible] = useState(
     Boolean(initialWorkspace.activeSession),
   );
-  const [workoutComplete, setWorkoutComplete] = useState(false);
+  const [activeWorkoutReturnView, setActiveWorkoutReturnView] = useState<"training" | "calendar">("training");
   const workoutActionRef = useRef<"starting" | "finishing" | null>(null);
   const [workoutAction, setWorkoutAction] = useState<
     "starting" | "finishing" | null
@@ -481,6 +459,10 @@ export default function LiftLogApp({
   const loadingWorkspaceFeaturesRef = useRef(
     new Map<LazyWorkspaceFeature, Promise<void>>(),
   );
+  const programCatalogGenerationRef = useRef(0);
+  const activeRunsGenerationRef = useRef(0);
+  const programsPagePendingRef = useRef(false);
+  const runsPagePendingRef = useRef(false);
   const [loadingWorkspaceFeature, setLoadingWorkspaceFeature] =
     useState<LazyWorkspaceFeature | null>(null);
   const [workspaceFeatureError, setWorkspaceFeatureError] = useState<{
@@ -588,7 +570,7 @@ export default function LiftLogApp({
     const restoreViewFromHistory = () => guardProgramNavigation(() => {
       const nextView = parseAppView(window.location.hash);
       const nextDetail = appDetailFromHistory();
-      setActiveView(nextView);
+      setActiveView(nextView === "workout" && !nextDetail && !activeSession ? "training" : nextView);
       if (!nextDetail || nextDetail === "coach-athlete") {
         completedWorkoutRequestRef.current += 1;
         completedWorkoutRestoreKeyRef.current = null;
@@ -597,7 +579,7 @@ export default function LiftLogApp({
         setDetail(null);
         setActiveWorkoutVisible(false);
         if (nextDetail === "coach-athlete") setCoachMode("coach");
-        if (nextView === "program") {
+        if (nextView === "training") {
           setProgram(null);
           setViewingProgramRunId(null);
           setViewingProgramRunDetail(null);
@@ -611,11 +593,21 @@ export default function LiftLogApp({
         if (history?.kind === "program") {
           programHistoryRestoreRef.current(history);
         }
-      } else if (nextDetail === "workout" && activeSession) {
-        setActiveWorkoutVisible(true);
+      } else if (nextDetail === "workout") {
+        if (activeSession) {
+          setActiveView("workout");
+          setActiveWorkoutVisible(true);
+        } else {
+          setDetail(null);
+          setProgram(null);
+          setActiveWorkoutVisible(false);
+          setActiveView("training");
+          updateAppViewUrl("training", "replace");
+        }
       } else if (nextDetail === "workout-log") {
         const history = appDetailDataFromHistory();
         if (history?.kind === "workout-log") {
+          setActiveView("workout");
           restoreCompletedWorkoutFromHistory(history);
         } else {
           setDetail(null);
@@ -650,20 +642,20 @@ export default function LiftLogApp({
       setWorkspaceFeatureError(null);
       const pending = (async () => {
         if (feature === "programs") {
-          const [page, programRunPage, coachProgramRunPage] = await Promise.all([
+          const catalogGeneration = ++programCatalogGenerationRef.current;
+          const runGeneration = ++activeRunsGenerationRef.current;
+          const [page, programRunPage] = await Promise.all([
             repository.listProgramSummaries({ limit: 25 }),
-            repository.listProgramRuns(),
-            repository.listProgramRuns(undefined, { creatorScope: "coach" }),
+            repository.listProgramRuns(undefined, {statusScope: "active", limit: 50}),
           ]);
-          setProgramCursor(page.nextCursor);
+          const currentCatalog = catalogGeneration === programCatalogGenerationRef.current;
+          const currentRuns = runGeneration === activeRunsGenerationRef.current;
+          if (currentCatalog) setProgramCursor(page.nextCursor);
           setWorkspace((previous) => ({
-            ...mergeProgramCatalog(previous, page.items, true),
-            programRuns: programRunPage.items,
-            programRunCursor: programRunPage.nextCursor,
-            hasMoreProgramRuns: programRunPage.hasMore,
-            coachProgramRuns: coachProgramRunPage.items,
-            coachProgramRunCursor: coachProgramRunPage.nextCursor,
-            hasMoreCoachProgramRuns: coachProgramRunPage.hasMore,
+            ...(currentCatalog ? mergeProgramCatalog(previous, page.items, true) : previous),
+            ...(currentRuns ? {programRuns: programRunPage.items,
+              programRunCursor: programRunPage.nextCursor,
+              hasMoreProgramRuns: programRunPage.hasMore} : {}),
           }));
         } else if (feature === "exercises") {
           const exerciseWorkspace = await repository.loadExerciseWorkspace();
@@ -706,7 +698,7 @@ export default function LiftLogApp({
     const feature =
       activeView === "coaching"
           ? "coaching"
-          : activeView === "program" || activeView === "today"
+          : activeView === "training" || activeView === "workout"
             ? "programs"
             : null;
     if (feature) void loadWorkspaceFeature(feature);
@@ -749,20 +741,12 @@ export default function LiftLogApp({
   const [openingCoachProgramId, setOpeningCoachProgramId] = useState<
     string | null
   >(null);
-  const [programTarget, setProgramTarget] = useState<{
-    id: string;
-    name: string;
-  } | null>(null);
   const [assignmentSeed, setAssignmentSeed] = useState<{
-    mode: "self" | "coach";
     programId?: string;
     athleteIds?: string[];
-    repeatRun?: ProgramRunSummary;
-  }>({ mode: "coach" });
-  const [assignmentProgramOverride, setAssignmentProgramOverride] =
-    useState<Program | null>(null);
-  const [programRunScheduleTarget, setProgramRunScheduleTarget] =
-    useState<ProgramRunSummary | null>(null);
+    assignRun?: ProgramRunSummary;
+  }>({});
+  const [trainingDateTarget, setTrainingDateTarget] = useState<TrainingDateTarget | null>(null);
   const [respondingInvite, setRespondingInvite] = useState<{
     id: string;
     response: "accepted" | "declined";
@@ -770,21 +754,13 @@ export default function LiftLogApp({
   const [cancellingCoachInviteId, setCancellingCoachInviteId] = useState<
     string | null
   >(null);
-  const [scheduleEditingId, setScheduleEditingId] = useState<string | null>(
-    null,
-  );
   const [scheduleInitialDate, setScheduleInitialDate] = useState<string | null>(
     null,
   );
   const [programsLoadingMore, setProgramsLoadingMore] = useState(false);
   const [programsLoadError, setProgramsLoadError] = useState("");
-  const [coachProgramRunsLoadingMore, setCoachProgramRunsLoadingMore] =
-    useState(false);
-  const [coachProgramRunsLoadError, setCoachProgramRunsLoadError] =
-    useState("");
-  const [upcomingCursor, setUpcomingCursor] = useState<CalendarCursor>();
-  const [upcomingLoading, setUpcomingLoading] = useState(false);
-  const [upcomingLoadError, setUpcomingLoadError] = useState("");
+  const [ownRunsLoadingMore, setOwnRunsLoadingMore] = useState(false);
+  const [ownRunsLoadError, setOwnRunsLoadError] = useState("");
   const {
     sessions: completedHistory,
     loading: completedHistoryLoading,
@@ -793,28 +769,23 @@ export default function LiftLogApp({
     load: loadCompletedHistory,
     invalidate: invalidateCompletedHistory,
   } = useCompletedHistory(repository, repository ? initialWorkspace.completedSessions : workspace.completedSessions);
-  const upcomingLoadingRef = useRef(false);
-  const upcomingInitializedRef = useRef(false);
-  const upcomingCursorRef = useRef<CalendarCursor | undefined>(undefined);
-  const upcomingFailedResetRef = useRef(false);
-  const upcomingPendingResetRef = useRef(false);
-  const upcomingLoaderRef = useRef<
-    ((reset?: boolean) => Promise<void>) | undefined
-  >(undefined);
+  const historicalDemoRuns = useMemo(() => (workspace.programRuns ?? []).filter(run => run.status === "completed" || run.status === "ended"), [workspace.programRuns]);
+  const {sessions: historicalRuns, loading: historyRunsLoading, error: historyRunsError, cursor: historyRunsCursor, load: loadRunHistory, invalidate: invalidateRunHistory} = useTrainingHistory(repository, historicalDemoRuns);
   const calendarRangeRequestRef = useRef(0);
   const lastCalendarRangeRef = useRef<{
     start: string;
     end: string;
   } | null>(null);
-  const [programOwnerId, setProgramOwnerId] = useState(viewer.id);
   const [requestedProgramSource, setProgramSource] =
-    useState<ProgramSourceTab>("own");
+    useState<ProgramSourceTab>("all");
   const [programAction, setProgramAction] = useState<ProgramAction>(null);
   const builderMutationPendingRef = useRef(false);
   const [builderMutationPending, setBuilderMutationPending] = useState(false);
 
   const loadMorePrograms = useCallback(async () => {
-    if (!repository || !programCursor || programsLoadingMore) return;
+    if (!repository || !programCursor || programsPagePendingRef.current) return;
+    programsPagePendingRef.current = true;
+    const generation = programCatalogGenerationRef.current;
     setProgramsLoadingMore(true);
     setProgramsLoadError("");
     try {
@@ -822,135 +793,55 @@ export default function LiftLogApp({
         limit: 25,
         cursor: programCursor,
       });
+      if (generation !== programCatalogGenerationRef.current) return;
       setProgramCursor(page.nextCursor);
       setWorkspace((previous) =>
         mergeProgramCatalog(previous, page.items, false),
       );
     } catch (error) {
+      if (generation !== programCatalogGenerationRef.current) return;
       setProgramsLoadError(
         error instanceof Error
           ? error.message
           : "More programs could not be loaded.",
       );
     } finally {
+      programsPagePendingRef.current = false;
       setProgramsLoadingMore(false);
     }
-  }, [programCursor, programsLoadingMore, repository]);
+  }, [programCursor, repository]);
 
-  const loadMoreCoachAssignedRuns = useCallback(async () => {
-    const cursor = workspace.coachProgramRunCursor;
-    if (!repository || !cursor || coachProgramRunsLoadingMore) return;
-    setCoachProgramRunsLoadingMore(true);
-    setCoachProgramRunsLoadError("");
+  const loadMoreOwnRuns = useCallback(async () => {
+    const cursor = workspace.programRunCursor;
+    if (!repository || !cursor || runsPagePendingRef.current) return;
+    runsPagePendingRef.current = true;
+    const generation = activeRunsGenerationRef.current;
+    setOwnRunsLoadingMore(true);
+    setOwnRunsLoadError("");
     try {
-      const page = await repository.listProgramRuns(undefined, {
-        limit: 25,
-        cursor,
-        creatorScope: "coach",
-      });
-      setWorkspace((previous) => {
-        const runsById = new Map(
-          (previous.coachProgramRuns ?? []).map((run) => [run.id, run]),
-        );
-        for (const run of page.items) runsById.set(run.id, run);
-        return {
-          ...previous,
-          coachProgramRuns: [...runsById.values()],
-          coachProgramRunCursor: page.nextCursor,
-          hasMoreCoachProgramRuns: page.hasMore,
-        };
-      });
+      const page = await repository.listProgramRuns(undefined, { statusScope: "active", limit: 50, cursor });
+      if (generation !== activeRunsGenerationRef.current) return;
+      setWorkspace(previous => ({
+        ...previous,
+        programRuns: [...new Map([...(previous.programRuns ?? []), ...page.items].map(run => [run.id, run])).values()],
+        programRunCursor: page.nextCursor,
+        hasMoreProgramRuns: page.hasMore,
+      }));
     } catch (error) {
-      setCoachProgramRunsLoadError(
-        error instanceof Error
-          ? error.message
-          : "More coach-assigned training could not be loaded.",
-      );
+      if (generation !== activeRunsGenerationRef.current) return;
+      setOwnRunsLoadError(error instanceof Error ? error.message : "More training could not be loaded.");
     } finally {
-      setCoachProgramRunsLoadingMore(false);
+      runsPagePendingRef.current = false;
+      setOwnRunsLoadingMore(false);
     }
-  }, [
-    coachProgramRunsLoadingMore,
-    repository,
-    workspace.coachProgramRunCursor,
-  ]);
+  }, [repository, workspace.programRunCursor]);
 
-  const loadUpcomingWorkouts = useCallback(
-    async (reset = false) => {
-      if (!repository) return;
-      if (upcomingLoadingRef.current) {
-        if (reset) upcomingPendingResetRef.current = true;
-        return;
-      }
-      if (
-        !reset &&
-        upcomingInitializedRef.current &&
-        !upcomingCursorRef.current
-      ) return;
-      upcomingLoadingRef.current = true;
-      setUpcomingLoading(true);
-      setUpcomingLoadError("");
-      try {
-        const page = await repository.listUpcomingScheduledWorkouts({
-          limit: 20,
-          ...(reset || !upcomingCursorRef.current
-            ? {}
-            : { cursor: upcomingCursorRef.current }),
-        });
-        const today = localDateOnly();
-        setWorkspace((previous) => {
-          const retained = reset
-            ? previous.scheduledWorkouts.filter(
-                (schedule) =>
-                  !schedule.plannedDate ||
-                  schedule.plannedDate < today ||
-                  (schedule.status !== "planned" &&
-                    schedule.status !== "in_progress" &&
-                    schedule.status !== "skipped"),
-              )
-            : previous.scheduledWorkouts;
-          const merged = new Map(
-            retained.map((schedule) => [schedule.id, schedule] as const),
-          );
-          for (const schedule of page.items) merged.set(schedule.id, schedule);
-          return { ...previous, scheduledWorkouts: [...merged.values()] };
-        });
-        upcomingCursorRef.current = page.nextCursor;
-        setUpcomingCursor(page.nextCursor);
-        upcomingInitializedRef.current = true;
-        upcomingFailedResetRef.current = false;
-      } catch (error) {
-        upcomingFailedResetRef.current = reset;
-        setUpcomingLoadError(
-          error instanceof Error
-            ? error.message
-            : "More upcoming workouts could not be loaded.",
-        );
-      } finally {
-        upcomingLoadingRef.current = false;
-        setUpcomingLoading(false);
-      }
+  const refreshVisibleCalendar = useCallback(async () => {
+    const range = lastCalendarRangeRef.current;
+    if (range) await loadVisibleCalendarRange(range.start, range.end);
+  }, [loadVisibleCalendarRange]);
 
-      if (upcomingPendingResetRef.current) {
-        upcomingPendingResetRef.current = false;
-        void upcomingLoaderRef.current?.(true);
-      }
-    },
-    [repository],
-  );
-  useLayoutEffect(() => { upcomingLoaderRef.current = loadUpcomingWorkouts; }, [loadUpcomingWorkouts]);
-
-  useEffect(() => {
-    if (
-      repository &&
-      activeView === "today" &&
-      !upcomingInitializedRef.current
-    ) {
-      void loadUpcomingWorkouts(true);
-    }
-  }, [activeView, loadUpcomingWorkouts, repository]);
-
-  const loadProgramForRunWizard = useCallback(
+  const loadTrainingProgram = useCallback(
     async (targetProgram: Program) => {
       if (
         targetProgram.detailsLoaded !== false &&
@@ -983,59 +874,55 @@ export default function LiftLogApp({
       if (!run || !source) return null;
       return {
         ...run,
-        workouts: programWorkouts(source).map((workout, position) => ({
-          id: `${run.id}:${workout.id}`,
+        workouts: programWorkouts(source).map((workout, position) => {
+          const schedule = workspace.scheduledWorkouts.find(candidate => candidate.programRunId === run.id && candidate.workoutId === workout.id);
+          const completed = schedule?.programRunWorkoutId ? workspace.completedSessions.find(session => session.programRunWorkoutId === schedule.programRunWorkoutId) : undefined;
+          return {
+          id: schedule?.programRunWorkoutId ?? `${run.id}:${workout.id}`,
           runId: run.id,
           workoutId: workout.id,
           title: workout.title,
           position,
           estimatedMinutes: workout.durationMinutes,
-          status: "unscheduled" as const,
+          plannedDate: schedule?.plannedDate,
+          scheduledWorkoutId: schedule?.id,
+          status: schedule?.status === "completed" ? "completed" as const : run.status === "ended" ? "cancelled" as const : schedule?.status === "in_progress" ? "in_progress" as const : schedule?.status === "skipped" ? "skipped" as const : schedule?.plannedDate ? "scheduled" as const : "unscheduled" as const,
+          canEdit: run.status !== "ended" && (!schedule || schedule.status === "planned"),
+          sessionId: completed?.id,
+          completedForDate: completed?.date,
           prescriptionOverrides: {},
-        })),
+        }; }),
       };
     },
-    [repository, workspace.programCatalog, workspace.programRuns],
+    [repository, workspace.programCatalog, workspace.programRuns, workspace.scheduledWorkouts, workspace.completedSessions],
   );
+
+  const loadTrainingDateDetail = useCallback(async () => {
+    if (!trainingDateTarget) return null;
+    if (trainingDateTarget.kind === "run") return loadProgramRunDetail(trainingDateTarget.run.id);
+    if (trainingDateTarget.kind === "occurrence") return occurrenceDateDetail(trainingDateTarget.schedule, viewer.id);
+    const source = await loadTrainingProgram(trainingDateTarget.program);
+    return source ? sourceDateDetail(source) : null;
+  }, [trainingDateTarget, loadProgramRunDetail, loadTrainingProgram, viewer.id]);
 
   const refreshProgramRunSummaries = useCallback(async () => {
     if (!repository) return;
-    const [page, coachPage] = await Promise.all([
-      repository.listProgramRuns(),
-      repository.listProgramRuns(undefined, { creatorScope: "coach" }),
-    ]);
-    setCoachProgramRunsLoadError("");
+    const generation = ++activeRunsGenerationRef.current;
+    const page = await repository.listProgramRuns(undefined, {statusScope: "active", limit: 50});
+    if (generation !== activeRunsGenerationRef.current) return;
+    invalidateRunHistory();
     setWorkspace((previous) => ({
       ...previous,
       programRuns: page.items,
       programRunCursor: page.nextCursor,
       hasMoreProgramRuns: page.hasMore,
-      coachProgramRuns: coachPage.items,
-      coachProgramRunCursor: coachPage.nextCursor,
-      hasMoreCoachProgramRuns: coachPage.hasMore,
     }));
-  }, [repository]);
+  }, [repository, invalidateRunHistory]);
 
-  const loadProgramForCurrentRunWizard = useCallback(
-    async (targetProgram: Program) => {
-      if (
-        assignmentProgramOverride &&
-        assignmentProgramOverride.id === targetProgram.id
-      ) {
-        return assignmentProgramOverride;
-      }
-      if (assignmentSeed.repeatRun && repository) {
-        return repository.loadProgramForRun(assignmentSeed.repeatRun.id);
-      }
-      return loadProgramForRunWizard(targetProgram);
-    },
-    [
-      assignmentProgramOverride,
-      assignmentSeed.repeatRun,
-      loadProgramForRunWizard,
-      repository,
-    ],
-  );
+  const loadAssignmentRun = useCallback(async (run: ProgramRunSummary) => repository
+    ? repository.loadProgramForRun(run.id)
+    : workspace.programCatalog.find(program => program.id === run.programId) ?? null,
+  [repository, workspace.programCatalog]);
 
   const applyExerciseSearchPage = useCallback((items: Exercise[], scope: "global" | "personal", append: boolean) => {
     setWorkspace((previous) => {
@@ -1093,11 +980,6 @@ export default function LiftLogApp({
     [workspace.draftProgram ?? workspace.activeProgram].filter(
       (candidate): candidate is Program => Boolean(candidate),
     );
-  const { scheduleCandidates, frequentScheduleCandidates, scheduleCandidateCursor,
-    scheduleCandidatesLoading, scheduleCandidatesError, loadScheduleCandidates,
-    replaceScheduleCandidates } = useScheduleCandidates({
-    repository, schedulablePrograms, schedules: workspace.scheduledWorkouts,
-  });
   const outgoingCoachInvites = workspace.outgoingCoachInvites ?? [];
 
   const hasCoach = coachingDetailsLoaded
@@ -1110,12 +992,7 @@ export default function LiftLogApp({
       : (workspace.coachingAccess?.coachedAthleteCount ?? 0) > 0 ||
         (workspace.coachingAccess?.pendingInviteCount ?? 0) > 0;
   const coachMode = hasAthleteWorkspace ? requestedCoachMode : "athlete";
-  const coachProgramRuns =
-    workspace.coachProgramRuns ??
-    (workspace.programRuns ?? []).filter(
-      (run) => run.athleteId === viewer.id && run.createdById !== viewer.id,
-    );
-  const hasCoachTraining = hasCoach || coachProgramRuns.length > 0;
+  const hasCoachTraining = hasCoach || [...(workspace.programRuns ?? []), ...historicalRuns].some(run => run.createdById !== viewer.id) || completedHistory.some(session => session.sourceType === "coach");
   const programSource =
     requestedProgramSource === "coach" && !hasCoachTraining
       ? "own"
@@ -1138,7 +1015,7 @@ export default function LiftLogApp({
   const workoutPreviewSchedule =
     detail?.kind === "workout-preview" ? detail.schedule : null;
   const workoutPreviewReturnView =
-    detail?.kind === "workout-preview" ? detail.returnView : "today";
+    detail?.kind === "workout-preview" ? detail.returnView : "training";
   const completedWorkoutView =
     detail?.kind === "completed-workout" ? detail : null;
   const selectedAthlete =
@@ -1158,7 +1035,7 @@ export default function LiftLogApp({
   function capabilitiesForProgram(
     targetProgram: Program,
   ): TrainingContentCapabilities {
-    return deriveTrainingContentCapabilities({
+    const capabilities = deriveTrainingContentCapabilities({
       viewerId: viewer.id,
       athleteOwnerId: targetProgram.athleteId,
       authorId: targetProgram.createdById,
@@ -1173,6 +1050,11 @@ export default function LiftLogApp({
         : (workspace.coachingAccess?.coachedAthleteCount ?? 0) > 0,
       coachReadScope: "authored_only",
     });
+    // The database authorizes a private editor for this one upcoming occurrence.
+    // It must never acquire library-level scheduling, assignment or delete actions.
+    return targetProgram.editableRunWorkoutId
+      ? { ...capabilities, edit: targetProgram.versionStatus === "draft", save: targetProgram.versionStatus === "draft", schedule: false, assign: false, deleteOwn: false, copyToOwn: false }
+      : capabilities;
   }
   function capabilitiesForViewedProgram(
     targetProgram: Program,
@@ -1201,19 +1083,10 @@ export default function LiftLogApp({
   const assignableOwnPrograms = programCatalog.filter(
     (candidate) => capabilitiesForProgram(candidate).assign,
   );
-  const selfRunnablePrograms = programCatalog.filter(
-    (candidate) =>
-      candidate.sourceType === "self" &&
-      candidate.athleteId === viewer.id &&
-      candidate.createdById === viewer.id,
-  );
-  const runWizardPrograms = [
-    ...(assignmentProgramOverride ? [assignmentProgramOverride] : []),
-    ...(assignmentSeed.mode === "coach"
-      ? assignableOwnPrograms
-      : selfRunnablePrograms
-    ).filter((candidate) => candidate.id !== assignmentProgramOverride?.id),
-  ];
+  const assignmentRuns = [...new Map([
+    ...(assignmentSeed.assignRun ? [assignmentSeed.assignRun] : []),
+    ...(workspace.programRuns ?? []),
+  ].filter(run => run.athleteId === viewer.id && run.createdById === viewer.id).map(run => [run.id, run])).values()];
   const exerciseCategoriesById = useMemo(
     () =>
       new Map(
@@ -1251,7 +1124,6 @@ export default function LiftLogApp({
     activeSession,
     workspace.scheduledWorkouts,
   );
-  const upcomingWorkouts = listUpcomingWorkouts(workspace.scheduledWorkouts);
   const todaySchedule = workoutFocus?.schedule ?? undefined;
   const todayWorkout = workoutFocus?.workout;
   const todayProgram =
@@ -1295,7 +1167,7 @@ export default function LiftLogApp({
         programId: viewingProgramRunDetail.programId,
         programVersionId: viewingProgramRunDetail.programVersionId,
         programTitle: viewingProgramRunDetail.title,
-        workoutId: slot.workoutId,
+        workoutId: slot.effectiveWorkoutId ?? slot.workoutId,
         workoutTitle: slot.title,
         scheduleId: slot.scheduledWorkoutId,
       };
@@ -1369,7 +1241,7 @@ export default function LiftLogApp({
   const sessionDraftConflict = activeWorkoutPersistence.conflict;
   const sessionSaveStatus = activeWorkoutPersistence.status;
   const isOnline = activeWorkoutPersistence.online;
-  const referenceWorkout = workoutPreviewSchedule?.workout ?? (activeView === "today" ? todayWorkout : undefined);
+  const referenceWorkout = workoutPreviewSchedule?.workout ?? (activeView === "workout" ? todayWorkout : undefined);
   const demoPreviousValues = useMemo(() => {
     if (!import.meta.env.DEV || repository || !referenceWorkout) return null;
     const previousSession = [...demoCompletedSessions.values()]
@@ -1391,6 +1263,7 @@ export default function LiftLogApp({
       programRunId?: string;
       programRunDetail?: ProgramRunDetail | null;
       returnView?: ViewName;
+      editing?: boolean;
     },
     options: { writeHistory?: boolean } = {},
   ) {
@@ -1420,11 +1293,12 @@ export default function LiftLogApp({
         (section) => section.id === preferred?.sectionId,
       ) ?? nextWorkout?.sections[0];
     setProgram(nextProgram);
+    setProgramEditing(preferred?.editing ?? Boolean(nextProgram.editableRunId));
     setViewingProgramRunId(
       preferred?.programRunDetail?.id ?? preferred?.programRunId ?? null,
     );
     setViewingProgramRunDetail(preferred?.programRunDetail ?? null);
-    const returnView = preferred?.returnView ?? "program";
+    const returnView = preferred?.returnView ?? "training";
     setProgramReturnView(returnView);
     if (options.writeHistory !== false) {
       programHistoryRequestRef.current += 1;
@@ -1434,6 +1308,7 @@ export default function LiftLogApp({
         kind: "program",
         programId: nextProgram.id,
         programVersionId: nextProgram.versionId,
+        editing: preferred?.editing ?? Boolean(nextProgram.editableRunId),
         athleteId: nextProgram.athleteId,
         ...(nextProgram.assignmentId
           ? { assignmentId: nextProgram.assignmentId }
@@ -1447,11 +1322,12 @@ export default function LiftLogApp({
         historyData.programId,
         historyData.programVersionId,
         historyData.assignmentId ?? "unassigned",
-        historyData.programRunId ?? "template",
+        historyData.programRunId ?? "source",
         historyData.workoutId ?? "first",
         historyData.returnView,
+        historyData.editing ? "edit" : "view",
       ].join(":");
-      pushAppDetailHistory("program", "program", {
+      pushAppDetailHistory("program", "training", {
         stackOnDetail: returnView === "coaching" && appDetailFromHistory() === "coach-athlete",
         data: historyData,
       });
@@ -1459,7 +1335,6 @@ export default function LiftLogApp({
     setSelectedWeek(nextWeek?.index ?? 1);
     setSelectedWorkoutId(nextWorkout?.id ?? "");
     setSelectedSectionId(nextSection?.id ?? "");
-    setProgramOwnerId(nextProgram.athleteId);
   }
 
   useLayoutEffect(() => {
@@ -1469,9 +1344,10 @@ export default function LiftLogApp({
       history.programId,
       history.programVersionId,
       history.assignmentId ?? "unassigned",
-      history.programRunId ?? "template",
+      history.programRunId ?? "source",
       history.workoutId ?? "first",
       history.returnView,
+      history.editing ? "edit" : "view",
     ].join(":");
     if (programHistoryRestoreKeyRef.current === restoreKey) return;
     programHistoryRestoreKeyRef.current = restoreKey;
@@ -1494,6 +1370,7 @@ export default function LiftLogApp({
           programRunId: history.programRunId,
           programRunDetail: runDetail,
           returnView: history.returnView,
+          editing: history.editing,
         },
         { writeHistory: false },
       );
@@ -1539,7 +1416,7 @@ export default function LiftLogApp({
     void Promise.all([programPromise, runPromise])
       .then(([nextProgram, runDetail]) => {
         if (!nextProgram) {
-          throw new Error("This program revision is no longer available.");
+          throw new Error("This training is no longer available.");
         }
         applyRestoredProgram(nextProgram, runDetail);
       })
@@ -1565,7 +1442,7 @@ export default function LiftLogApp({
     void loadProgramView();
     if (!repository || targetProgram.detailsLoaded !== false) {
       selectProgram(targetProgram);
-      setActiveView("program");
+      setActiveView("training");
       return;
     }
     if (programAction) return;
@@ -1581,7 +1458,7 @@ export default function LiftLogApp({
       if (programHistoryRequestRef.current !== requestId) return;
       if (!detail) throw new Error("This program is no longer available.");
       selectProgram(detail);
-      setActiveView("program");
+      setActiveView("training");
     } catch (error) {
       if (programHistoryRequestRef.current !== requestId) return;
       notify(
@@ -1615,21 +1492,22 @@ export default function LiftLogApp({
 
   async function refreshProgramWorkspace(programId?: string) {
     if (!repository) return null;
+    const catalogGeneration = ++programCatalogGenerationRef.current;
+    const runGeneration = ++activeRunsGenerationRef.current;
     repository.invalidatePrograms(programId);
-    const [page, programRunPage, coachProgramRunPage] = await Promise.all([
+    invalidateRunHistory();
+    const [page, programRunPage] = await Promise.all([
       repository.listProgramSummaries({ limit: 25 }),
-      repository.listProgramRuns(),
-      repository.listProgramRuns(undefined, { creatorScope: "coach" }),
+      repository.listProgramRuns(undefined, {statusScope: "active", limit: 50}),
     ]);
-    setProgramCursor(page.nextCursor);
+    const currentCatalog = catalogGeneration === programCatalogGenerationRef.current;
+    const currentRuns = runGeneration === activeRunsGenerationRef.current;
+    if (currentCatalog) setProgramCursor(page.nextCursor);
     setWorkspace((previous) => ({
-      ...mergeProgramCatalog(previous, page.items, true),
-      programRuns: programRunPage.items,
-      programRunCursor: programRunPage.nextCursor,
-      hasMoreProgramRuns: programRunPage.hasMore,
-      coachProgramRuns: coachProgramRunPage.items,
-      coachProgramRunCursor: coachProgramRunPage.nextCursor,
-      hasMoreCoachProgramRuns: coachProgramRunPage.hasMore,
+      ...(currentCatalog ? mergeProgramCatalog(previous, page.items, true) : previous),
+      ...(currentRuns ? {programRuns: programRunPage.items,
+        programRunCursor: programRunPage.nextCursor,
+        hasMoreProgramRuns: programRunPage.hasMore} : {}),
     }));
     return page.items;
   }
@@ -1662,6 +1540,7 @@ export default function LiftLogApp({
       workoutId: selectedWorkoutId,
       sectionId: selectedSectionId,
       returnView: programReturnView,
+      editing: programEditing,
     };
     if (program?.versionStatus === "draft") {
       selectProgram(
@@ -1697,15 +1576,11 @@ export default function LiftLogApp({
     programHistoryRequestRef.current += 1;
     programHistoryRestoreKeyRef.current = null;
     setDetail(null);
-    if (view === "today" && activeSession && activeWorkoutVisible) {
-      setActiveWorkoutVisible(false);
-      setDetail(null);
-    }
-    if (view === "program") {
+    setActiveWorkoutVisible(false);
+    if (view === "training") {
       setProgram(null);
       setViewingProgramRunId(null);
       setViewingProgramRunDetail(null);
-      setProgramOwnerId(viewer.id);
     }
     if (
       view === "coaching" &&
@@ -1734,8 +1609,12 @@ export default function LiftLogApp({
     scrollToAppTop();
   }
 
-  function showActiveWorkout() {
-    pushAppDetailHistory("workout", "today");
+  function showActiveWorkout(returnView: "training" | "calendar" = "training") {
+    setActiveWorkoutReturnView(returnView);
+    pushAppDetailHistory("workout", "workout", {
+      stackOnDetail: returnView === "training" && appDetailFromHistory() === "program",
+    });
+    setActiveView("workout");
     setActiveWorkoutVisible(true);
     scrollToAppTop();
   }
@@ -1795,44 +1674,18 @@ export default function LiftLogApp({
     return detail;
   }
 
-  async function startWorkout(schedule: ScheduledWorkout) {
-    if (workoutActionRef.current) return;
-    workoutActionRef.current = "starting";
-    setWorkoutAction("starting");
-    setStartingScheduleId(schedule.id);
-    try {
-      requireCapability(
-        capabilitiesForOccurrence(schedule),
-        "startOrResume",
-      );
-      const detailedSchedule = await ensureScheduledWorkoutDetails(schedule);
-      const workout = detailedSchedule.workout;
-      if (!repository && activeSession) {
-        if (activeSession.scheduledWorkoutId === schedule.id) {
-          showActiveWorkout();
-          return;
-        }
-        throw new Error("Finish or reset your current workout before starting another one.");
-      }
-      const session = repository
-        ? await repository.startOrResumeSession(detailedSchedule.id)
-        : import.meta.env.DEV ? createDemoWorkoutSession(detailedSchedule) : null;
-      if (!session) throw new Error("The workout session was not created.");
+  function applyStartedWorkout(session: ActiveSession, schedule: ScheduledWorkout, returnView: "training" | "calendar") {
       completionTokenRef.current = null;
       setActiveSession(session);
-      setSetLogs(starterSetLogs(workout, session));
+      setSetLogs(starterSetLogs(schedule.workout, session));
       setResultLogs(session.resultLogs);
       setSessionRpe(session.sessionRpe);
       setSessionNote(session.sessionNote);
       setWorkoutStarted(true);
-      showActiveWorkout();
+      showActiveWorkout(returnView);
       setWorkspace((previous) => ({
         ...previous,
-        scheduledWorkouts: previous.scheduledWorkouts.map((candidate) =>
-          candidate.id === schedule.id
-            ? { ...candidate, status: "in_progress" }
-            : candidate,
-        ),
+        scheduledWorkouts: [{ ...schedule, status: "in_progress" }, ...previous.scheduledWorkouts.filter(candidate => candidate.id !== schedule.id)],
       }));
       setCalendarRangeData((previous) => ({
         ...previous,
@@ -1845,6 +1698,31 @@ export default function LiftLogApp({
       void refreshProgramRunSummaries().catch(() => undefined);
       setDetail(null);
       notify("Workout started · changes save automatically");
+  }
+
+  async function startWorkout(schedule: ScheduledWorkout, returnView: "training" | "calendar" = "training") {
+    if (workoutActionRef.current) return;
+    workoutActionRef.current = "starting";
+    setWorkoutAction("starting");
+    setStartingScheduleId(schedule.id);
+    try {
+      requireCapability(
+        capabilitiesForOccurrence(schedule),
+        "startOrResume",
+      );
+      const detailedSchedule = await ensureScheduledWorkoutDetails(schedule);
+      if (!repository && activeSession) {
+        if (activeSession.scheduledWorkoutId === schedule.id) {
+          showActiveWorkout(returnView);
+          return;
+        }
+        throw new Error("Finish or reset your current workout before starting another one.");
+      }
+      const session = repository
+        ? await repository.startOrResumeSession(detailedSchedule.id)
+        : import.meta.env.DEV ? createDemoWorkoutSession(detailedSchedule) : null;
+      if (!session) throw new Error("The workout session was not created.");
+      applyStartedWorkout(session, detailedSchedule, returnView);
     } catch (error) {
       notify(
         error instanceof Error
@@ -1860,7 +1738,7 @@ export default function LiftLogApp({
 
   async function openWorkoutPreview(
     schedule: ScheduledWorkout,
-    returnView: "today" | "calendar" = "today",
+    returnView: "training" | "calendar" = "training",
     recordHistory = true,
   ) {
     try {
@@ -1870,7 +1748,9 @@ export default function LiftLogApp({
         schedule: detailedSchedule,
         returnView,
       });
-      if (recordHistory) pushAppDetailHistory("workout", "today");
+      if (recordHistory) pushAppDetailHistory("workout", "workout", {
+        stackOnDetail: returnView === "training" && appDetailFromHistory() === "program",
+      });
       return true;
     } catch (error) {
       notify(
@@ -1889,7 +1769,7 @@ export default function LiftLogApp({
     await activeWorkoutPersistence.clearAfterCompletion(session.id);
     setActiveSession(null);
     setWorkoutStarted(false);
-    setWorkoutComplete(false);
+    navigateAfterMetadataSave(activeWorkoutReturnView);
     setWorkspace((previous) => ({
       ...previous,
       activeSession: null,
@@ -1969,14 +1849,7 @@ export default function LiftLogApp({
         await clearConfirmedActiveSession(activeSession, "completed");
         completionTokenRef.current = null;
         invalidateCompletedHistory();
-        const visibleRange = lastCalendarRangeRef.current;
-        await Promise.allSettled([
-          refreshProgramRunSummaries(),
-          loadUpcomingWorkouts(true),
-          ...(visibleRange
-            ? [loadVisibleCalendarRange(visibleRange.start, visibleRange.end)]
-            : []),
-        ]);
+        await Promise.allSettled([refreshProgramRunSummaries(), refreshVisibleCalendar()]);
         notify("Session saved · next workout is ready when you are");
         return;
       }
@@ -1985,7 +1858,17 @@ export default function LiftLogApp({
         const completed = completeDemoWorkout(activeSession, todaySchedule, activeWorkoutSnapshot);
         await clearConfirmedActiveSession(activeSession, "completed");
         setDemoCompletedSessions((previous) => new Map(previous).set(completed.id, completed));
-        setWorkspace((previous) => ({ ...previous, completedSessions: [completed, ...previous.completedSessions] }));
+        setWorkspace((previous) => {
+          const run = previous.programRuns?.find(run => run.id === todaySchedule.programRunId);
+          const source = run && previous.programCatalog.find(program => program.id === run.programId);
+          const pending = source ? programWorkouts(source).filter(workout => !previous.scheduledWorkouts.some(schedule => schedule.programRunId === run?.id && schedule.workoutId === workout.id && ["completed", "skipped"].includes(schedule.status))) : [];
+          const next = pending.map(workout => ({workout, schedule: previous.scheduledWorkouts.find(schedule => schedule.programRunId === run?.id && schedule.workoutId === workout.id)})).sort((a,b) => (a.schedule?.plannedDate ?? "9999").localeCompare(b.schedule?.plannedDate ?? "9999"))[0];
+          return { ...previous, completedSessions: [completed, ...previous.completedSessions], programRuns: previous.programRuns?.map(candidate => candidate.id !== run?.id ? candidate : {
+            ...candidate, status: pending.length ? "in_progress" : "completed", completedWorkouts: candidate.completedWorkouts + 1,
+            completionPercent: Math.round((candidate.completedWorkouts + 1) / candidate.totalWorkouts * 100), finishedAt: pending.length ? undefined : new Date().toISOString(),
+            nextWorkout: next ? {id: next.schedule?.programRunWorkoutId ?? `${candidate.id}:${next.workout.id}`, title:next.workout.title, plannedDate:next.schedule?.plannedDate, status:next.schedule?.plannedDate ? "scheduled" : "unscheduled"} : undefined,
+          }) };
+        });
         setCalendarRangeData((previous) => ({ ...previous, completedSessions: [completed, ...previous.completedSessions] }));
         notify("Session saved to your demo training history");
       }
@@ -2015,7 +1898,6 @@ export default function LiftLogApp({
         id: `workout-${Date.now()}`,
         title,
         dayLabel: `Workout ${programWorkoutSequence.length + 1}`,
-        durationMinutes: 45,
         sections: [
           {
             id: `section-${Date.now()}`,
@@ -2047,7 +1929,7 @@ export default function LiftLogApp({
 
   async function updateWorkoutSettings(
     title: string,
-    durationMinutes: number,
+    durationMinutes: number | undefined,
     description: string,
   ) {
     if (!selectedWorkout || !program) return;
@@ -2093,16 +1975,7 @@ export default function LiftLogApp({
     setSelectedSectionId(targetSection.id);
     let item: WorkoutItem;
     if (repository) {
-      try {
-        item = await repository.addWorkoutItem(targetSection, exercise);
-      } catch (error) {
-        notify(
-          error instanceof Error
-            ? error.message
-            : "The exercise could not be added",
-        );
-        return;
-      }
+      item = await repository.addWorkoutItem(targetSection, exercise);
     } else {
       item = {
         id: `item-${Date.now()}`,
@@ -2122,6 +1995,20 @@ export default function LiftLogApp({
               : {},
       };
     }
+    attachWorkoutItem(item, selectedWorkout.id, targetSection.id);
+  }
+
+  async function addCustomExerciseToWorkout(name: string) {
+    const section = selectedWorkout?.sections[0];
+    if (!selectedWorkout || !section) throw new Error("Select a workout first.");
+    const item: WorkoutItem = repository
+      ? await repository.addCustomWorkoutItem(section, name)
+      : { id: `item-${crypto.randomUUID()}`, title: name.trim(), category: "Strength", cue: "", mode: "sets", fields: ["reps", "load"], prescription: {sets: 3, entries: [{}, {}, {}]} };
+    setSelectedSectionId(section.id);
+    attachWorkoutItem(item, selectedWorkout.id, section.id);
+  }
+
+  function attachWorkoutItem(item: WorkoutItem, workoutId: string, sectionId: string) {
     setProgram((previous) =>
       previous
         ? {
@@ -2129,13 +2016,13 @@ export default function LiftLogApp({
             weeks: previous.weeks.map((week) => ({
               ...week,
               workouts: week.workouts.map((workout) =>
-                workout.id !== selectedWorkout.id
+                workout.id !== workoutId
                   ? workout
                   : {
                       ...workout,
                       sections: workout.sections.length
                         ? workout.sections.map((section) =>
-                            section.id === targetSection.id
+                            section.id === sectionId
                               ? {
                                   ...section,
                                   items: [...section.items, item],
@@ -2522,10 +2409,23 @@ export default function LiftLogApp({
 
   useEffect(() => { programMetadata.configure(persistProgramMetadata); });
 
-  async function editProgram(targetProgram: Program) {
+  async function finishProgramEditing() {
+    if (builderMutationPending || !program) return;
+    try {
+      await programMetadata.flush();
+      if (program.editableRunId) { await returnFromWorkoutEditor(); return; }
+      setProgramEditing(false);
+      const history = appDetailDataFromHistory();
+      if (history?.kind === "program") {
+        pushAppDetailHistory("program", "training", { data: { ...history, editing: false } });
+      }
+    } catch { /* The metadata error remains visible in the editor. */ }
+  }
+
+  async function editProgram(targetProgram: Program, workoutId?: string) {
     try { await programMetadata.flush(); } catch { return; }
     if (!repository) {
-      selectProgram(targetProgram);
+      selectProgram(targetProgram, {workoutId, editing: true});
       return;
     }
     if (programAction) return;
@@ -2533,13 +2433,18 @@ export default function LiftLogApp({
     setProgramAction({ id: targetProgram.id, kind: "edit" });
     try {
       requireCapability(capabilitiesForProgram(targetProgram), "edit");
+      const source = workoutId ? await loadTrainingProgram(targetProgram) : null;
+      const selectedPosition = source ? programWorkouts(source).findIndex(workout => workout.id === workoutId) : -1;
       const editableProgram = await repository.loadEditableProgram(
         targetProgram.athleteId,
         targetProgram.id,
       );
       if (programHistoryRequestRef.current !== requestId) return;
-      selectProgram(editableProgram);
-      setActiveView("program");
+      const editableWorkouts = programWorkouts(editableProgram);
+      const editableWorkoutId = editableWorkouts.find(workout => workout.id === workoutId || workout.originalWorkoutId === workoutId)?.id
+        ?? (selectedPosition >= 0 ? editableWorkouts[selectedPosition]?.id : undefined);
+      selectProgram(editableProgram, {workoutId: editableWorkoutId, editing: true, returnView: programReturnView});
+      setActiveView("training");
     } catch (error) {
       if (programHistoryRequestRef.current !== requestId) return;
       notify(
@@ -2554,69 +2459,212 @@ export default function LiftLogApp({
 
   async function duplicateProgram(
     targetProgram: Program,
-    sourceRunId?: string,
+    sourceRun?: ProgramRunSummary,
   ) {
-    if (!repository || programAction) return;
+    try { await programMetadata.flush(); } catch { return; }
+    if (programAction) return;
     setProgramAction({ id: targetProgram.id, kind: "duplicate" });
     try {
-      requireCapability(
-        sourceRunId
-          ? capabilitiesForViewedProgram(targetProgram)
-          : capabilitiesForProgram(targetProgram),
-        "copyToOwn",
-      );
-      const copyId = sourceRunId
-        ? await repository.copyProgramRunToOwn(sourceRunId)
-        : await repository.copyProgramToOwn(targetProgram.id);
-      await refreshProgramWorkspace(copyId);
-      const copy = await repository.loadEditableProgram(viewer.id, copyId);
-      selectProgram(copy, { returnView: programReturnView });
-      setActiveView("program");
-      notify(`${targetProgram.title} duplicated. The new copy is editable.`);
+      if (sourceRun) {
+        if (sourceRun.athleteId !== viewer.id && sourceRun.createdById !== viewer.id) throw new Error("This training cannot be repeated.");
+      } else requireCapability(capabilitiesForProgram(targetProgram), "copyToOwn");
+      let copy: Program;
+      if (repository) {
+        const copyId = sourceRun
+          ? await repository.copyProgramRunToOwn(sourceRun.id)
+          : await repository.copyProgramToOwn(targetProgram.id);
+        await refreshProgramWorkspace(copyId);
+        copy = await repository.loadEditableProgram(viewer.id, copyId);
+      } else {
+        if (!import.meta.env.DEV) throw new Error("Sign in before repeating training.");
+        copy = copyTrainingForViewer(targetProgram, viewer.id, viewer.name);
+        addLocalTraining(copy);
+      }
+      selectProgram(copy, { returnView: programReturnView, editing: true });
+      setActiveView("training");
+      notify(`${targetProgram.title} ready to repeat · edit it, then start or set dates`);
     } catch (error) {
       notify(
         error instanceof Error
           ? error.message
-          : "The content could not be duplicated",
+          : "This training could not be repeated",
       );
     } finally {
       setProgramAction(null);
     }
   }
 
-  async function deactivateProgram() {
-    if (!program || program.athleteId !== viewer.id) return;
+  function addLocalTraining(nextProgram: Program) {
+    setWorkspace(previous => ({
+      ...previous,
+      programCatalog: [nextProgram, ...previous.programCatalog.filter(candidate => candidate.id !== nextProgram.id)],
+      draftProgram: nextProgram,
+    }));
+  }
+
+  async function repeatRunForEditing(run: ProgramRunSummary) {
     try {
-      if (repository) {
-        await repository.deactivateProgram(program.id);
-        await refreshProgramWorkspace(program.id);
-      } else {
-        setWorkspace((previous) => ({
-          ...previous,
-          schedulablePrograms: previous.schedulablePrograms.filter(
-            (candidate) => candidate.id !== program.id,
-          ),
-          draftProgram:
-            previous.draftProgram?.id === program.id
-              ? null
-              : previous.draftProgram,
-          activeProgram:
-            previous.activeProgram?.id === program.id
-              ? null
-              : previous.activeProgram,
-          scheduledWorkouts: previous.scheduledWorkouts.filter(
-            (schedule) => schedule.programVersionId !== program.versionId,
-          ),
-        }));
-      }
-      setProgram(null);
-      setProgramOwnerId(viewer.id);
-      setModal(null);
-      notify("Program deactivated · choose another whenever you are ready");
+      const source = repository
+        ? await repository.loadProgramForRun(run.id)
+        : programCatalog.find(candidate => candidate.id === run.programId);
+      if (!source) throw new Error("This training is no longer available.");
+      await duplicateProgram(source, run);
     } catch (error) {
-      throw error instanceof Error
-        ? error
-        : new Error("The program could not be deactivated");
+      notify(error instanceof Error ? error.message : "This training could not be repeated.");
+    }
+  }
+
+  async function editRunWorkout(slot: ProgramRunWorkout, run = viewingProgramRun, returnView = programReturnView) {
+    try { await programMetadata.flush(); } catch { return; }
+    if (builderMutationPending || programAction || !run || slot.canEdit === false) return;
+    setProgramAction({ id: program?.id ?? slot.id, kind: "edit" });
+    try {
+      let editable: Program;
+      if (repository) {
+        editable = await repository.prepareProgramRunWorkoutEdit(slot.id);
+      } else {
+        if (!import.meta.env.DEV) throw new Error("Sign in before editing training.");
+        const source = program ?? programCatalog.find(candidate => candidate.id === run.programId);
+        const workout = source && programWorkouts(source).find(candidate => candidate.id === (slot.effectiveWorkoutId ?? slot.workoutId));
+        if (!source || !workout) throw new Error("This workout is no longer available.");
+        editable = copyTrainingForViewer({ ...source, title: workout.title, contentType: "quick_workout", weeks: [{ ...source.weeks[0], workouts: [workout] }] }, viewer.id, viewer.name);
+        editable.editableRunId = run.id;
+        editable.editableRunWorkoutId = slot.id;
+      }
+      setDetail(null);
+      selectProgram(editable, { returnView });
+      setActiveView("training");
+      notify("Editing this workout");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "This workout could not be opened for editing.");
+    } finally {
+      setProgramAction(null);
+    }
+  }
+
+  async function returnFromWorkoutEditor() {
+    if (!program?.editableRunId) return;
+    try {
+      await programMetadata.flush();
+      const run = await loadProgramRunDetail(program.editableRunId);
+      if (!run) throw new Error("This training could not be reloaded.");
+      if (repository) {
+        await Promise.all([refreshProgramWorkspace(), refreshVisibleCalendar()]);
+      }
+      await openOwnProgramRun(run, programReturnView);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "This training could not be reloaded.");
+    }
+  }
+
+  async function editUpcomingWorkout(schedule: ScheduledWorkout, returnView: ViewName) {
+    if (!schedule.programRunId || !schedule.programRunWorkoutId) return;
+    try {
+      const run = await loadProgramRunDetail(schedule.programRunId);
+      const slot = run?.workouts.find(candidate => candidate.id === schedule.programRunWorkoutId);
+      if (!run || !slot || slot.canEdit === false) throw new Error("This workout can no longer be edited.");
+      await editRunWorkout(slot, run, returnView);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "This workout could not be opened for editing.");
+    }
+  }
+
+  async function startTraining(target: { programId?: string; workoutId?: string; runWorkoutId?: string }, trainingId: string) {
+    try { await programMetadata.flush(); } catch { return; }
+    if (workoutActionRef.current || builderMutationPending) return;
+    if (activeSession) {
+      if (target.runWorkoutId && activeSession.programRunWorkoutId === target.runWorkoutId) showActiveWorkout();
+      else notify("Finish your current workout before starting another one.");
+      return;
+    }
+    workoutActionRef.current = "starting";
+    setWorkoutAction("starting");
+    setStartingScheduleId(trainingId);
+    try {
+      if (target.programId && !target.workoutId) {
+        const summary = programCatalog.find(candidate => candidate.id === target.programId);
+        const source = summary ? await loadTrainingProgram(summary) : null;
+        const workoutId = source && programWorkouts(source)[0]?.id;
+        if (!workoutId) throw new Error("Add a workout before starting this program.");
+        target = { ...target, workoutId };
+      }
+      if (repository) {
+        const session = await repository.startTrainingWorkout({ ...target, plannedDate: localDateOnly() });
+        // Publish the matching form snapshot with its session, including when
+        // the subsequent detail request fails and recording needs recovery.
+        setSetLogs(session.setLogs);
+        setResultLogs(session.resultLogs);
+        setSessionRpe(session.sessionRpe);
+        setSessionNote(session.sessionNote);
+        setActiveSession(session);
+        const schedule = session.scheduledWorkoutId ? await repository.loadScheduledWorkoutDetail(session.scheduledWorkoutId) : null;
+        if (!schedule) throw new Error("Workout started. Refresh Training to resume it.");
+        applyStartedWorkout(session, schedule, "training");
+        await refreshProgramWorkspace().catch(() => notify("Workout started · refresh Training to update its list"));
+      } else {
+        if (!import.meta.env.DEV) throw new Error("Sign in before starting training.");
+        const existingRun = workspace.programRuns?.find(run => run.nextWorkout?.id === target.runWorkoutId || run.id === trainingId);
+        const source = programCatalog.find(candidate => candidate.id === (target.programId ?? existingRun?.programId));
+        const runDetail = existingRun ? await loadProgramRunDetail(existingRun.id) : null;
+        const selectedId = target.workoutId ?? runDetail?.workouts.find(slot => slot.id === target.runWorkoutId)?.workoutId;
+        const workout = source && programWorkouts(source).find(candidate => !selectedId || candidate.id === selectedId);
+        if (!source || !workout || !workout.sections.some(section => section.items.length)) throw new Error("Add an exercise before starting this workout.");
+        const run = existingRun ?? { ...sourceDateDetail(source), id: crypto.randomUUID() };
+        const existingSchedule = workspace.scheduledWorkouts.find(schedule => schedule.programRunId === run.id && schedule.workoutId === workout.id);
+        const slotId = target.runWorkoutId ?? `${run.id}:${workout.id}`;
+        const schedule: ScheduledWorkout = { id: existingSchedule?.id ?? crypto.randomUUID(), programRunId: run.id, programRunWorkoutId: slotId,
+          programId: source.id, programVersionId: source.versionId, programTitle: source.title, workoutId: workout.id,
+          workoutTitle: workout.title, slotLabel: workout.title, plannedDate: existingSchedule?.plannedDate ?? localDateOnly(), sequenceNumber: 1,
+          status: "planned", workout, detailsLoaded: true };
+        setWorkspace(previous => ({ ...previous, programRuns: [{ ...run, status: "in_progress", nextWorkout: { id: slotId, title: workout.title, status: "in_progress", plannedDate: schedule.plannedDate } }, ...(previous.programRuns ?? []).filter(candidate => candidate.id !== run.id)] }));
+        applyStartedWorkout(createDemoWorkoutSession(schedule), schedule, "training");
+      }
+    } catch (error) { notify(error instanceof Error ? error.message : "This workout could not be started."); }
+    finally { workoutActionRef.current = null; setWorkoutAction(null); setStartingScheduleId(null); }
+  }
+
+  async function startRunWorkout(run: ProgramRunSummary, selectedSlot?: ProgramRunWorkout) {
+    const slotId = selectedSlot?.id ?? run.nextWorkout?.id;
+    if (!slotId || run.athleteId !== viewer.id) return;
+    await startTraining({ runWorkoutId: slotId }, run.id);
+  }
+
+  async function restoreRunWorkout(run: ProgramRunSummary, slot: ProgramRunWorkout) {
+    if (run.athleteId !== viewer.id || !slot.scheduledWorkoutId) return;
+    if (repository) {
+      const schedule = await repository.loadScheduledWorkoutDetail(slot.scheduledWorkoutId);
+      if (schedule) setWorkspace(previous => ({ ...previous, scheduledWorkouts: [schedule, ...previous.scheduledWorkouts.filter(candidate => candidate.id !== schedule.id)] }));
+      await repository.setScheduledWorkoutStatus(slot.scheduledWorkoutId, "planned");
+      await refreshProgramWorkspace();
+    } else await setScheduledWorkoutStatus(slot.scheduledWorkoutId, "planned");
+    notify("Workout restored");
+  }
+
+  async function repeatCompletedWorkout(session: CompletedSession) {
+    if (programAction) return;
+    setProgramAction({ id: session.id, kind: "duplicate" });
+    try {
+      let copy: Program;
+      if (repository) {
+        const programId = await repository.copyCompletedWorkoutToOwn(session.id);
+        await refreshProgramWorkspace(programId);
+        copy = await repository.loadEditableProgram(viewer.id, programId);
+      } else {
+        if (!import.meta.env.DEV) throw new Error("Sign in before repeating training.");
+        const source = programCatalog.find(candidate => programWorkouts(candidate).some(workout => workout.id === session.workoutId));
+        const workout = source && programWorkouts(source).find(candidate => candidate.id === session.workoutId);
+        if (!source || !workout) throw new Error("The original workout plan is unavailable.");
+        copy = copyTrainingForViewer({ ...source, title: workout.title, contentType: "quick_workout", weeks: [{ ...source.weeks[0], workouts: [workout] }] }, viewer.id, viewer.name);
+        addLocalTraining(copy);
+      }
+      setDetail(null);
+      selectProgram(copy, {editing: true});
+      setActiveView("training");
+      notify("Workout ready to repeat · edit it, then start or set a date");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "This workout could not be repeated.");
+    } finally {
+      setProgramAction(null);
     }
   }
 
@@ -2757,7 +2805,6 @@ export default function LiftLogApp({
                   initials: invitation.athleteInitials,
                   assignedProgramCount: 0,
                   detailsLoaded: false,
-                  assignedPrograms: [],
                   agenda: [],
                 },
               ]
@@ -2784,16 +2831,15 @@ export default function LiftLogApp({
     }
   }
 
-  async function openProgramRunWizard(seed: {
-    mode: "self" | "coach";
+  async function openAssignment(seed: {
     programId?: string;
     athleteIds?: string[];
-    repeatRun?: ProgramRunSummary;
+    assignRun?: ProgramRunSummary;
   }) {
     try { await programMetadata.flush(); } catch { return; }
     if (repository) {
       const requiredFeatures: LazyWorkspaceFeature[] = ["programs"];
-      if (seed.mode === "coach") requiredFeatures.push("coaching");
+      requiredFeatures.push("coaching");
       await Promise.all(
         requiredFeatures.map((feature) => loadWorkspaceFeature(feature)),
       );
@@ -2809,69 +2855,26 @@ export default function LiftLogApp({
         return;
       }
     }
-    if (seed.repeatRun) {
-      try {
-        const exactProgram = repository
-          ? await repository.loadProgramForRun(seed.repeatRun.id)
-          : programCatalog.find(
-              (candidate) => candidate.id === seed.repeatRun?.programId,
-            ) ?? null;
-        if (!exactProgram) {
-          throw new Error("This completed program revision is no longer available.");
-        }
-        setAssignmentProgramOverride(exactProgram);
-      } catch (error) {
-        notify(
-          error instanceof Error
-            ? error.message
-            : "This program could not be prepared for repeating.",
-        );
-        return;
-      }
-    } else {
-      setAssignmentProgramOverride(null);
-    }
     setAssignmentSeed(seed);
     setModal("assign-program");
   }
 
-  async function createProgramRun(
-    submission: ProgramRunWizardSubmission,
+  async function assignTraining(
+    submission: AssignTrainingSubmission,
   ): Promise<void> {
-    const { programId, athleteIds, workoutDates, idempotencyKey } = submission;
-    const repeatRun = assignmentSeed.repeatRun;
-    const sourceProgram =
-      (assignmentProgramOverride?.id === programId
-        ? assignmentProgramOverride
-        : undefined) ??
-      assignableOwnPrograms.find((candidate) => candidate.id === programId) ??
-      programCatalog.find((candidate) => candidate.id === programId);
+    const { programId, runId, athleteIds, workoutDates, idempotencyKey } = submission;
+    const assignRun = runId ? assignmentRuns.find(run => run.id === runId) : undefined;
+    if (runId && !assignRun) throw new Error("This training is no longer available. Choose it again.");
+    const sourceProgram = assignRun ? await loadAssignmentRun(assignRun)
+      : assignableOwnPrograms.find(candidate => candidate.id === programId);
     if (!sourceProgram) throw new Error("Choose one of your programs.");
     if (!athleteIds.length) throw new Error("Choose at least one athlete.");
-    const isSelfRun = athleteIds.length === 1 && athleteIds[0] === viewer.id;
-    if (repeatRun) {
-      if (
-        athleteIds.length !== 1 ||
-        athleteIds[0] !== repeatRun.athleteId ||
-        (repeatRun.athleteId !== viewer.id &&
-          repeatRun.createdById !== viewer.id)
-      ) {
-        throw new Error("This program run cannot be repeated for that athlete.");
-      }
-    } else {
-      if (!isSelfRun) {
-        requireCapability(capabilitiesForProgram(sourceProgram), "assign");
-      } else if (
-        sourceProgram.athleteId !== viewer.id ||
-        sourceProgram.createdById !== viewer.id ||
-        sourceProgram.sourceType !== "self"
-      ) {
-        throw new Error("Only your own reusable training can be used to create a training plan.");
-      }
-    }
-
+    if (athleteIds.includes(viewer.id)) throw new Error("Choose an athlete to assign training.");
+    if (assignRun) {
+      if (assignRun.athleteId !== viewer.id || assignRun.createdById !== viewer.id) throw new Error("Choose your own training to assign to athletes.");
+    } else requireCapability(capabilitiesForProgram(sourceProgram), "assign");
     if (!repository) {
-      if (!import.meta.env.DEV) throw new Error("Sign in before starting a program.");
+      if (!import.meta.env.DEV) throw new Error("Sign in before assigning training.");
       const createdAt = new Date().toISOString();
       const demoRuns = athleteIds.map((athleteId, index) => ({
         id: `run-${Date.now()}-${index}`,
@@ -2890,9 +2893,6 @@ export default function LiftLogApp({
       }));
       setWorkspace((previous) => ({
         ...previous,
-        programRuns: isSelfRun
-          ? [...demoRuns, ...(previous.programRuns ?? [])]
-          : previous.programRuns,
         coachedAthletes: previous.coachedAthletes.map((athlete) => {
           const run = demoRuns.find((candidate) => candidate.athleteId === athlete.id);
           return run
@@ -2900,12 +2900,8 @@ export default function LiftLogApp({
             : athlete;
         }),
       }));
-    } else if (repeatRun) {
-      await repository.repeatProgramRun(
-        repeatRun.id,
-        workoutDates as ProgramRunWorkoutDate[],
-        idempotencyKey,
-      );
+    } else if (assignRun) {
+      await repository.assignProgramRun(assignRun.id, athleteIds, workoutDates, idempotencyKey);
     } else {
       await repository.createProgramRuns(
         programId,
@@ -2916,35 +2912,18 @@ export default function LiftLogApp({
     }
 
     const scheduledCount = workoutDates.filter((entry) => entry.plannedDate).length;
-    setAssignmentSeed({ mode: "coach" });
-    setAssignmentProgramOverride(null);
+    setAssignmentSeed({});
     setModal(null);
     let refreshFailed = false;
     if (repository) {
       try {
         await refreshProgramWorkspace(programId);
-        if (isSelfRun) await loadUpcomingWorkouts(true);
-        if (
-          program?.id === programId &&
-          program.athleteId === viewer.id &&
-          program.createdById === viewer.id
-        ) {
-          selectProgram(await repository.loadEditableProgram(viewer.id, programId));
-        }
-        if (!isSelfRun) {
-          const refreshed = await refreshCoachWorkspace();
-          refreshFailed = !refreshed;
-        }
+        refreshFailed = !(await refreshCoachWorkspace());
       } catch {
         refreshFailed = true;
       }
     }
-    const successMessage =
-      repeatRun
-        ? `${sourceProgram.title} added as a new run`
-        : isSelfRun
-          ? `${sourceProgram.title} added to your training${scheduledCount ? ` · ${scheduledCount} workouts scheduled` : ""}`
-          : `${sourceProgram.title} assigned to ${athleteIds.length} ${athleteIds.length === 1 ? "athlete" : "athletes"}${scheduledCount ? " and scheduled" : ""}`;
+    const successMessage = `${sourceProgram.title} assigned to ${athleteIds.length} ${athleteIds.length === 1 ? "athlete" : "athletes"}${scheduledCount ? " with dates" : ""}`;
     notify(
       refreshFailed
         ? `${successMessage} · saved successfully; refresh to update this screen`
@@ -2988,28 +2967,24 @@ export default function LiftLogApp({
   }
 
   async function createProgram(title: string) {
-    const target = programTarget ?? {
-      id: viewer.id,
-      name: workspace.profile.displayName,
-    };
     try {
       if (repository) {
-        const programId = await repository.createBlankProgram(target.id, title);
-        if (target.id === viewer.id) await refreshProgramWorkspace(programId);
+        const programId = await repository.createBlankProgram(viewer.id, title);
+        await refreshProgramWorkspace(programId);
         selectProgram(
-          await repository.loadEditableProgram(target.id, programId),
-          { returnView: target.id === viewer.id ? "program" : "coaching" },
+          await repository.loadEditableProgram(viewer.id, programId),
+          { returnView: "training", editing: true },
         );
       } else {
         if (!import.meta.env.DEV) throw new Error("Sign in before creating training.");
         const emptyProgram: Program = {
           id: `program-${Date.now()}`,
-          athleteId: target.id,
+          athleteId: viewer.id,
           versionId: `version-${Date.now()}`,
           versionStatus: "draft",
           title,
           description: "",
-          phase: "Plan",
+          phase: "Training",
           activeWeek: 1,
           weeks: [
             {
@@ -3019,30 +2994,23 @@ export default function LiftLogApp({
               workouts: [],
             },
           ],
-          ownerName: target.name,
+          ownerName: workspace.profile.displayName,
           createdById: viewer.id,
           createdByName: workspace.profile.displayName,
-          sourceType: target.id === viewer.id ? "self" : "coach",
-          sourceLabel:
-            target.id === viewer.id
-              ? "Created by you"
-              : `Created by ${workspace.profile.displayName}`,
+          sourceType: "self",
+          sourceLabel: "Created by you",
         };
-        setWorkspace((previous) =>
-          target.id === viewer.id
-            ? { ...previous, draftProgram: emptyProgram }
-            : previous,
-        );
+        addLocalTraining(emptyProgram);
         selectProgram(emptyProgram, {
-          returnView: target.id === viewer.id ? "program" : "coaching",
+          editing: true,
+          returnView: "training",
         });
       }
-      setProgramTarget(null);
       setModal(null);
-      setActiveView("program");
-      if (target.id === viewer.id) setProgramSource("own");
+      setActiveView("training");
+      setProgramSource("own");
       notify(
-        `Program created for ${target.id === viewer.id ? "you" : target.name}`,
+        "Program created",
       );
     } catch (error) {
       throw error instanceof Error
@@ -3056,11 +3024,11 @@ export default function LiftLogApp({
       if (repository) {
         const workoutId = await repository.createBlankQuickWorkout(title);
         await refreshProgramWorkspace(workoutId);
-        selectProgram(await repository.loadEditableProgram(viewer.id, workoutId));
+        selectProgram(await repository.loadEditableProgram(viewer.id, workoutId), {editing: true});
       } else {
         if (!import.meta.env.DEV) throw new Error("Sign in before creating training.");
         const now = Date.now();
-        selectProgram({
+        const created: Program = {
           id: `quick-workout-${now}`,
           athleteId: viewer.id,
           versionId: `version-${now}`,
@@ -3077,7 +3045,6 @@ export default function LiftLogApp({
               id: `workout-${now}`,
               title,
               dayLabel: "Workout",
-              durationMinutes: 45,
               sections: [
                 { id: `exercises-${now}`, title: "Exercises", kind: "main", items: [] },
               ],
@@ -3089,10 +3056,12 @@ export default function LiftLogApp({
           sourceType: "self",
           sourceLabel: "Created by you",
           contentType: "quick_workout",
-        });
+        };
+        addLocalTraining(created);
+        selectProgram(created, {editing: true});
       }
       setModal(null);
-      setActiveView("program");
+      setActiveView("training");
       setProgramSource("own");
       notify(`${trainingContentUi("quick_workout").label} created`);
     } catch (error) {
@@ -3111,15 +3080,6 @@ export default function LiftLogApp({
       return;
     }
     setContentDeleteTarget({ kind: "program", program: targetProgram });
-    setModal("delete-content");
-  }
-
-  function unassignProgram(assignmentId: string | undefined, title: string) {
-    if (!assignmentId) {
-      notify("This assignment cannot be removed.");
-      return;
-    }
-    setContentDeleteTarget({ kind: "assignment", id: assignmentId, title });
     setModal("delete-content");
   }
 
@@ -3180,101 +3140,126 @@ export default function LiftLogApp({
       return;
     }
     if (target.kind === "program-run") {
-      if (!repository) throw new Error("The program run could not be ended.");
-      await repository.endProgramRun(target.id);
+      if (repository) await repository.endProgramRun(target.id);
+      else {
+        if (!import.meta.env.DEV) throw new Error("Sign in before removing training.");
+        if (activeSession?.programRunId === target.id) throw new Error("Finish your current workout before removing this training.");
+        const retain = (schedule: ScheduledWorkout) => schedule.programRunId !== target.id || schedule.status === "completed";
+        setWorkspace(previous => ({...previous, programRuns: previous.programRuns?.map(run => run.id === target.id ? {...run, status: "ended", endedAt: new Date().toISOString(), nextWorkout: undefined} : run), scheduledWorkouts: previous.scheduledWorkouts.filter(retain)}));
+        setCalendarRangeData(previous => ({...previous, scheduledWorkouts: previous.scheduledWorkouts.filter(retain)}));
+      }
       await Promise.all([
         refreshProgramWorkspace(),
-        loadUpcomingWorkouts(true),
+        refreshVisibleCalendar(),
       ]);
       if (coachMode === "coach") await refreshCoachWorkspace();
+      if (viewingProgramRunId === target.id) {
+        setProgram(null);
+        setViewingProgramRunId(null);
+        setViewingProgramRunDetail(null);
+        leaveDetail(programReturnView);
+      }
       notify(`${target.title} ended · completed results remain in history`);
-      return;
-    }
-    if (target.kind === "assignment") {
-      if (!repository) throw new Error("The program could not be unassigned.");
-      await repository.unassignProgram(target.id);
-      setProgram((current) =>
-        current?.assignmentId === target.id ? null : current,
-      );
-      await Promise.all([refreshProgramWorkspace(), refreshCoachWorkspace()]);
-      notify(`${target.title} unassigned · completed history preserved`);
       return;
     }
     await performProgramDeletion(target.program);
   }
 
-  function openSchedule(scheduleId?: string, initialDate?: string) {
-    setScheduleEditingId(scheduleId ?? null);
+  function openSourceDates(targetProgram: Program, initialDate?: string) {
+    setTrainingDateTarget({ kind: "source", program: targetProgram });
     setScheduleInitialDate(initialDate ?? null);
-    setModal("schedule");
-    if (!scheduleId) void loadScheduleCandidates(true);
+    setModal("training-dates");
   }
 
-  async function openScheduleForProgram(targetProgram: Program) {
-    try {
-      const detail = targetProgram.detailsLoaded === false && repository
-        ? await repository.loadProgramDetail(
-            targetProgram.athleteId,
-            targetProgram.id,
-            targetProgram.versionId,
-            targetProgram.assignmentId,
-          )
-        : targetProgram;
-      if (!detail) throw new Error("This content is no longer available.");
-      const candidates = detail.weeks.flatMap((week) =>
-        week.workouts.map((workout, workoutPosition) => {
-          const latestOccurrence = workspace.scheduledWorkouts
-            .filter(
-              (occurrence) =>
-                occurrence.programVersionId === detail.versionId &&
-                occurrence.workoutId === workout.id,
-            )
-            .sort((left, right) => right.sequenceNumber - left.sequenceNumber)[0];
-          return {
-            kind: detail.assignmentId ? "assignment" as const : "program" as const,
-            programId: detail.id,
-            assignmentId: detail.assignmentId,
-            programVersionId: detail.versionId,
-            workoutId: workout.id,
-            programTitle: detail.title,
-            workoutTitle: workout.title,
-            contentType: detail.contentType ?? "program",
-            isQuickWorkout: detail.contentType === "quick_workout",
-            weekIndex: week.index,
-            weekLabel: week.label,
-            workoutPosition,
-            scheduleLabel: workout.dayLabel,
-            estimatedMinutes: workout.durationMinutes,
-            ...(latestOccurrence
-              ? {
-                  latestOccurrence: {
-                    id: latestOccurrence.id,
-                    plannedDate: latestOccurrence.plannedDate,
-                    status: latestOccurrence.status,
-                    sequenceNumber: latestOccurrence.sequenceNumber,
-                  },
-                }
-              : {}),
-          } satisfies SchedulableWorkoutCandidate;
-        }),
-      );
-      replaceScheduleCandidates(candidates);
-      setScheduleEditingId(null);
-      setScheduleInitialDate(null);
-      setModal("schedule");
-    } catch (error) {
-      notify(
-        error instanceof Error
-          ? error.message
-          : "The workout could not be prepared for scheduling",
-      );
+  function openRunDates(run: ProgramRunSummary, initialDate?: string) {
+    setTrainingDateTarget({ kind: "run", run });
+    setScheduleInitialDate(initialDate ?? null);
+    setModal("training-dates");
+  }
+
+  async function openSchedule(scheduleId?: string, initialDate?: string) {
+    if (!scheduleId) {
+      setScheduleInitialDate(initialDate ?? localDateOnly());
+      setModal("date-picker");
+      void loadWorkspaceFeature("programs");
+      return;
     }
+    try {
+      const schedule = repository
+        ? await repository.loadScheduledWorkoutDetail(scheduleId)
+        : workspace.scheduledWorkouts.find(candidate => candidate.id === scheduleId);
+      if (!schedule) throw new Error("This workout is no longer available.");
+      if (schedule.programRunId) {
+        const run = await loadProgramRunDetail(schedule.programRunId);
+        if (!run) throw new Error("This training is no longer available.");
+        openRunDates(run, initialDate);
+      } else {
+        setTrainingDateTarget({ kind: "occurrence", schedule });
+        setScheduleInitialDate(initialDate ?? null);
+        setModal("training-dates");
+      }
+    } catch (error) { notify(error instanceof Error ? error.message : "Dates could not be opened."); }
+  }
+
+  async function saveTrainingDates(workoutDates: ProgramRunWorkoutDate[], idempotencyKey: string) {
+    const target = trainingDateTarget;
+    if (!target) throw new Error("Choose training to set its dates.");
+    await programMetadata.flush();
+    if (target.kind === "occurrence") {
+      await saveSchedule(target.schedule.id, workoutDates[0]?.plannedDate ?? null);
+      setTrainingDateTarget(null);
+      return;
+    }
+    let runId: string | undefined = target.kind === "run" ? target.run.id : undefined;
+    if (repository) {
+      if (target.kind === "source") {
+        if (workoutDates.some(entry => entry.plannedDate)) {
+          const result = await repository.ensureOwnTrainingRun(target.program.id, workoutDates, idempotencyKey);
+          runId = result.runId;
+        }
+      } else await repository.scheduleProgramRunWorkouts(target.run.id, workoutDates, idempotencyKey);
+    } else {
+      if (!import.meta.env.DEV) throw new Error("Sign in before setting dates.");
+      const source = target.kind === "source" ? target.program : programCatalog.find(program => program.id === target.run.programId);
+      if (!source) throw new Error("This training is no longer available.");
+      const existingRun = target.kind === "run" ? target.run : workspace.programRuns?.find(run => run.programId === source.id && (run.status === "not_started" || run.status === "in_progress"));
+      runId = existingRun?.id ?? crypto.randomUUID();
+      const resolvedRunId = runId;
+      const schedules = programWorkouts(source).map((workout, index): ScheduledWorkout => {
+        const existing = workspace.scheduledWorkouts.find(schedule => schedule.programRunId === resolvedRunId && schedule.workoutId === workout.id);
+        const plannedDate = workoutDates.find(entry => entry.workoutId === workout.id)?.plannedDate;
+        return existing && ["completed", "in_progress", "skipped"].includes(existing.status) ? existing : {
+          id: existing?.id ?? crypto.randomUUID(), programRunId: resolvedRunId, programRunWorkoutId: existing?.programRunWorkoutId ?? resolvedRunId + ":" + workout.id,
+          programId: source.id, programVersionId: source.versionId, programTitle: source.title, workoutId: workout.id,
+          workoutTitle: workout.title, slotLabel: workout.title, plannedDate, sequenceNumber: index + 1,
+          status: "planned", workout: {...workout, plannedDate}, detailsLoaded: true,
+        };
+      });
+      const next = [...schedules].filter(schedule => schedule.status === "planned").sort((a,b) => (a.plannedDate ?? "9999").localeCompare(b.plannedDate ?? "9999"))[0];
+      const run: ProgramRunSummary = {...(existingRun ?? sourceDateDetail(source)), id: resolvedRunId, createdAt: existingRun?.createdAt || new Date().toISOString(),
+        scheduledWorkouts: schedules.filter(schedule => schedule.plannedDate).length,
+        nextWorkout: next ? {id: next.programRunWorkoutId!, title: next.workoutTitle, plannedDate: next.plannedDate, status: next.plannedDate ? "scheduled" : "unscheduled"} : undefined};
+      setWorkspace(previous => ({...previous, programRuns:[run,...(previous.programRuns ?? []).filter(candidate => candidate.id !== resolvedRunId)], scheduledWorkouts:[...previous.scheduledWorkouts.filter(schedule => schedule.programRunId !== resolvedRunId),...schedules]}));
+      setCalendarRangeData(previous => ({...previous, scheduledWorkouts:[...previous.scheduledWorkouts.filter(schedule => schedule.programRunId !== resolvedRunId),...schedules]}));
+    }
+    setTrainingDateTarget(null);
+    setModal(null);
+    try {
+      await Promise.all([refreshProgramWorkspace(), refreshVisibleCalendar()]);
+      if (target.kind === "run" && target.run.athleteId !== viewer.id) await refreshCoachWorkspace();
+      if (runId && (viewingProgramRunId === runId || target.kind === "source" && program?.id === target.program.id)) {
+        const run = await loadProgramRunDetail(runId);
+        if (run && repository) {
+          const frozen = await repository.loadProgramForRun(run.id);
+          if (frozen) selectProgram(frozen, {programRunId:run.id,programRunDetail:run,returnView:programReturnView,workoutId:selectedWorkoutId});
+        }
+      }
+      notify("Dates saved");
+    } catch { notify("Dates saved · refresh to update this screen"); }
   }
 
   async function saveSchedule(scheduleId: string, date: string | null) {
-    const targetSchedule = workspace.scheduledWorkouts.find(
-      (schedule) => schedule.id === scheduleId,
-    );
+    const targetSchedule = workspace.scheduledWorkouts.find(schedule => schedule.id === scheduleId) ?? calendarRangeData.scheduledWorkouts.find(schedule => schedule.id === scheduleId) ?? (repository ? await repository.loadScheduledWorkoutDetail(scheduleId) : undefined);
     const previousDate = targetSchedule?.plannedDate;
     try {
       if (!targetSchedule)
@@ -3318,12 +3303,11 @@ export default function LiftLogApp({
       }));
       if (repository) {
         await Promise.allSettled([
-          loadUpcomingWorkouts(true),
+          refreshVisibleCalendar(),
           refreshProgramRunSummaries(),
         ]);
       }
       setModal(null);
-      setScheduleEditingId(null);
       notify(
         !date
           ? "Workout removed from the calendar"
@@ -3336,125 +3320,6 @@ export default function LiftLogApp({
         ? error
         : new Error("The workout date could not be updated");
     }
-  }
-
-  async function saveScheduleCandidate(
-    candidate: ScheduleCandidate,
-    date: string | null,
-    idempotencyKey: string,
-  ) {
-    if (candidate.scheduleId) {
-      await saveSchedule(candidate.scheduleId, date);
-      return;
-    }
-    if (!date) throw new Error("Choose a date for this workout.");
-
-    const demoScheduleId = `schedule-${Date.now()}`;
-    const demoRunId = `run-${Date.now()}`;
-    const demoRunWorkoutId = `${demoRunId}:${candidate.workoutId}`;
-    if (repository && candidate.assignmentId) {
-      throw new Error(
-        "This older assignment is read-only. Schedule its migrated program run instead.",
-      );
-    }
-    const created = repository
-      ? await repository.createScheduledQuickWorkoutRun(
-          candidate.programId,
-          date,
-          idempotencyKey,
-        )
-      : import.meta.env.DEV ? {
-          id: demoScheduleId,
-          programRunId: demoRunId,
-          programRunWorkoutId: demoRunWorkoutId,
-          programId: candidate.programId,
-          programTitle: candidate.programTitle,
-          programVersionId: candidate.programVersionId,
-          workoutId: candidate.workoutId,
-          workoutTitle: candidate.workoutTitle,
-          slotLabel: candidate.quickWorkout
-            ? candidate.workoutTitle
-            : `${candidate.programTitle} · ${candidate.workoutTitle}`,
-          plannedDate: date,
-          sequenceNumber: workspace.scheduledWorkouts.length + 1,
-          status: "planned" as const,
-          workout: {
-            id: candidate.workoutId,
-            programVersionId: candidate.programVersionId,
-            title: candidate.workoutTitle,
-            dayLabel: candidate.scheduleLabel,
-            durationMinutes: candidate.estimatedMinutes,
-            sections: [],
-            scheduledWorkoutId: demoScheduleId,
-            plannedDate: date,
-          },
-          detailsLoaded: false,
-        } : null;
-    if (!created) throw new Error("Sign in before scheduling a workout.");
-    setWorkspace((previous) => ({
-      ...previous,
-      ...(import.meta.env.DEV && !repository && !candidate.assignmentId
-        ? {
-            programRuns: [
-              {
-                id: demoRunId,
-                athleteId: viewer.id,
-                createdById: viewer.id,
-                programId: candidate.programId,
-                programVersionId: candidate.programVersionId,
-                title: candidate.programTitle,
-                contentType: "quick_workout" as const,
-                status: "not_started" as const,
-                totalWorkouts: 1,
-                scheduledWorkouts: 1,
-                completedWorkouts: 0,
-                completionPercent: 0,
-                nextWorkout: {
-                  id: demoRunWorkoutId,
-                  title: candidate.workoutTitle,
-                  plannedDate: date,
-                  status: "scheduled" as const,
-                },
-                createdAt: new Date().toISOString(),
-              },
-              ...(previous.programRuns ?? []),
-            ],
-          }
-        : {}),
-      scheduledWorkouts: [
-        ...previous.scheduledWorkouts.filter(
-          (schedule) => schedule.id !== created.id,
-        ),
-        created,
-      ],
-    }));
-    const visibleRange = lastCalendarRangeRef.current;
-    if (
-      !visibleRange ||
-      (date >= visibleRange.start && date <= visibleRange.end)
-    ) {
-      setCalendarRangeData((previous) => ({
-        ...previous,
-        scheduledWorkouts: [
-          ...previous.scheduledWorkouts.filter(
-            (schedule) => schedule.id !== created.id,
-          ),
-          created,
-        ],
-      }));
-    }
-    setModal(null);
-    setScheduleEditingId(null);
-    setScheduleInitialDate(null);
-    if (repository && !candidate.assignmentId) {
-      try {
-        await refreshProgramWorkspace(candidate.programId);
-      } catch {
-        notify("Workout scheduled · refresh Programs to see the new editable copy");
-        return;
-      }
-    }
-    notify("Workout added to your calendar");
   }
 
   async function setScheduledWorkoutStatus(
@@ -3523,7 +3388,7 @@ export default function LiftLogApp({
       setDetail(null);
       notify(
         status === "planned"
-          ? "Workout set back to scheduled"
+          ? "Workout restored"
           : "Workout skipped",
       );
     } catch (error) {
@@ -3539,8 +3404,8 @@ export default function LiftLogApp({
 
   async function openCalendarPlan(schedule: ScheduledWorkout) {
     if (await openWorkoutPreview(schedule, "calendar", false)) {
-      setActiveView("today");
-      pushAppDetailHistory("workout", "today");
+      setActiveView("workout");
+      pushAppDetailHistory("workout", "workout");
       scrollToAppTop();
     }
   }
@@ -3548,11 +3413,11 @@ export default function LiftLogApp({
   async function openCalendarResults(
     session: CompletedSession,
     athleteId?: string,
-    returnView: "today" | "calendar" | "coaching" | "program" = "calendar",
+    returnView: "training" | "calendar" | "coaching" = "calendar",
   ) {
-    setActiveView("today");
-    pushAppDetailHistory("workout-log", "today", {
-      stackOnDetail: returnView === "program" || returnView === "coaching",
+    setActiveView("workout");
+    pushAppDetailHistory("workout-log", "workout", {
+      stackOnDetail: returnView === "training" || returnView === "coaching",
       data: {
         kind: "workout-log",
         session,
@@ -3574,55 +3439,28 @@ export default function LiftLogApp({
     athlete: AthleteSummary,
     assignedProgram: CoachWorkspaceProgram,
     workoutId?: string,
-    programVersionId?: string,
   ) {
     if (openingCoachProgramId) return;
     const requestId = ++programHistoryRequestRef.current;
     setOpeningCoachProgramId(assignedProgram.id);
     try {
       if (!repository) {
-        navigate("program");
+        navigate("training");
         return;
       }
-      const resolvedVersionId =
-        programVersionId ??
-        ("programVersionId" in assignedProgram
-          ? assignedProgram.programVersionId
-          : assignedProgram.versionId);
-      const assignmentId = assignedProgram.assignmentId;
-      const programRunId =
-        "programVersionId" in assignedProgram && !assignedProgram.legacy
-          ? assignedProgram.id
-          : undefined;
-      const [nextProgram, runDetail] = programRunId
-        ? await Promise.all([
-            repository.loadProgramForRun(programRunId),
-            repository.loadProgramRunDetail(programRunId),
-          ])
-        : [
-            resolvedVersionId
-              ? await repository.loadProgramVersionForAthleteById(
-                  athlete.id,
-                  assignedProgram.programId ?? assignedProgram.id,
-                  resolvedVersionId,
-                  assignmentId,
-                )
-              : await repository.loadProgramForAthleteById(
-                  athlete.id,
-                  assignedProgram.programId ?? assignedProgram.id,
-                  assignmentId,
-                ),
-            null,
-          ];
+      const programRunId = assignedProgram.id;
+      const [nextProgram, runDetail] = await Promise.all([repository.loadProgramForRun(programRunId), repository.loadProgramRunDetail(programRunId)]);
       if (programHistoryRequestRef.current !== requestId) return;
-      setProgramOwnerId(athlete.id);
       if (nextProgram) {
-        const targetWorkoutId =
+        const requestedWorkoutId =
           workoutId ??
           (runDetail
             ? nextIncompleteRunWorkoutId(runDetail.workouts) ??
               runDetail.workouts[0]?.workoutId
             : undefined);
+        const targetSlot = runDetail?.workouts.find(slot =>
+          slot.workoutId === requestedWorkoutId || slot.effectiveWorkoutId === requestedWorkoutId);
+        const targetWorkoutId = targetSlot?.effectiveWorkoutId ?? requestedWorkoutId;
         const workoutWeek = targetWorkoutId
           ? nextProgram.weeks.find((week) =>
               week.workouts.some((workout) => workout.id === targetWorkoutId),
@@ -3637,7 +3475,7 @@ export default function LiftLogApp({
         });
       }
       else setProgram(null);
-      setActiveView("program");
+      setActiveView("training");
       scrollToAppTop();
     } catch (error) {
       if (programHistoryRequestRef.current !== requestId) return;
@@ -3653,7 +3491,7 @@ export default function LiftLogApp({
 
   async function openOwnProgramRun(
     run: ProgramRunSummary,
-    returnView: "today" | "program" = "today",
+    returnView: ViewName = "training",
   ) {
     if (openingCoachProgramId) return;
     const requestId = ++programHistoryRequestRef.current;
@@ -3669,30 +3507,74 @@ export default function LiftLogApp({
         loadProgramRunDetail(run.id),
       ]);
       if (programHistoryRequestRef.current !== requestId) return;
-      if (!nextProgram) throw new Error("This program revision is no longer available.");
-      const workoutId =
+      if (!nextProgram) throw new Error("This training is no longer available.");
+      const originalWorkoutId =
         (runDetail && nextIncompleteRunWorkoutId(runDetail.workouts)) ??
         runDetail?.workouts[0]?.workoutId;
-      setProgramOwnerId(viewer.id);
+      const nextSlot = runDetail?.workouts.find(slot => slot.workoutId === originalWorkoutId);
+      const workoutId = nextSlot?.effectiveWorkoutId ?? originalWorkoutId;
       selectProgram(nextProgram, {
         programRunId: run.id,
         programRunDetail: runDetail,
         workoutId,
         returnView,
       });
-      setActiveView("program");
-      updateAppViewUrl("program");
+      setActiveView("training");
       scrollToAppTop();
     } catch (error) {
       if (programHistoryRequestRef.current !== requestId) return;
       notify(
         error instanceof Error
           ? error.message
-          : "The program run could not be opened",
+          : "This training could not be opened",
       );
     } finally {
       setOpeningCoachProgramId(null);
     }
+  }
+
+  async function openOwnRunWorkout(slot: ProgramRunWorkout) {
+    if (slot.status === "completed" && viewingProgramRun?.athleteId === viewer.id) {
+      openRunWorkoutResults(viewingProgramRun, slot);
+      return;
+    }
+    if (openingCoachProgramId || viewingProgramRun?.athleteId !== viewer.id ||
+      slot.runId !== viewingProgramRun.id || !slot.scheduledWorkoutId ||
+      (slot.status !== "scheduled" && slot.status !== "in_progress")) return;
+    const requestId = ++programHistoryRequestRef.current;
+    setOpeningCoachProgramId(slot.id);
+    try {
+      const schedule = repository
+        ? await repository.loadScheduledWorkoutDetail(slot.scheduledWorkoutId)
+        : workspace.scheduledWorkouts.find(candidate => candidate.id === slot.scheduledWorkoutId);
+      if (programHistoryRequestRef.current !== requestId) return;
+      if (!schedule || (schedule.status !== "planned" && schedule.status !== "in_progress")) {
+        throw new Error("This scheduled workout is no longer available.");
+      }
+      setWorkspace(previous => ({ ...previous,
+        scheduledWorkouts: [schedule, ...previous.scheduledWorkouts.filter(candidate => candidate.id !== schedule.id)],
+      }));
+      if (schedule.status === "in_progress") {
+        if (activeSession?.scheduledWorkoutId === schedule.id) showActiveWorkout("training");
+        else await startWorkout(schedule, "training");
+      } else if (await openWorkoutPreview(schedule, "training")) {
+        setActiveView("workout");
+        scrollToAppTop();
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "This workout could not be opened.");
+    } finally {
+      setOpeningCoachProgramId(null);
+    }
+  }
+
+  function openRunWorkoutResults(run: ProgramRunSummary, slot: ProgramRunWorkout) {
+    if (!slot.sessionId) return;
+    void openCalendarResults({id: slot.sessionId, workoutTitle: slot.title,
+      programRunId: run.id, programRunWorkoutId: slot.id, workoutId: slot.effectiveWorkoutId ?? slot.workoutId,
+      date: slot.completedForDate ?? slot.plannedDate ?? slot.completedAt?.slice(0, 10) ?? "",
+      durationMinutes: slot.estimatedMinutes ?? 0, rpe: slot.sessionRpe ?? 0,
+    }, run.athleteId === viewer.id ? undefined : run.athleteId, run.athleteId === viewer.id ? "training" : "coaching");
   }
 
   function openProgramRunActivity(entry: CoachAgendaEntry) {
@@ -3710,7 +3592,7 @@ export default function LiftLogApp({
         rpe: entry.rpe ?? 0,
       },
       program?.athleteId !== viewer.id ? program?.athleteId : undefined,
-      "program",
+      "training",
     );
   }
 
@@ -3744,23 +3626,12 @@ export default function LiftLogApp({
         athlete,
         run,
         entry.workoutId,
-        entry.programVersionId,
       );
       return;
     }
-    const assignedProgram = athlete.assignedPrograms.find(
-      (candidate) =>
-        candidate.assignmentId === entry.assignmentId ||
-        candidate.programId === entry.programId ||
-        candidate.id === entry.programId,
-    );
-    if (assignedProgram)
-      void openAthleteProgram(
-        athlete,
-        assignedProgram,
-        entry.workoutId,
-        entry.programVersionId,
-      );
+    if (entry.programRunId && repository) {
+      void repository.loadProgramRunDetail(entry.programRunId).then(run => { if (run) void openAthleteProgram(athlete, run, entry.workoutId); }).catch(error => notify(error instanceof Error ? error.message : "Training could not be opened."));
+    }
   }
 
   const showingWorkoutPreview = Boolean(workoutPreviewSchedule);
@@ -3771,7 +3642,7 @@ export default function LiftLogApp({
       <Sidebar
         activeView={
           detail?.returnView ??
-          (programOwnerId !== viewer.id ? "coaching" : activeView)
+          (activeView === "training" && program ? programReturnView : activeView === "workout" ? activeWorkoutReturnView : activeView)
         }
         onNavigate={navigate}
         viewer={viewer}
@@ -3786,13 +3657,13 @@ export default function LiftLogApp({
           "app-content",
           (completedWorkoutView ||
             showingWorkoutPreview ||
-            (activeSession && activeWorkoutVisible) ||
-            (activeView === "program" && program)) &&
+            (activeView === "workout" && activeSession && activeWorkoutVisible) ||
+            (activeView === "training" && program)) &&
             "has-detail-navigation",
         )}
       >
         <div className="mobile-topbar">
-          <button className="brand-mark" onClick={() => navigate("today")}>
+          <button className="brand-mark" onClick={() => navigate("training")}>
             LL
           </button>
           <strong>Lift Log</strong>
@@ -3829,9 +3700,11 @@ export default function LiftLogApp({
           </div>
         )}
 
-        {activeView === "today" && completedWorkoutView && (
+        {activeView === "workout" && completedWorkoutView && (
           <CompletedWorkoutView
             state={completedWorkoutView}
+            onRepeat={() => void repeatCompletedWorkout(completedWorkoutView.session)}
+            repeating={programAction?.id === completedWorkoutView.session.id}
             viewerId={viewer.id}
             weightUnit={workspace.profile.weightUnit}
             distanceUnit={workspace.profile.distanceUnit}
@@ -3846,22 +3719,22 @@ export default function LiftLogApp({
               completedWorkoutRequestRef.current += 1;
               completedWorkoutRestoreKeyRef.current = null;
               const returnView = completedWorkoutView.returnView;
-              if (returnView === "program") {
-                leaveDetail("program");
+              if (returnView === "training") {
+                leaveDetail("training");
               } else {
                 leaveDetail(returnView);
               }
             }}
           />
         )}
-        {activeView === "today" &&
+        {activeView === "workout" &&
           !completedWorkoutView &&
           ((showingWorkoutPreview && workoutPreviewSchedule) ||
             (activeSession &&
               activeWorkoutVisible &&
               todayWorkout &&
               workoutFocus)) && (
-          <TodayView
+          <WorkoutView
             program={showingWorkoutPreview ? previewProgram : todayProgram}
             viewerId={viewer.id}
             workout={
@@ -3879,7 +3752,6 @@ export default function LiftLogApp({
                 : workoutFocus!.plannedDate
             }
             workoutStarted={!showingWorkoutPreview && workoutStarted}
-            workoutComplete={!showingWorkoutPreview && workoutComplete}
             workoutAction={showingWorkoutPreview ? null : workoutAction}
             setLogs={showingWorkoutPreview ? starterSetLogs(workoutPreviewSchedule!.workout, null) : setLogs}
             resultLogs={showingWorkoutPreview ? starterResultLogs(workoutPreviewSchedule!.workout, null) : resultLogs}
@@ -3895,14 +3767,11 @@ export default function LiftLogApp({
             onStart={() =>
               void startWorkout(
                 showingWorkoutPreview ? workoutPreviewSchedule! : todaySchedule!,
+                showingWorkoutPreview ? workoutPreviewReturnView : "training",
               )
             }
             allowStart={!showingWorkoutPreview || !activeSession}
             onFinish={finishWorkout}
-            onReset={() => {
-              setWorkoutComplete(false);
-              setWorkoutStarted(false);
-            }}
             onUpdateSet={updateSet}
             onAddSet={addSet}
             onRemoveSet={removeSet}
@@ -3937,10 +3806,10 @@ export default function LiftLogApp({
                     leaveDetail(returnView);
                   }
                 : activeSession
-                ? () => leaveDetail("today")
+                ? () => leaveDetail(activeWorkoutReturnView)
                 : undefined
             }
-            backLabel={destinationLabel(workoutPreviewReturnView)}
+            backLabel={destinationLabel(showingWorkoutPreview ? workoutPreviewReturnView : activeWorkoutReturnView)}
             onReschedule={
               workoutPreviewReturnView === "calendar" && workoutPreviewSchedule
                 ? () => {
@@ -3951,6 +3820,9 @@ export default function LiftLogApp({
                   }
                 : undefined
             }
+            onEditWorkout={showingWorkoutPreview && workoutPreviewSchedule?.status === "planned" && workoutPreviewSchedule.programRunWorkoutId
+              ? () => void editUpcomingWorkout(workoutPreviewSchedule, workoutPreviewReturnView)
+              : undefined}
             onRemoveFromCalendar={
               workoutPreviewSchedule
                 ? () => {
@@ -3973,84 +3845,7 @@ export default function LiftLogApp({
             }
           />
         )}
-        {activeView === "today" &&
-          !completedWorkoutView &&
-          (!activeSession || !activeWorkoutVisible) &&
-          !workoutPreviewSchedule && (
-          <Suspense fallback={<div className="feature-load-status" role="status">Loading workouts…</div>}>
-          <NextWorkoutsView
-            schedules={upcomingWorkouts}
-            completedSessions={completedHistory}
-            completedLoading={completedHistoryLoading}
-            completedError={completedHistoryError}
-            completedHasMore={Boolean(completedHistoryCursor)}
-            onLoadMoreCompleted={() => void loadCompletedHistory(true)}
-            hasMore={Boolean(upcomingCursor)}
-            loading={upcomingLoading}
-            error={upcomingLoadError}
-            onLoadMore={() =>
-              void loadUpcomingWorkouts(
-                upcomingFailedResetRef.current ||
-                  !upcomingInitializedRef.current,
-              )
-            }
-            onLoadCompleted={() => void loadCompletedHistory()}
-            onOpenCompleted={(session) =>
-              void openCalendarResults(session, undefined, "today")
-            }
-            hasProgram={programCatalog.some(
-              (candidate) =>
-                candidate.sourceType === "self" &&
-                (candidate.workoutCount ?? programWorkoutCount(candidate)) > 0,
-            )}
-            hasPublishedProgram={programCatalog.some(
-              (candidate) =>
-                candidate.sourceType === "self" &&
-                (candidate.workoutCount ?? programWorkoutCount(candidate)) > 0,
-            )}
-            startingScheduleId={startingScheduleId}
-            activeScheduleId={
-              activeSession
-                ? (todaySchedule?.id ?? activeSession.scheduledWorkoutId ?? null)
-                : null
-            }
-            onNavigate={navigate}
-            onSchedule={() =>
-              void openProgramRunWizard({
-                mode: "self",
-                athleteIds: [viewer.id],
-              })
-            }
-            onStart={(schedule) => {
-              if (
-                activeSession &&
-                schedule.id ===
-                  (todaySchedule?.id ?? activeSession.scheduledWorkoutId)
-              ) {
-                showActiveWorkout();
-                return;
-              }
-              void startWorkout(schedule);
-            }}
-            onOpen={(schedule) => {
-              if (
-                activeSession &&
-                schedule.id ===
-                  (todaySchedule?.id ?? activeSession.scheduledWorkoutId)
-              ) {
-                showActiveWorkout();
-                return;
-              }
-              openWorkoutPreview(schedule);
-            }}
-            onSetStatus={(scheduleId, status) => {
-              void setScheduledWorkoutStatus(scheduleId, status);
-            }}
-            statusAction={scheduleStatusAction}
-          />
-          </Suspense>
-        )}
-        {activeView === "program" && program && currentWeek && (
+        {activeView === "training" && program && currentWeek && (
           <Suspense
             fallback={
               <div className="feature-load-status" role="status">
@@ -4071,10 +3866,17 @@ export default function LiftLogApp({
             mutationPending={builderMutationPending}
             viewerId={viewer.id}
             capabilities={capabilitiesForViewedProgram(program)}
-            backLabel={destinationLabel(programReturnView)}
+            editing={programEditing}
+            onEdit={() => void editProgram(program, selectedWorkout?.id)}
+            backLabel={program.editableRunId ? "Workout" : destinationLabel(programReturnView)}
             workouts={programWorkoutSequence}
             selectedWorkout={selectedWorkout}
             runWorkouts={viewingProgramRunDetail?.workouts ?? []}
+            onOpenRunWorkout={viewingProgramRun?.athleteId === viewer.id ? (slot) => void openOwnRunWorkout(slot) : undefined}
+            onStartRunWorkout={viewingProgramRun?.athleteId === viewer.id ? slot => void startRunWorkout(viewingProgramRun, slot) : undefined}
+            onOpenRunWorkoutResults={viewingProgramRun ? slot => openRunWorkoutResults(viewingProgramRun, slot) : undefined}
+            onEditRunWorkout={viewingProgramRun ? (slot) => void editRunWorkout(slot) : undefined}
+            onStart={!program.editableRunId && !viewingProgramRunId && capabilitiesForProgram(program).schedule ? () => void startTraining({ programId: program.id, workoutId: selectedWorkout?.id }, program.id) : undefined}
             onSearchExercises={searchBuilderExercises}
             onSelectWorkout={(id) => {
               setSelectedWorkoutId(id);
@@ -4089,6 +3891,7 @@ export default function LiftLogApp({
             onDeleteWorkout={deleteSelectedWorkout}
             onReorderWorkouts={reorderWorkouts}
             onAddExercise={addExerciseToWorkout}
+            onCreateCustomExercise={addCustomExerciseToWorkout}
             onEditItem={(item) => {
               setPrescriptionItem(item);
               setNewPrescriptionItemId(null);
@@ -4096,17 +3899,18 @@ export default function LiftLogApp({
             }}
             onRemoveItem={removeWorkoutItem}
             onReorderItems={reorderWorkoutItems}
-            onSave={() => { void programMetadata.flush().catch(() => undefined); }}
+            onSave={() => void finishProgramEditing()}
             onDuplicate={
               capabilitiesForViewedProgram(program).copyToOwn
                 ? () =>
                     void duplicateProgram(
                       program,
-                      viewingProgramRunId ?? undefined,
+                      viewingProgramRun,
                     )
                 : undefined
             }
             onBack={() => guardProgramNavigation(() => {
+              if (program.editableRunId) { void returnFromWorkoutEditor(); return; }
               const returnView = programReturnView;
               setProgram(null);
               setViewingProgramRunId(null);
@@ -4117,26 +3921,21 @@ export default function LiftLogApp({
               leaveDetail(returnView);
             })}
             onAssignProgram={
-              !viewingProgramRunId && capabilitiesForProgram(program).assign
-                ? () => void openProgramRunWizard({
-                    mode: "coach",
+              viewingProgramRun && viewingProgramRun.athleteId === viewer.id && viewingProgramRun.createdById === viewer.id && (workspace.coachedAthletes.length > 0 || (workspace.coachingAccess?.coachedAthleteCount ?? 0) > 0)
+                ? () => void openAssignment({ programId: program.id, assignRun: viewingProgramRun })
+                : !viewingProgramRunId && capabilitiesForProgram(program).assign
+                ? () => void openAssignment({
                     programId: program.id,
                   })
                 : undefined
             }
             onEditWorkout={() => guardProgramNavigation(() => setModal("workout-settings"))}
-            onSchedule={
-              !viewingProgramRunId && capabilitiesForProgram(program).schedule
-                ? () =>
-                    void (program.sourceType === "self"
-                      ? openProgramRunWizard({
-                          mode: "self",
-                          programId: program.id,
-                          athleteIds: [viewer.id],
-                        })
-                      : openScheduleForProgram(program))
-                : undefined
-            }
+            onEndProgram={viewingProgramRun && (viewingProgramRun.status === "not_started" || viewingProgramRun.status === "in_progress")
+              ? () => { setContentDeleteTarget({ kind: "program-run", id: viewingProgramRun.id, title: viewingProgramRun.title, contentType: viewingProgramRun.contentType }); setModal("delete-content"); }
+              : undefined}
+            onSetDates={!program.editableRunId && (viewingProgramRun ? viewingProgramRun.status === "not_started" || viewingProgramRun.status === "in_progress" : capabilitiesForProgram(program).schedule)
+              ? () => viewingProgramRun ? openRunDates(viewingProgramRun) : openSourceDates(program)
+              : undefined}
             renderWorkoutItem={(item) => (
               <WorkoutLogItem
                 item={item}
@@ -4179,32 +3978,22 @@ export default function LiftLogApp({
             />
           </Suspense>
         )}
-        {activeView === "program" &&
-          !program &&
-          (programOwnerId !== viewer.id &&
-          selectedAthlete &&
-          selectedAthlete.id === programOwnerId ? (
-            <CoachProgramEmpty
-              athlete={selectedAthlete}
-              onCreate={() => {
-                setProgramTarget({
-                  id: selectedAthlete.id,
-                  name: selectedAthlete.name,
-                });
-                setModal("program");
-              }}
-            />
-          ) : (
+        {activeView === "training" &&
+          !program && (
+          <Suspense fallback={<div className="feature-load-status" role="status"><LoaderCircle size={16} className="spin" />Opening training…</div>}>
             <ProgramsHome
               programs={programCatalog}
-              programRuns={[
-                ...new Map(
-                  [...(workspace.programRuns ?? []), ...coachProgramRuns].map((run) => [run.id, run]),
-                ).values(),
-              ]}
-              hasMoreProgramRuns={Boolean(workspace.hasMoreCoachProgramRuns)}
-              programRunsLoadingMore={coachProgramRunsLoadingMore}
-              programRunsLoadError={coachProgramRunsLoadError}
+              programRuns={workspace.programRuns ?? []}
+              hasMoreRuns={Boolean(workspace.hasMoreProgramRuns)}
+              runsLoading={ownRunsLoadingMore}
+              runsError={ownRunsLoadError}
+              onLoadMoreRuns={() => void loadMoreOwnRuns()}
+              historicalRuns={historicalRuns}
+              historyRunsLoading={historyRunsLoading}
+              historyRunsError={historyRunsError}
+              historyRunsHasMore={Boolean(historyRunsCursor)}
+              onLoadHistoryRuns={() => void loadRunHistory()}
+              onLoadMoreHistoryRuns={() => void loadRunHistory(true)}
               viewerId={viewer.id}
               source={programSource}
               hasCoach={hasCoachTraining}
@@ -4216,33 +4005,34 @@ export default function LiftLogApp({
               onOpen={(targetProgram) => void openProgram(targetProgram)}
               onEdit={editProgram}
               onDuplicate={duplicateProgram}
+              onAssign={(targetProgram) => void openAssignment({ programId: targetProgram.id })}
+              onAssignRun={workspace.coachedAthletes.length > 0 || (workspace.coachingAccess?.coachedAthleteCount ?? 0) > 0
+                ? (run) => void openAssignment({ programId: run.programId, assignRun: run })
+                : undefined}
               onDelete={deleteOwnProgram}
-              onUnassign={(targetProgram) =>
-                unassignProgram(targetProgram.assignmentId, targetProgram.title)
-              }
               onSource={setProgramSource}
-              onCreate={() => {
-                setProgramTarget({
-                  id: viewer.id,
-                  name: workspace.profile.displayName,
-                });
-                setModal("program");
-              }}
+              onCreate={() => setModal("program")}
               onCreateWorkout={() => setModal("quick-workout")}
-              onSchedule={(targetProgram) =>
-                void (targetProgram.sourceType === "self"
-                  ? openProgramRunWizard({
-                      mode: "self",
-                      programId: targetProgram.id,
-                      athleteIds: [viewer.id],
-                    })
-                  : openScheduleForProgram(targetProgram))
-              }
-              onOpenRun={(run) => void openOwnProgramRun(run, "program")}
-              onScheduleRun={(run) => {
-                setProgramRunScheduleTarget(run);
-                setModal("run-schedule");
-              }}
+              onSetDates={openSourceDates}
+              onStartProgram={(source, workoutId) => void startTraining({ programId: source.id, workoutId }, source.id)}
+              onOpenRun={(run) => void openOwnProgramRun(run, "training")}
+              onSetRunDates={openRunDates}
+              onStartRunWorkout={(run, slot) => void startRunWorkout(run, slot)}
+              onEditRunWorkout={(run, slot) => void editRunWorkout(slot, run, "training")}
+              onRestoreRunWorkout={(run, slot) => void restoreRunWorkout(run, slot).catch(error => notify(error instanceof Error ? error.message : "Workout could not be restored."))}
+              onLoadRunDetail={run => loadProgramRunDetail(run.id)}
+              onLoadProgramDetail={loadTrainingProgram}
+              activeWorkout={activeSession ? { title: todayWorkout?.title ?? "Workout in progress", programRunId: activeSession.programRunId } : undefined}
+              onResumeWorkout={() => showActiveWorkout()}
+              startingTrainingId={startingScheduleId}
+              completedSessions={completedHistory}
+              completedLoading={completedHistoryLoading}
+              completedError={completedHistoryError}
+              completedHasMore={Boolean(completedHistoryCursor)}
+              onLoadCompleted={() => void loadCompletedHistory()}
+              onLoadMoreCompleted={() => void loadCompletedHistory(true)}
+              onOpenCompleted={session => void openCalendarResults(session, undefined, "training")}
+              onOpenRunWorkoutResults={openRunWorkoutResults}
               onEndRun={(run) => {
                 setContentDeleteTarget({
                   kind: "program-run",
@@ -4252,18 +4042,11 @@ export default function LiftLogApp({
                 });
                 setModal("delete-content");
               }}
-              onRepeatRun={(run) =>
-                void openProgramRunWizard({
-                  mode: "self",
-                  programId: run.programId,
-                  athleteIds: [viewer.id],
-                  repeatRun: run,
-                })
-              }
+              onRepeatRun={(run) => void repeatRunForEditing(run)}
               onLoadMore={() => void loadMorePrograms()}
-              onLoadMoreProgramRuns={() => void loadMoreCoachAssignedRuns()}
             />
-          ))}
+          </Suspense>
+        )}
         {activeView === "calendar" && (
           <>
             {calendarRangeLoading && (
@@ -4302,7 +4085,6 @@ export default function LiftLogApp({
                 weekStartsOnSunday={workspace.profile.weekStartsOnSunday}
                 canSchedule={
                   Boolean(repository) ||
-                  scheduleCandidates.length > 0 ||
                   schedulablePrograms.some(
                     (candidate) => candidate.versionStatus === "published",
                   )
@@ -4313,10 +4095,10 @@ export default function LiftLogApp({
                 onOpenResults={openCalendarResults}
                 onScheduleDay={(date) => openSchedule(undefined, date)}
                 onMoveSchedule={(scheduleId, date) => {
-                  void saveSchedule(scheduleId, date);
+                  void saveSchedule(scheduleId, date).catch(error => notify(error instanceof Error ? error.message : "The date could not be changed."));
                 }}
                 onRemoveSchedule={(scheduleId) => {
-                  void saveSchedule(scheduleId, null);
+                  void saveSchedule(scheduleId, null).catch(error => notify(error instanceof Error ? error.message : "The date could not be removed."));
                 }}
                 onVisibleRangeChange={loadVisibleCalendarRange}
               />
@@ -4406,69 +4188,19 @@ export default function LiftLogApp({
               void openCoachAgendaEntry(athlete, entry)
             }
             onAssignAthlete={(athlete) =>
-              void openProgramRunWizard({
-                mode: "coach",
+              void openAssignment({
                 athleteIds: [athlete.id],
               })
             }
-            onScheduleAthlete={(athlete, assignedProgram) => {
-              if (
-                assignedProgram &&
-                "programVersionId" in assignedProgram &&
-                !assignedProgram.legacy
-              ) {
-                setProgramRunScheduleTarget(assignedProgram);
-                setModal("run-schedule");
-                return;
-              }
-              if (!assignedProgram) {
-                void openProgramRunWizard({
-                  mode: "coach",
-                  athleteIds: [athlete.id],
-                });
-                return;
-              }
-              notify(
-                "This older assignment is read-only. Use its migrated program run instead.",
-              );
-            }}
-            onUnassignAthlete={(_athlete, assignedProgram) => {
-              if (
-                "programVersionId" in assignedProgram &&
-                !assignedProgram.legacy
-              ) {
-                setContentDeleteTarget({
-                  kind: "program-run",
-                  id: assignedProgram.id,
-                  title: assignedProgram.title,
-                  contentType: assignedProgram.contentType,
-                });
-                setModal("delete-content");
-                return;
-              }
-              unassignProgram(
-                assignedProgram.assignmentId,
-                assignedProgram.title,
-              );
-            }}
-            onRepeatAthlete={(athlete, assignedProgram) => {
-              if (
-                "programVersionId" in assignedProgram &&
-                !assignedProgram.legacy
-              ) {
-                void openProgramRunWizard({
-                  mode: "coach",
-                  programId: assignedProgram.programId,
-                  athleteIds: [athlete.id],
-                  repeatRun: assignedProgram,
-                });
-              }
-            }}
+            onScheduleAthlete={(athlete, run) => run ? openRunDates(run) : void openAssignment({athleteIds:[athlete.id]})}
+            onUnassignAthlete={(_athlete, run) => { setContentDeleteTarget({kind:"program-run",id:run.id,title:run.title,contentType:run.contentType}); setModal("delete-content"); }}
+            onRepeatAthlete={(_athlete, run) => void repeatRunForEditing(run)}
+
           />
         )}
       </section>
 
-      <Suspense fallback={<ModalShell title="Opening editor" description="Loading the form…" onClose={() => setModal(null)}><p role="status">Loading…</p></ModalShell>}>
+      <Suspense fallback={<ModalShell title="Opening editor" onClose={() => setModal(null)}><p role="status">Loading…</p></ModalShell>}>
       {modal === "exercise" && (
         <ExerciseModal
           exercise={exerciseEditing}
@@ -4582,11 +4314,14 @@ export default function LiftLogApp({
             </div>
           }
         >
-          <ProgramRunWizard
-            mode={assignmentSeed.mode}
-            viewerId={viewer.id}
-            viewerName={workspace.profile.displayName}
-            programs={runWizardPrograms}
+          <AssignTrainingDialog
+            programs={assignableOwnPrograms}
+            runs={assignmentRuns}
+            initialRunId={assignmentSeed.assignRun?.id}
+            onLoadRun={loadAssignmentRun}
+            hasMoreRuns={Boolean(workspace.hasMoreProgramRuns)}
+            loadingMoreRuns={ownRunsLoadingMore}
+            onLoadMoreRuns={() => void loadMoreOwnRuns()}
             athletes={workspace.coachedAthletes}
             hasMorePrograms={Boolean(programCursor)}
             loadingMorePrograms={programsLoadingMore}
@@ -4595,90 +4330,35 @@ export default function LiftLogApp({
             loadingMoreAthletes={coachAthletesLoadingMore}
             onLoadMoreAthletes={() => void loadMoreCoachAthletes()}
             initialProgramId={
-              assignmentSeed.repeatRun?.programId ?? assignmentSeed.programId
+              assignmentSeed.assignRun ? undefined : assignmentSeed.programId
             }
             initialAthleteIds={assignmentSeed.athleteIds}
-            onLoadProgram={loadProgramForCurrentRunWizard}
+            onLoadProgram={loadTrainingProgram}
             onClose={() => {
-              setAssignmentSeed({ mode: "coach" });
-              setAssignmentProgramOverride(null);
-              setModal(null);
+              setAssignmentSeed({});
+                        setModal(null);
             }}
-            onCreate={createProgramRun}
+            onAssign={assignTraining}
           />
         </Suspense>
       )}
-      {modal === "run-schedule" && programRunScheduleTarget && (
-        <Suspense
-          fallback={
-            <div className="feature-load-status" role="status">
-              <LoaderCircle size={16} className="spin" />
-              Opening schedule…
-            </div>
-          }
-        >
-          <ProgramRunScheduleWizard
-            run={programRunScheduleTarget}
-            athleteName={
-              programRunScheduleTarget.athleteId === viewer.id
-                ? undefined
-                : workspace.coachedAthletes.find(
-                    (athlete) => athlete.id === programRunScheduleTarget.athleteId,
-                  )?.name
-            }
-            onLoad={loadProgramRunDetail}
-            onClose={() => {
-              setProgramRunScheduleTarget(null);
-              setModal(null);
-            }}
-            onSave={async (workoutDates, idempotencyKey) => {
-              let refreshFailed = false;
-              if (repository) {
-                await repository.scheduleProgramRunWorkouts(
-                  programRunScheduleTarget.id,
-                  workoutDates,
-                  idempotencyKey,
-                );
-              }
-              const dated = workoutDates.filter((entry) => entry.plannedDate).length;
-              const targetAthleteId = programRunScheduleTarget.athleteId;
-              setProgramRunScheduleTarget(null);
-              setModal(null);
-              if (repository) {
-                try {
-                  await Promise.all([
-                    refreshProgramWorkspace(),
-                    targetAthleteId === viewer.id
-                      ? loadUpcomingWorkouts(true)
-                      : Promise.resolve(),
-                  ]);
-                  if (targetAthleteId !== viewer.id) {
-                    const refreshed = await refreshCoachWorkspace();
-                    refreshFailed = !refreshed;
-                  }
-                } catch {
-                  refreshFailed = true;
-                }
-              }
-              const successMessage =
-                dated
-                  ? `${dated} ${dated === 1 ? "workout" : "workouts"} added to the calendar`
-                  : "Program dates updated";
-              notify(
-                refreshFailed
-                  ? `${successMessage} · saved successfully; refresh to update this screen`
-                  : successMessage,
-              );
-            }}
+      {modal === "training-dates" && trainingDateTarget && (
+        <Suspense fallback={<div role="status">Opening dates…</div>}>
+          <TrainingDatesEditor
+            run={trainingDateTarget.kind === "run" ? trainingDateTarget.run : trainingDateTarget.kind === "source" ? sourceDateDetail(trainingDateTarget.program) : occurrenceDateDetail(trainingDateTarget.schedule, viewer.id)}
+            initialDate={scheduleInitialDate ?? undefined}
+            athleteName={trainingDateTarget.kind === "run" && trainingDateTarget.run.athleteId !== viewer.id ? workspace.coachedAthletes.find(athlete => athlete.id === trainingDateTarget.run.athleteId)?.name : undefined}
+            onLoad={loadTrainingDateDetail}
+            onClose={() => { setTrainingDateTarget(null); setModal(null); }}
+            onSave={saveTrainingDates}
           />
         </Suspense>
       )}
       {modal === "program" && (
         <ProgramModal
-          targetName={programTarget?.name ?? workspace.profile.displayName}
+          targetName={workspace.profile.displayName}
           onClose={() => {
-            setProgramTarget(null);
-            setModal(null);
+                  setModal(null);
           }}
           onSave={createProgram}
         />
@@ -4691,33 +4371,20 @@ export default function LiftLogApp({
           onSave={createQuickWorkout}
         />
       )}
-      {modal === "deactivate-program" && program && (
-        <DeactivateProgramModal
-          programTitle={program.title}
-          onClose={() => setModal(null)}
-          onConfirm={deactivateProgram}
-        />
-      )}
-      {modal === "schedule" && (
-        <ScheduleModal
-          key={`${scheduleEditingId ?? "new"}:${scheduleInitialDate ?? "today"}`}
-          candidates={scheduleCandidates}
-          frequentCandidates={frequentScheduleCandidates}
-          schedules={workspace.scheduledWorkouts}
-          editingId={scheduleEditingId}
-          initialDate={scheduleInitialDate}
-          loading={scheduleCandidatesLoading}
-          error={scheduleCandidatesError}
-          hasMore={Boolean(scheduleCandidateCursor)}
-          onLoadMore={() => void loadScheduleCandidates(false)}
-          onRetry={() => void loadScheduleCandidates(true)}
-          onClose={() => {
-            setScheduleEditingId(null);
-            setScheduleInitialDate(null);
-            setModal(null);
-          }}
-          onSave={saveScheduleCandidate}
-        />
+      {modal === "date-picker" && (
+        <Suspense fallback={<div role="status">Opening training…</div>}>
+          <TrainingDatePicker programs={programCatalog} runs={workspace.programRuns ?? []} viewerId={viewer.id}
+            initialDate={scheduleInitialDate ?? localDateOnly()}
+            onChooseProgram={target => openSourceDates(target, scheduleInitialDate ?? undefined)}
+            onChooseRun={run => openRunDates(run, scheduleInitialDate ?? undefined)}
+            onClose={() => setModal(null)}
+            loading={loadingWorkspaceFeature === "programs"}
+            error={workspaceFeatureError?.feature === "programs" ? workspaceFeatureError.message : programsLoadError || ownRunsLoadError}
+            onRetry={() => { if (workspaceFeatureError?.feature === "programs") void loadWorkspaceFeature("programs"); else { if (programsLoadError) void loadMorePrograms(); if (ownRunsLoadError) void loadMoreOwnRuns(); } }}
+            hasMorePrograms={Boolean(programCursor)} loadingMorePrograms={programsLoadingMore} onLoadMorePrograms={() => void loadMorePrograms()}
+            hasMoreRuns={workspace.hasMoreProgramRuns} loadingMoreRuns={ownRunsLoadingMore} onLoadMoreRuns={() => void loadMoreOwnRuns()}
+          />
+        </Suspense>
       )}
       {modal === "account" && (
         <AccountModal
@@ -4783,7 +4450,7 @@ function Sidebar({
   const profileInitials = getInitials(profile.displayName);
   return (
     <aside className="sidebar">
-      <button className="brand" onClick={() => onNavigate("today")}>
+      <button className="brand" onClick={() => onNavigate("training")}>
         <span className="brand-mark">LL</span>
         <span>
           <strong>Lift Log</strong>
@@ -4844,7 +4511,7 @@ function Sidebar({
   );
 }
 
-function TodayView({
+function WorkoutView({
   program,
   viewerId,
   workout,
@@ -4854,7 +4521,6 @@ function TodayView({
   timing,
   plannedDate,
   workoutStarted,
-  workoutComplete,
   workoutAction,
   setLogs,
   resultLogs,
@@ -4870,7 +4536,6 @@ function TodayView({
   onStart,
   allowStart = true,
   onFinish,
-  onReset,
   onUpdateSet,
   onAddSet,
   onRemoveSet,
@@ -4882,8 +4547,9 @@ function TodayView({
   statusAction,
   viewMode,
   onBack,
-  backLabel = "Next workouts",
+  backLabel = "Training",
   onReschedule,
+  onEditWorkout,
   onRemoveFromCalendar,
 }: {
   program?: Program;
@@ -4895,7 +4561,6 @@ function TodayView({
   timing: "active" | "overdue" | "today" | "future";
   plannedDate?: string;
   workoutStarted: boolean;
-  workoutComplete: boolean;
   workoutAction: "starting" | "finishing" | null;
   setLogs: Record<string, SetLog[]>;
   resultLogs: Record<string, Record<string, string>>;
@@ -4911,7 +4576,6 @@ function TodayView({
   onStart: () => void;
   allowStart?: boolean;
   onFinish: () => void;
-  onReset: () => void;
   onUpdateSet: (
     itemId: string,
     index: number,
@@ -4930,6 +4594,7 @@ function TodayView({
   onBack?: () => void;
   backLabel?: string;
   onReschedule?: () => void;
+  onEditWorkout?: () => void;
   onRemoveFromCalendar?: () => void;
 }) {
   const workoutDate = plannedDate
@@ -4954,7 +4619,7 @@ function TodayView({
     ? undefined
     : workoutBelongsToProgram && program
       ? program.title
-      : "Scheduled from an earlier program version";
+      : "Planned workout";
   const timingLabel =
     timing === "active"
       ? plannedDate
@@ -4963,10 +4628,13 @@ function TodayView({
       : timing === "overdue"
         ? `Overdue · originally scheduled ${dateLabel}`
         : timing === "today"
-          ? "Next workout · Today"
-          : `Next workout · ${dateLabel}`;
+          ? "Workout · Today"
+          : `Workout · ${dateLabel}`;
   const workoutActions: ObjectAction[] = [];
   const actionPending = statusAction !== null || workoutAction !== null || (workoutStarted && !editable);
+  if (viewMode && onEditWorkout) workoutActions.push({
+    label: "Edit workout", accessibleLabel: "Edit workout", icon: actionUi.edit.icon, onClick: onEditWorkout, disabled: actionPending,
+  });
   if (viewMode && onReschedule) workoutActions.push({
     label: actionUi.reschedule.label, accessibleLabel: "Reschedule workout",
     icon: actionUi.reschedule.icon, onClick: onReschedule, disabled: actionPending,
@@ -4976,8 +4644,8 @@ function TodayView({
     icon: CalendarMinus, onClick: onRemoveFromCalendar, disabled: actionPending,
   });
   if (workoutStarted && onSetPlanned) workoutActions.push({
-    label: statusAction === "planned" ? "Restoring…" : "Set back to scheduled",
-    accessibleLabel: "Set back to scheduled", icon: RefreshCw, onClick: onSetPlanned,
+    label: statusAction === "planned" ? "Restoring…" : "Restore workout",
+    accessibleLabel: "Restore workout", icon: RefreshCw, onClick: onSetPlanned,
     loading: statusAction === "planned", disabled: actionPending,
   });
   if ((viewMode || workoutStarted) && onSkip) workoutActions.push({
@@ -4997,13 +4665,11 @@ function TodayView({
       <PageHeader
         eyebrow={viewMode ? `Workout preview · ${dateLabel}` : timingLabel}
         title={
-          workoutComplete
-            ? "Session complete"
-            : timing === "active"
+          timing === "active"
               ? "Workout in progress"
               : viewMode
                 ? "Workout preview"
-                : "Next workout"
+                : "Workout"
         }
         description={planDescription}
       >
@@ -5020,22 +4686,6 @@ function TodayView({
         <div className="feature-load-status" role="status">
           <span>{editingBlockedReason ?? "Preparing your saved workout…"}</span>
           {editingBlockedReason && <button type="button" className="text-button" onClick={onRetryEditing}>Try again</button>}
-        </div>
-      )}
-      {workoutComplete && (
-        <div className="success-banner">
-          <span>
-            <Check size={20} />
-          </span>
-          <div>
-            <strong>Nice work. Your session is logged.</strong>
-            <p>
-              {sessionRpe ? `RPE ${sessionRpe} · ` : ""}{workout.durationMinutes} planned minutes
-            </p>
-          </div>
-          <button className="button ghost" onClick={onReset}>
-            View again
-          </button>
         </div>
       )}
       <div className="today-layout">
@@ -5060,7 +4710,7 @@ function TodayView({
               )}
             </div>
             <span className="time-pill">
-              <Clock3 size={14} />~ {workout.durationMinutes} min
+              {workout.durationMinutes !== undefined && <><Clock3 size={14} />{workout.durationMinutes} min</>}
             </span>
           </div>
           <section className="workout-section workout-exercise-sequence">
@@ -5087,7 +4737,7 @@ function TodayView({
               </div>
             ))}
           </section>
-          {!workoutStarted && !workoutComplete && allowStart && (
+          {!workoutStarted && allowStart && (
             <AsyncButton
               className="button primary full"
               loading={workoutAction === "starting"}
@@ -5691,6 +5341,8 @@ function CompletedWorkoutView({
   distanceUnit,
   exerciseCategoryForName,
   onBack,
+  onRepeat,
+  repeating,
 }: {
   state: CompletedWorkoutViewState;
   program?: Program;
@@ -5699,6 +5351,8 @@ function CompletedWorkoutView({
   distanceUnit: OwnProfile["distanceUnit"];
   exerciseCategoryForName: (name: string) => string;
   onBack: () => void;
+  onRepeat: () => void;
+  repeating: boolean;
 }) {
   const dateLabel = new Date(`${state.session.date}T12:00:00`).toLocaleDateString(
     "en",
@@ -5723,6 +5377,9 @@ function CompletedWorkoutView({
           />
         )}
         <StatusBadge status="completed" />
+        <button type="button" className="button secondary small" disabled={repeating || state.loading} onClick={onRepeat}>
+          <RefreshCw size={15} />{repeating ? "Preparing…" : "Repeat workout"}
+        </button>
       </PageHeader>
       <div className="today-layout">
         <article className="workout-card completed-workout-card">
@@ -5965,7 +5622,6 @@ function CoachingView({
         <PageHeader
           eyebrow="Shared progress"
           title="Coaching"
-          description="Assign training, review progress, and see the results of the athletes you coach."
         >
           <SegmentedTabs
             compact
@@ -6034,7 +5690,6 @@ function CoachingView({
       <PageHeader
         eyebrow="Shared progress"
         title="Coaching"
-        description="Invite people you trust to plan with context, or manage the athletes who invited you."
       >
         <SegmentedTabs
           compact
@@ -6065,7 +5720,7 @@ function CoachingView({
           <section className="panel coach-access-card">
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">Plan access</p>
+                <p className="eyebrow">Training access</p>
                 <h3>
                   {coachConnections.length} active{" "}
                   {coachConnections.length === 1 ? "coach" : "coaches"}
@@ -6155,11 +5810,11 @@ function CoachingView({
                   </span>
                   <span>
                     <Check size={15} />
-                    Create and update future program versions
+                    Create and edit upcoming workouts and programs
                   </span>
                   <span>
                     <Check size={15} />
-                    Use personal exercises while building your plan
+                    Use personal exercises while creating your workouts
                   </span>
                   <span className="locked">
                     <LockKeyhole size={15} />
@@ -6179,7 +5834,7 @@ function CoachingView({
                 </span>
                 <h2>No active coach yet</h2>
                 <p>
-                  Invite a coach above to build future plans and review your
+                  Invite a coach above to create training and review your
                   workout history. You stay in control of every connection.
                 </p>
               </div>
@@ -6217,8 +5872,8 @@ function ExerciseDetailsModal({
       title={exercise.name}
       description={
         exercise.scope === "global"
-          ? "A provided Lift Log exercise. Copy it to My exercises to make your own reusable version."
-          : "Your reusable exercise. Its defaults will be used when you add it to a workout."
+          ? "A provided Lift Log exercise. Copy it to My exercises to customize it."
+          : "Your exercise. Its defaults will be used when you add it to a workout."
       }
       onClose={onClose}
       dismissible={!copying}
@@ -6361,13 +6016,6 @@ function DeleteContentModal({
         label: "Delete workout",
       };
     }
-    if (target.kind === "assignment") {
-      return {
-        title: `Unassign ${target.title}?`,
-        description: "It will disappear from Programs and any unstarted calendar entries from this assignment will be removed. Completed workout history will stay.",
-        label: "Unassign program",
-      };
-    }
     if (target.kind === "program-run") {
       const quickWorkout = target.contentType === "quick_workout";
       return {
@@ -6387,7 +6035,7 @@ function DeleteContentModal({
     const quickWorkout = target.program.contentType === "quick_workout";
     return {
       title: `Delete ${target.program.title}?`,
-      description: `The reusable ${quickWorkout ? "workout" : "program"} will disappear from My training. Training plans already created from it—including calendar dates and completed results—will stay unchanged.`,
+      description: `This ${quickWorkout ? "workout" : "program"} will be removed from Training. Existing copies and completed results will stay.`,
       label: quickWorkout ? "Delete workout" : "Delete program",
     };
   })();
@@ -6433,9 +6081,7 @@ function DeleteContentModal({
           {deleting ? (
             <>
               <LoaderCircle className="button-spinner" size={15} />
-              {target.kind === "assignment"
-                ? "Unassigning…"
-                : target.kind === "program-run"
+              {target.kind === "program-run"
                   ? "Ending…"
                   : "Deleting…"}
             </>
@@ -6452,65 +6098,6 @@ function DeleteContentModal({
 }
 
 // Extracted authoring: app/features/authoring/PrescriptionModal.tsx
-
-function DeactivateProgramModal({
-  programTitle,
-  onClose,
-  onConfirm,
-}: {
-  programTitle: string;
-  onClose: () => void;
-  onConfirm: () => Promise<void>;
-}) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  async function confirm() {
-    setSaving(true);
-    setError("");
-    try {
-      await onConfirm();
-    } catch (deactivateError) {
-      setError(
-        deactivateError instanceof Error
-          ? deactivateError.message
-          : "The program could not be deactivated.",
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <ModalShell
-      title="Deactivate this program?"
-      description={`${programTitle} will stop being your current plan.`}
-      onClose={onClose}
-    >
-      <div className="invite-permissions">
-        <span>
-          <Check size={14} />
-          Completed workout history is preserved
-        </span>
-        <span>
-          <Check size={14} />
-          Future scheduled workouts from this plan are removed
-        </span>
-        <span>
-          <BookOpen size={14} />
-          You can choose a library program or create a new one next
-        </span>
-      </div>
-      {error && <InlineError>{error}</InlineError>}
-      <div className="modal-actions">
-        <button className="button secondary" onClick={onClose}>
-          Keep current program
-        </button>
-        <button className="button danger" disabled={saving} onClick={confirm}>
-          {saving ? "Deactivating…" : "Deactivate program"}
-        </button>
-      </div>
-    </ModalShell>
-  );
-}
 
 function InviteModal({
   onClose,
@@ -6703,649 +6290,7 @@ function InviteModal({
   );
 }
 
-/** @deprecated ProgramRunWizard is the live assignment flow. */
-export function AssignProgramModal({
-  programs,
-  athletes,
-  hasMoreAthletes,
-  loadingMoreAthletes,
-  athletesLoadError,
-  initialProgramId,
-  initialAthleteIds = [],
-  onClose,
-  onAssign,
-  onLoadMoreAthletes,
-}: {
-  programs: Program[];
-  athletes: AthleteSummary[];
-  hasMoreAthletes: boolean;
-  loadingMoreAthletes: boolean;
-  athletesLoadError: string;
-  initialProgramId?: string;
-  initialAthleteIds?: string[];
-  onClose: () => void;
-  onAssign: (
-    programId: string,
-    athleteIds: string[],
-  ) => Promise<ProgramAssignment[]>;
-  onLoadMoreAthletes: () => void;
-}) {
-  const lockedProgram = Boolean(initialProgramId);
-  const lockedAthletes = !initialProgramId && initialAthleteIds.length === 1;
-  const [programId, setProgramId] = useState(
-    initialProgramId ?? programs[0]?.id ?? "",
-  );
-  const [athleteIds, setAthleteIds] = useState(
-    () => new Set(initialAthleteIds),
-  );
-  const [saving, setSaving] = useState(false);
-  const savingRef = useRef(false);
-  const [error, setError] = useState("");
-  const selectedProgram = programs.find(
-    (candidate) => candidate.id === programId,
-  );
-  const selectedAthletes = athletes.filter((athlete) =>
-    athleteIds.has(athlete.id),
-  );
-
-  function toggleAthlete(athleteId: string) {
-    setAthleteIds((previous) => {
-      const next = new Set(previous);
-      if (next.has(athleteId)) next.delete(athleteId);
-      else next.add(athleteId);
-      return next;
-    });
-  }
-
-  async function assign() {
-    if (!programId || !athleteIds.size || savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
-    setError("");
-    try {
-      await onAssign(programId, [...athleteIds]);
-    } catch (assignmentError) {
-      setError(
-        assignmentError instanceof Error
-          ? assignmentError.message
-          : "The program could not be assigned.",
-      );
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
-  }
-
-  return (
-    <ModalShell
-      title="Assign training"
-      description="Give an athlete access to one of your programs or workouts. Scheduling is a separate step."
-      onClose={onClose}
-      dismissible={!saving}
-      wide
-    >
-      {!programs.length ? (
-        <div className="empty-state modal-empty compact">
-          <Dumbbell size={26} />
-          <h3>No Own programs</h3>
-          <p>Create a program or workout before assigning it to an athlete.</p>
-          <button className="button secondary" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      ) : !athletes.length ? (
-        <div className="empty-state modal-empty compact">
-          <Users size={26} />
-          <h3>No active athletes</h3>
-          <p>Accept a coaching request before assigning a program.</p>
-          <button className="button secondary" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="assignment-grid">
-            <div className="assignment-step">
-              <div className="assignment-step-heading">
-                <span>1</span>
-                <div>
-                  <strong>Program or workout</strong>
-                  <small>Choose training from your Programs list</small>
-                </div>
-              </div>
-              {lockedProgram && selectedProgram ? (
-                <div className="assignment-program-summary">
-                  <Dumbbell size={17} />
-                  <div>
-                    <strong>{selectedProgram.title}</strong>
-                    <small>
-                      {programWorkoutCount(selectedProgram)}{" "}
-                      {programWorkoutCount(selectedProgram) === 1
-                        ? "workout"
-                        : "workouts"}
-                    </small>
-                  </div>
-                  <Check size={16} />
-                </div>
-              ) : (
-                <label className="form-field full">
-                  <span>Choose a program</span>
-                  <select
-                    value={programId}
-                    disabled={saving}
-                    onChange={(event) => setProgramId(event.target.value)}
-                  >
-                    {programs.map((candidate) => (
-                      <option value={candidate.id} key={candidate.id}>
-                        {candidate.title} ·{" "}
-                        {programWorkoutCount(candidate)}{" "}
-                        workouts
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-            <div className="assignment-step">
-              <div className="assignment-step-heading">
-                <span>2</span>
-                <div>
-                  <strong>{lockedAthletes ? "Athlete" : "Athletes"}</strong>
-                  <small>
-                    {lockedAthletes
-                      ? "Assigning from My athletes"
-                      : "Choose one or more people you coach"}
-                  </small>
-                </div>
-              </div>
-              {lockedAthletes ? (
-                selectedAthletes.map((athlete) => (
-                  <div className="assignment-athlete-summary" key={athlete.id}>
-                    <span className="avatar">{athlete.initials}</span>
-                    <div>
-                      <strong>{athlete.name}</strong>
-                      <small>
-                        {athlete.assignedPrograms.length
-                          ? athlete.assignedPrograms.length +
-                            (athlete.assignedPrograms.length === 1
-                              ? " program from you"
-                              : " programs from you")
-                          : "No programs from you yet"}
-                      </small>
-                    </div>
-                    <Check size={16} />
-                  </div>
-                ))
-              ) : (
-                <div className="assignment-athlete-list">
-                  {athletes.map((athlete) => (
-                    <label key={athlete.id}>
-                      <input
-                        type="checkbox"
-                        checked={athleteIds.has(athlete.id)}
-                        disabled={saving}
-                        onChange={() => toggleAthlete(athlete.id)}
-                      />
-                      <span className="avatar">{athlete.initials}</span>
-                      <span>
-                        <strong>{athlete.name}</strong>
-                        <small>
-                          {athlete.assignedPrograms.length
-                            ? athlete.assignedPrograms.length +
-                              (athlete.assignedPrograms.length === 1
-                                ? " program from you"
-                                : " programs from you")
-                            : "No programs from you yet"}
-                        </small>
-                      </span>
-                    </label>
-                  ))}
-                  {athletesLoadError && (
-                    <InlineError>{athletesLoadError}</InlineError>
-                  )}
-                  {hasMoreAthletes && (
-                    <button
-                      type="button"
-                      className="button secondary small library-load-more"
-                      disabled={saving || loadingMoreAthletes}
-                      onClick={onLoadMoreAthletes}
-                    >
-                      {loadingMoreAthletes && (
-                        <LoaderCircle className="button-spinner" size={14} />
-                      )}
-                      {loadingMoreAthletes ? "Loading…" : "Load more athletes"}
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-          {saving && (
-            <div className="assignment-progress" role="status">
-              <LoaderCircle className="button-spinner" size={17} />
-              <span>
-                Assigning training to{" "}
-                {athleteIds.size} {athleteIds.size === 1 ? "athlete" : "athletes"}…
-              </span>
-            </div>
-          )}
-      {error && <InlineError>{error}</InlineError>}
-          <div className="modal-actions assignment-actions">
-            <button
-              className="button secondary"
-              disabled={saving}
-              onClick={onClose}
-            >
-              Cancel
-            </button>
-            <button
-              className="button primary"
-              disabled={!programId || !athleteIds.size || saving}
-              onClick={assign}
-            >
-              {saving ? (
-                <>
-                  <LoaderCircle className="button-spinner" size={15} />
-                  Assigning…
-                </>
-              ) : (
-                <>
-                  <UserPlus size={15} />
-                  Assign to{" "}
-                  {athleteIds.size || 0}{" "}
-                  {athleteIds.size === 1 ? "athlete" : "athletes"}
-                </>
-              )}
-            </button>
-          </div>
-        </>
-      )}
-    </ModalShell>
-  );
-}
-
 // Extracted authoring: app/features/authoring/ProgramModal.tsx
-
-function ScheduleModal({
-  candidates,
-  frequentCandidates,
-  schedules,
-  editingId,
-  initialDate,
-  loading,
-  error: loadError,
-  hasMore,
-  onLoadMore,
-  onRetry,
-  onClose,
-  onSave,
-}: {
-  candidates: SchedulableWorkoutCandidate[];
-  frequentCandidates: FrequentSchedulableWorkoutCandidate[];
-  schedules: ScheduledWorkout[];
-  editingId: string | null;
-  initialDate: string | null;
-  loading: boolean;
-  error: string;
-  hasMore: boolean;
-  onLoadMore: () => void;
-  onRetry: () => void;
-  onClose: () => void;
-  onSave: (
-    candidate: ScheduleCandidate,
-    date: string | null,
-    idempotencyKey: string,
-  ) => Promise<void>;
-}) {
-  const availableCandidates = useMemo<ScheduleCandidate[]>(() => {
-    if (editingId) {
-      const schedule = schedules.find((candidate) => candidate.id === editingId);
-      if (!schedule) return [];
-      const source = candidates.find(
-        (candidate) =>
-          candidate.programVersionId === schedule.programVersionId &&
-          candidate.workoutId === schedule.workoutId &&
-          candidate.assignmentId === schedule.assignmentId,
-      );
-      return [{
-        id: schedule.id,
-        scheduleId: schedule.id,
-        programId: schedule.programId,
-        assignmentId: schedule.assignmentId,
-        programVersionId: schedule.programVersionId,
-        programTitle: schedule.programTitle,
-        workoutId: schedule.workoutId,
-        workoutTitle: schedule.workoutTitle,
-        scheduleLabel: schedule.slotLabel,
-        estimatedMinutes: schedule.workout.durationMinutes,
-        quickWorkout: source?.isQuickWorkout ?? false,
-        plannedDate: schedule.plannedDate,
-      }];
-    }
-
-    const toScheduleCandidate = (
-      candidate:
-        | SchedulableWorkoutCandidate
-        | FrequentSchedulableWorkoutCandidate,
-    ): ScheduleCandidate | null => {
-      const latest = candidate.latestOccurrence;
-      if (
-        !candidate.isQuickWorkout &&
-        latest &&
-        (latest.status === "in_progress" ||
-          latest.status === "completed" ||
-          (latest.status === "planned" && Boolean(latest.plannedDate)))
-      ) {
-        return null;
-      }
-      const reusableOccurrence =
-        latest?.status === "planned" && !latest.plannedDate
-          ? latest
-          : undefined;
-      return {
-        id: `${candidate.assignmentId ?? `program:${candidate.programId}`}:${candidate.programVersionId}:${candidate.workoutId}`,
-        scheduleId: reusableOccurrence?.id,
-        programId: candidate.programId,
-        assignmentId: candidate.assignmentId,
-        programVersionId: candidate.programVersionId,
-        programTitle: candidate.programTitle,
-        workoutId: candidate.workoutId,
-        workoutTitle: candidate.workoutTitle,
-        scheduleLabel: candidate.scheduleLabel,
-        estimatedMinutes: candidate.estimatedMinutes,
-        quickWorkout: candidate.isQuickWorkout,
-        plannedDate: reusableOccurrence?.plannedDate,
-        ...("usageCount" in candidate && candidate.usageCount !== undefined
-          ? {
-              usageCount: candidate.usageCount,
-              lastUsedAt: candidate.lastUsedAt,
-            }
-          : {}),
-      };
-    };
-
-    const merged = [...frequentCandidates, ...candidates];
-    const seen = new Set<string>();
-    return merged.flatMap((candidate): ScheduleCandidate[] => {
-      const mapped = toScheduleCandidate(candidate);
-      if (!mapped || seen.has(mapped.id)) return [];
-      seen.add(mapped.id);
-      return [mapped];
-    });
-  }, [candidates, editingId, frequentCandidates, schedules]);
-
-  const initial =
-    availableCandidates.find((candidate) => candidate.scheduleId === editingId) ??
-    availableCandidates[0];
-  const [candidateId, setCandidateId] = useState(initial?.id ?? "");
-  const [workoutQuery, setWorkoutQuery] = useState("");
-  const [date, setDate] = useState(
-    initial?.plannedDate ?? initialDate ?? localDateOnly(),
-  );
-  const [saving, setSaving] = useState(false);
-  const savingRef = useRef(false);
-  const idempotencyRef = useRef({ fingerprint: "", key: "" });
-  const [savingAction, setSavingAction] = useState<
-    "add" | "reschedule" | "unschedule" | null
-  >(null);
-  const [error, setError] = useState("");
-  const effectiveCandidateId = availableCandidates.some(
-    (candidate) => candidate.id === candidateId,
-  )
-    ? candidateId
-    : (availableCandidates[0]?.id ?? "");
-  const selected = availableCandidates.find(
-    (candidate) => candidate.id === effectiveCandidateId,
-  );
-  const originalDate = selected?.plannedDate ?? "";
-  const action = originalDate
-    ? !date || date === originalDate
-      ? "unschedule"
-      : "reschedule"
-    : "add";
-  const normalizedWorkoutQuery = workoutQuery.trim().toLocaleLowerCase();
-  const frequentChoices = availableCandidates.filter(
-    (candidate) => (candidate.usageCount ?? 0) > 0,
-  );
-  const frequentChoiceIds = new Set(
-    frequentChoices.map((candidate) => candidate.id),
-  );
-  const otherChoices = availableCandidates.filter(
-    (candidate) => !frequentChoiceIds.has(candidate.id),
-  );
-  const matchingChoices = availableCandidates.filter((candidate) =>
-    `${candidate.programTitle} ${candidate.workoutTitle}`
-      .toLocaleLowerCase()
-      .includes(normalizedWorkoutQuery),
-  );
-
-  function selectCandidate(candidate: ScheduleCandidate) {
-    setCandidateId(candidate.id);
-    setDate((currentDate) => candidate.plannedDate ?? currentDate);
-  }
-
-  function workoutChoice(candidate: ScheduleCandidate) {
-    const active = candidate.id === effectiveCandidateId;
-    return (
-      <button
-        type="button"
-        className={cn("schedule-workout-choice", active && "active")}
-        aria-pressed={active}
-        disabled={saving}
-        key={candidate.id}
-        onClick={() => selectCandidate(candidate)}
-      >
-        <span className="schedule-workout-choice-copy">
-          <strong>{candidate.workoutTitle}</strong>
-          {!candidate.quickWorkout && <small>{candidate.programTitle}</small>}
-        </span>
-        <span className="schedule-workout-choice-meta">
-          <small>{formatDuration(candidate.estimatedMinutes)}</small>
-          {candidate.usageCount !== undefined && (
-            <small className="schedule-workout-usage">
-              Used {candidate.usageCount} {candidate.usageCount === 1 ? "time" : "times"}
-            </small>
-          )}
-        </span>
-        <span className="schedule-workout-choice-check" aria-hidden="true">
-          {active && <Check size={15} />}
-        </span>
-      </button>
-    );
-  }
-
-  async function save(
-    nextDate: string | null,
-    nextAction: "add" | "reschedule" | "unschedule",
-  ) {
-    if (!selected || savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
-    setSavingAction(nextAction);
-    setError("");
-    const fingerprint = `${selected.id}:${nextDate ?? ""}:${nextAction}`;
-    if (idempotencyRef.current.fingerprint !== fingerprint) {
-      idempotencyRef.current = { fingerprint, key: crypto.randomUUID() };
-    }
-    try {
-      await onSave(selected, nextDate, idempotencyRef.current.key);
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "The date could not be updated.",
-      );
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-      setSavingAction(null);
-    }
-  }
-
-  return (
-    <ModalShell
-      title={originalDate ? "Update a workout date" : "Schedule a workout"}
-      description="Choose a workout and date. Nothing is created until you add it to Calendar."
-      onClose={onClose}
-      dismissible={!saving}
-    >
-      {loadError && !editingId && (
-        <InlineError>
-          <span>{loadError}</span>{" "}
-          <button
-            type="button"
-            className="text-button"
-            disabled={loading}
-            onClick={onRetry}
-          >
-            Try again
-          </button>
-        </InlineError>
-      )}
-      {loading && !availableCandidates.length ? (
-        <div className="feature-load-status modal-empty" role="status">
-          <LoaderCircle size={22} className="button-spinner" />
-          <span>Loading workouts…</span>
-        </div>
-      ) : availableCandidates.length ? (
-        <>
-          <div className="form-grid">
-            {editingId ? (
-              <div className="form-field full">
-                <span>Workout</span>
-                <div className="schedule-workout-current">
-                  <strong>{selected?.workoutTitle}</strong>
-                  {!selected?.quickWorkout && <small>{selected?.programTitle}</small>}
-                </div>
-              </div>
-            ) : (
-              <div className="form-field full schedule-workout-picker">
-                <span>Workout</span>
-                <label className="search-field schedule-workout-search">
-                  <Search size={16} />
-                  <input
-                    aria-label="Search workouts"
-                    placeholder="Search workouts"
-                    value={workoutQuery}
-                    disabled={saving}
-                    onChange={(event) => setWorkoutQuery(event.target.value)}
-                  />
-                </label>
-                <div className="schedule-workout-choice-list">
-                  {normalizedWorkoutQuery ? (
-                    <div className="schedule-workout-choice-group">
-                      <div className="schedule-workout-choice-heading">
-                        <span>Results</span>
-                        <small>{matchingChoices.length}</small>
-                      </div>
-                      {matchingChoices.length ? (
-                        matchingChoices.map(workoutChoice)
-                      ) : (
-                        <div className="schedule-workout-no-results">
-                          No workouts match “{workoutQuery.trim()}”.
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      {frequentChoices.length > 0 && (
-                        <div className="schedule-workout-choice-group">
-                          <div className="schedule-workout-choice-heading">
-                            <span>Most used</span>
-                            <small>{trainingContentUi("quick_workout").pluralLabel}</small>
-                          </div>
-                          {frequentChoices.map(workoutChoice)}
-                        </div>
-                      )}
-                      {otherChoices.length > 0 && (
-                        <div className="schedule-workout-choice-group">
-                          <div className="schedule-workout-choice-heading">
-                            <span>All workouts</span>
-                            <small>{otherChoices.length}</small>
-                          </div>
-                          {otherChoices.map(workoutChoice)}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-            <label className="form-field full">
-              <span>Date</span>
-              <input
-                type="date"
-                value={date}
-                disabled={saving}
-                onChange={(event) => setDate(event.target.value)}
-              />
-            </label>
-          </div>
-          <div className="form-info">
-            <LockKeyhole size={15} />
-            <span>Only your account can add or move this date.</span>
-          </div>
-          {!editingId && hasMore && (
-            <button
-              type="button"
-              className="button secondary schedule-load-more"
-              disabled={loading || saving}
-              onClick={onLoadMore}
-            >
-              {loading && <LoaderCircle size={15} className="button-spinner" />}
-              {loading ? "Loading…" : "Show more workouts"}
-            </button>
-          )}
-          {error && <InlineError>{error}</InlineError>}
-          <div className="modal-actions schedule-actions">
-            <button
-              className="button secondary"
-              disabled={saving}
-              onClick={onClose}
-            >
-              Cancel
-            </button>
-            <button
-              className={cn(
-                "button",
-                action === "unschedule" ? "danger" : "primary",
-              )}
-              disabled={(action !== "unschedule" && !date) || saving}
-              onClick={() =>
-                save(action === "unschedule" ? null : date, action)
-              }
-            >
-              {saving && <LoaderCircle size={15} className="button-spinner" />}
-              {saving
-                ? savingAction === "unschedule"
-                  ? "Unscheduling…"
-                  : savingAction === "reschedule"
-                    ? "Rescheduling…"
-                    : "Adding…"
-                : action === "unschedule"
-                  ? "Unschedule"
-                  : action === "reschedule"
-                    ? "Reschedule"
-                    : "Add to calendar"}
-            </button>
-          </div>
-        </>
-      ) : (
-        <div className="empty-state modal-empty">
-          <CalendarDays size={26} />
-          <h3>No workouts available to schedule</h3>
-          <p>
-            Create a reusable workout first. Start full programs from Programs;
-            workouts already on your calendar remain available here.
-          </p>
-          <button className="button secondary" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      )}
-    </ModalShell>
-  );
-}
 
 function AccountModal({
   profile,
@@ -7408,7 +6353,6 @@ function AccountModal({
   return (
     <ModalShell
       title="My account"
-      description="Only you can open and edit these account details."
       onClose={onClose}
     >
       <div className="account-identity">

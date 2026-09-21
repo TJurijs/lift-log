@@ -11,7 +11,7 @@ test("athlete selection, tabs and nested training keep browser Back and Forward 
   await page.getByRole("button", { name: /^Open Guntis Ulmanis,/ }).click();
   const athlete = page.locator(".coach-athlete-header");
   await expect(athlete).toContainText("Guntis Ulmanis");
-  await expect(page.getByRole("tab", { name: "Plan", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Training", exact: true })).toHaveAttribute("aria-selected", "true");
   await page.goBack();
   await expect(page.locator(".coach-workspace")).not.toHaveClass(/mobile-detail-open/);
   await page.goForward();

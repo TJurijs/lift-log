@@ -1,24 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CompletedSession, HistoryCursor } from "../../../lib/domain";
-import type { LiftLogRepository } from "../../../lib/repository";
 
-type HistoryRepository = Pick<LiftLogRepository, "listCompletedSessionSummaries">;
+interface HistoryPage<Item, Cursor> {
+  items: Item[];
+  nextCursor?: Cursor;
+}
 
-interface HistoryScope {
+interface HistoryScope<Cursor> {
   active: boolean;
   generation: number;
   loaded: boolean;
-  cursor?: HistoryCursor;
+  cursor?: Cursor;
   pending: Promise<void> | null;
   pendingReset: boolean;
 }
 
-/** Lazy history pages belong to one repository/account and survive page errors. */
-export function useCompletedHistory(
-  repository: HistoryRepository | null,
-  initialSessions: CompletedSession[],
+/** One repository owns each lazy history cursor, request, and invalidation. */
+export function useLazyHistory<Item extends { id: string }, Cursor, Repository>(
+  repository: Repository | null,
+  initialItems: Item[],
+  fetchPage: (repository: Repository, cursor?: Cursor) => Promise<HistoryPage<Item, Cursor>>,
+  fallbackError: string,
 ) {
-  const scope = useMemo<HistoryScope>(() => ({
+  const scope = useMemo<HistoryScope<Cursor>>(() => ({
     active: true,
     generation: 0,
     loaded: !repository,
@@ -27,8 +30,8 @@ export function useCompletedHistory(
   }), [repository]);
   const [state, setState] = useState({
     scope,
-    sessions: initialSessions,
-    cursor: undefined as HistoryCursor | undefined,
+    items: initialItems,
+    cursor: undefined as Cursor | undefined,
     loading: false,
     error: "",
   });
@@ -44,32 +47,30 @@ export function useCompletedHistory(
   const load = useCallback(async function load(more = false): Promise<void> {
     if (!repository || !scope.active) return;
     if (scope.pending) return scope.pending;
-    // A stale cursor must never turn a failed refresh into an older-page retry.
+    // After invalidation, an old Load more handler must retry the first page.
     const append = more && scope.loaded;
     if (append ? !scope.cursor : scope.loaded) return;
     const generation = scope.generation;
     const cursor = append ? scope.cursor : undefined;
     setState((previous) => ({
       scope,
-      sessions: previous.scope === scope ? previous.sessions : initialSessions,
+      items: previous.scope === scope ? previous.items : initialItems,
       cursor,
       loading: true,
       error: "",
     }));
     const request = (async () => {
       try {
-        const page = await Promise.resolve().then(() =>
-          repository.listCompletedSessionSummaries({ limit: 20, ...(cursor ? { cursor } : {}) }),
-        );
+        const page = await Promise.resolve().then(() => fetchPage(repository, cursor));
         if (!scope.active || generation !== scope.generation) return;
         scope.loaded = true;
         scope.cursor = page.nextCursor;
         setState((previous) => ({
           scope,
-          sessions: [...new Map([
-            ...(append && previous.scope === scope ? previous.sessions : []),
+          items: [...new Map([
+            ...(append && previous.scope === scope ? previous.items : []),
             ...page.items,
-          ].map((session) => [session.id, session])).values()],
+          ].map((item) => [item.id, item])).values()],
           cursor: page.nextCursor,
           loading: false,
           error: "",
@@ -79,10 +80,11 @@ export function useCompletedHistory(
         setState((previous) => ({
           ...previous,
           loading: false,
-          error: error instanceof Error ? error.message : "Completed workouts could not be loaded.",
+          error: error instanceof Error ? error.message : fallbackError,
         }));
       } finally {
         scope.pending = null;
+        // Coalesce invalidations into one refresh after the stale request.
         if (scope.active && scope.pendingReset) {
           scope.pendingReset = false;
           await load();
@@ -91,20 +93,21 @@ export function useCompletedHistory(
     })();
     scope.pending = request;
     return request;
-  }, [initialSessions, repository, scope]);
+  }, [fetchPage, initialItems, fallbackError, repository, scope]);
 
   const invalidate = useCallback(() => {
-    if (!repository) return;
+    if (!repository || !scope.active) return;
     scope.generation += 1;
     scope.loaded = false;
     scope.cursor = undefined;
-    // Wait for an existing request, ignore its stale result, then refresh once.
     scope.pendingReset = Boolean(scope.pending);
-    setState((previous) => ({ ...previous, cursor: undefined, error: "" }));
+    setState((previous) => previous.scope === scope
+      ? { ...previous, cursor: undefined, error: "" }
+      : previous);
   }, [repository, scope]);
 
   return {
-    sessions: !repository ? initialSessions : state.scope === scope ? state.sessions : initialSessions,
+    items: !repository ? initialItems : state.scope === scope ? state.items : initialItems,
     cursor: state.scope === scope ? state.cursor : undefined,
     loading: state.scope === scope && state.loading,
     error: state.scope === scope ? state.error : "",

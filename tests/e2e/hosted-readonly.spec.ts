@@ -25,8 +25,8 @@ test("fictional athlete can read the core training views", async ({ page }, test
   page.on("pageerror", (error) => pageErrors.push(error));
 
   await signInAsTestPersona(page, "Jānis Čakste");
-  await page.getByRole("button", { name: "Programs", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Programs", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Training", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Training", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Calendar", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Calendar", exact: true })).toBeVisible();
@@ -39,9 +39,10 @@ test("fictional athlete can read the core training views", async ({ page }, test
   expect(pageErrors).toEqual([]);
 });
 
-test("mobile Next view reflows without document overflow", async ({ page }, testInfo) => {
+test("mobile Training view reflows without document overflow", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith("mobile-"), "Mobile viewport assertion");
   await signInAsTestPersona(page, "Jānis Čakste");
+  await expect(page.getByRole("heading", { name: "Training", exact: true })).toBeVisible();
 
   for (const width of [320, 360, 390, 430, 768]) {
     await page.setViewportSize({ width, height: width < 600 ? 844 : 1024 });
@@ -52,8 +53,23 @@ test("mobile Next view reflows without document overflow", async ({ page }, test
 
     expect(
       dimensions.scrollWidth,
-      `Next workouts must not overflow at a ${width}px viewport`,
+      `Training must not overflow at a ${width}px viewport`,
     ).toBeLessThanOrEqual(dimensions.clientWidth);
+    const footer = page.locator(".training-card-footer").filter({ has: page.locator(".program-card-action-schedule") }).first();
+    if (width < 700 && await footer.count()) {
+      await expect(footer.getByRole("button", { name: /^Open / })).toHaveCount(0);
+      const start = await footer.locator(".program-card-action-schedule").boundingBox();
+      const more = footer.locator(".program-card-more > summary");
+      const menu = await more.boundingBox();
+      expect(start).not.toBeNull();
+      expect(menu).not.toBeNull();
+      expect(Math.abs(start!.y - menu!.y), "Start and More should share one row").toBeLessThan(2);
+      expect(menu!.width).toBeGreaterThanOrEqual(44);
+      expect(menu!.height).toBeGreaterThanOrEqual(44);
+      await more.click();
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await more.press("Escape");
+    }
   }
 });
 

@@ -31,19 +31,20 @@ test("an active workout draft survives reload and an offline background cycle", 
 
   await signInAsTestPersona(page, "Jānis Čakste");
   let startedHere = false;
-  if (
-    !(await page
-      .getByRole("heading", { name: "Workout in progress" })
-      .isVisible())
-  ) {
-    await page.getByRole("button", { name: "Start workout" }).first().click();
+  const note = page.getByRole("textbox", { name: "Session notes optional" });
+  const resume = page.getByRole("button", { name: "Resume workout", exact: true }).first();
+  const start = page.getByRole("button", { name: /^Start workout(?::|$)/ }).first();
+  await expect(note.or(resume).or(start).first()).toBeVisible();
+  if (await resume.isVisible()) {
+    await resume.click();
+  } else if (!(await note.isVisible())) {
+    await start.click();
     startedHere = true;
   }
   await expect(
     page.getByRole("heading", { name: "Workout in progress" }),
   ).toBeVisible({ timeout: 15_000 });
 
-  const note = page.getByRole("textbox", { name: "Session notes optional" });
   const originalNote = await note.inputValue();
   const onlineMarker = `Draft reload check ${Date.now()}`;
   const offlineMarker = `${onlineMarker} after background`;
@@ -90,7 +91,7 @@ test("an active workout draft survives reload and an offline background cycle", 
         await page.getByLabel(/^More actions for /).click();
         await page.getByRole("button", { name: "Set back to scheduled" }).click();
         await expect(
-          page.getByRole("heading", { name: "Next workouts" }),
+          page.getByRole("heading", { name: "Training" }),
         ).toBeVisible({ timeout: 15_000 });
       }
     }

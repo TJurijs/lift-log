@@ -37,7 +37,7 @@ test("coach detail combines bounded activity with complete run aggregates", asyn
     /assignedProgramCount:[\s\S]*programRunPage\.items\.length[\s\S]*programRuns: programRunPage\.items[\s\S]*agenda:/,
   );
   assert.match(domain, /export interface AthleteSummary[\s\S]*programRuns\?: ProgramRunSummary\[]/);
-  assert.match(coachWorkspace, /function runsForAthlete[\s\S]*athlete\.programRuns\?\.length/);
+  assert.match(coachWorkspace, /function runsForAthlete[\s\S]*return athlete\.programRuns \?\? \[\]/);
   assert.match(coachWorkspace, /ProgramRunCompactCard/);
   assert.match(
     compactRunCard,
@@ -74,7 +74,7 @@ test("coach history opens an exact completed result without requiring an active 
 test("athlete planning and history are separate drill-in tabs, not a second calendar", async () => {
   const coachWorkspace = await readFile(coachWorkspaceUrl, "utf8");
 
-  assert.match(coachWorkspace, /value: "plan"[\s\S]*label: "Plan"/);
+  assert.match(coachWorkspace, /value: "plan"[\s\S]*label: "Training"/);
   assert.match(coachWorkspace, /value: "history"[\s\S]*label: "History"/);
   assert.doesNotMatch(coachWorkspace, /className="coach-run-timeline"/);
   assert.match(coachWorkspace, /ProgramRunCompactCard/);

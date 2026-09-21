@@ -29,12 +29,12 @@ function sqlFunction(source, name) {
   return match[0];
 }
 
-test("coach summaries expose aggregate progress, stable assignment identity, and a scoped agenda", async () => {
+test("coach summaries expose aggregate progress, stable run identity, and a scoped agenda", async () => {
   const domain = await readFile(domainUrl, "utf8");
   const assignedProgram = sourceBetween(
     domain,
-    "export interface CoachAssignedProgramSummary",
-    "export interface CoachAgendaEntry",
+    "export interface ProgramRunSummary",
+    "export interface ProgramRunDetail",
   );
   const agendaEntry = sourceBetween(
     domain,
@@ -45,14 +45,13 @@ test("coach summaries expose aggregate progress, stable assignment identity, and
   for (const field of [
     "id",
     "programId",
-    "assignmentId",
-    "versionId",
+    "athleteId",
+    "programVersionId",
     "title",
-    "assignedAt",
+    "createdAt",
     "status",
     "totalWorkouts",
     "scheduledWorkouts",
-    "scheduledPercent",
     "completedWorkouts",
     "completionPercent",
     "nextWorkout",

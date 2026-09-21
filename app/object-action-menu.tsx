@@ -4,6 +4,7 @@ import { actionUi } from "./ui-semantics";
 
 export type ObjectAction = {
   label: string;
+  compactLabel?: string;
   accessibleLabel: string;
   icon: LucideIcon;
   onClick: () => void;
@@ -12,10 +13,11 @@ export type ObjectAction = {
   destructive?: boolean;
 };
 
-export function ObjectActionMenu({ title, primary, actions }: {
+export function ObjectActionMenu({ title, primary, actions, compact = false }: {
   title: string;
   primary?: ObjectAction;
   actions: ObjectAction[];
+  compact?: boolean;
 }) {
   const menuRef = useRef<HTMLDetailsElement>(null);
   function close(restoreFocus = true) {
@@ -33,12 +35,14 @@ export function ObjectActionMenu({ title, primary, actions }: {
   const PrimaryIcon = primary?.loading ? LoaderCircle : primary?.icon;
   const MoreIcon = actionUi.more.icon;
   return (
-    <div className="program-card-actions">
+    <div className={`program-card-actions${compact ? " compact-mobile" : ""}`}>
       {primary && PrimaryIcon && (
         <button type="button" className="button primary small program-card-action-schedule"
           disabled={primary.disabled || primary.loading} aria-label={primary.accessibleLabel}
           aria-busy={primary.loading || undefined} onClick={primary.onClick}>
-          <PrimaryIcon className={primary.loading ? "button-spinner" : undefined} size={15} />{primary.label}
+          <PrimaryIcon className={primary.loading ? "button-spinner" : undefined} size={15} />
+          <span className={primary.compactLabel ? "program-card-primary-label" : undefined}>{primary.label}</span>
+          {primary.compactLabel && <span className="program-card-primary-short-label">{primary.compactLabel}</span>}
         </button>
       )}
       {actions.length > 0 && (
@@ -47,7 +51,7 @@ export function ObjectActionMenu({ title, primary, actions }: {
             if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) close(false);
           }}>
           <summary className="button secondary small" aria-label={`More actions for ${title}`} onKeyDown={escape}>
-            <MoreIcon size={16} />{actionUi.more.label}
+            <MoreIcon size={16} /><span className="program-card-more-label">{actionUi.more.label}</span>
           </summary>
           <div className="program-card-more-actions">
             {actions.map(({ label, accessibleLabel, icon: Icon, onClick, disabled, loading, destructive }) => (

@@ -560,75 +560,10 @@ describe("v1 bounded repository RPCs", () => {
     });
   });
 
-  it("loads a bounded frequent-workout list with usage metadata", async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      data: [
-        {
-          kind: "assignment",
-          program_id: "program-1",
-          assignment_id: "assignment-1",
-          program_version_id: "version-1",
-          workout_id: "workout-1",
-          program_title: "Daily strength",
-          workout_title: "Full body",
-          content_type: "quick_workout",
-          is_quick_workout: true,
-          week_index: 1,
-          week_label: "Week 1",
-          workout_position: 0,
-          schedule_label: "Workout 1",
-          estimated_minutes: 45,
-          usage_count: "4",
-          last_used_at: "2026-08-28T18:30:00Z",
-          latest_occurrence_id: "schedule-4",
-          latest_planned_date: null,
-          latest_status: "planned",
-          latest_sequence_number: 4,
-        },
-      ],
-      error: null,
-    });
-    const { repository, from } = repositoryWithRpc(rpc);
-
-    await expect(repository.listFrequentSchedulableWorkouts(99)).resolves.toEqual([
-      expect.objectContaining({
-        kind: "assignment",
-        programId: "program-1",
-        assignmentId: "assignment-1",
-        programVersionId: "version-1",
-        workoutId: "workout-1",
-        workoutTitle: "Full body",
-        contentType: "quick_workout",
-        isQuickWorkout: true,
-        usageCount: 4,
-        lastUsedAt: "2026-08-28T18:30:00Z",
-        latestOccurrence: {
-          id: "schedule-4",
-          plannedDate: undefined,
-          status: "planned",
-          sequenceNumber: 4,
-        },
-      }),
-    ]);
-    expect(rpc).toHaveBeenCalledWith("list_frequent_schedulable_workouts", {
-      page_limit: 12,
-    });
-    expect(from).not.toHaveBeenCalled();
-  });
-
-  it("uses exact bounded cursor arguments for scheduling, calendar, history, exercise, and coach lists", async () => {
+  it("uses exact bounded cursor arguments for calendar, history, exercise, and coach lists", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
     const { repository, from } = repositoryWithRpc(rpc);
 
-    await repository.listSchedulableWorkouts({
-      limit: 20,
-      cursor: {
-        programTitle: "Plan",
-        weekIndex: 2,
-        workoutPosition: 3,
-        id: "workout-3",
-      },
-    });
     await repository.listCalendarOccurrences("2026-08-01", "2026-08-31", {
       limit: 20,
       cursor: { plannedDate: "2026-08-20", id: "schedule-20" },
@@ -653,16 +588,6 @@ describe("v1 bounded repository RPCs", () => {
     });
 
     expect(rpc.mock.calls).toEqual([
-      [
-        "list_schedulable_workouts",
-        {
-          page_limit: 21,
-          after_program_title: "Plan",
-          after_week_index: 2,
-          after_workout_position: 3,
-          after_id: "workout-3",
-        },
-      ],
       [
         "list_calendar_occurrences",
         {

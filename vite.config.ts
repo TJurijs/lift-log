@@ -111,7 +111,7 @@ export default defineConfig(({ mode }) => {
                 name: "program-authoring",
                 // Keep program management lists with their editors and shared
                 // history icon; the program feature remains lazy as a whole.
-                test: /(?:app[\\/]features[\\/](?:program-runs[\\/](?:ProgramRun(?:Schedule)?Wizard|SelfProgramRuns)\.tsx|programs[\\/]ProgramView\.tsx|authoring[\\/](?:AuthoringDialogs\.ts|ProgramModal\.tsx|WorkoutDialogs\.tsx|ExerciseModal\.tsx|PrescriptionModal\.tsx|FormatTrackingFields\.tsx))|lib[\\/]program-run-schedule\.ts|lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/]history\.js)$/,
+                test: /(?:app[\\/]features[\\/](?:program-runs[\\/](?:AssignTrainingDialog|TrainingDatesEditor)\.tsx|programs[\\/](?:ProgramView|ProgramsHome)\.tsx|authoring[\\/](?:AuthoringDialogs\.ts|ProgramModal\.tsx|WorkoutDialogs\.tsx|ExerciseModal\.tsx|PrescriptionModal\.tsx|FormatTrackingFields\.tsx))|lib[\\/]program-run-schedule\.ts|lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/]history\.js)$/,
               },
               // Shared catalog filters, run cards and icons belong to the core
               // workspace response. Grouping these small shared controls avoids

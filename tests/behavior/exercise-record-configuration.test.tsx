@@ -13,12 +13,26 @@ const plank: Exercise = {
 };
 
 describe("exercise recording setup", () => {
+  it("creates lifting exercises with reps and weight and lets the author opt into RPE", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<ExerciseModal exercise={null} onSave={onSave} onClose={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "Exercise name" }), "Paused squat");
+    expect(screen.getByRole("combobox", { name: "Record" })).toHaveValue("weighted_repetitions");
+    await user.click(screen.getByText(/Customize optional fields/));
+    expect(screen.getByRole("checkbox", { name: "Weight" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "RPE" })).not.toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "RPE" }));
+    await user.click(screen.getByRole("button", { name: "Create exercise" }));
+    expect(onSave).toHaveBeenCalledWith("Paused squat", "gym", "General", "sets", ["reps", "load", "rpe"], "", []);
+  });
+
   it("creates timed exercises with one Record control and no automatic reps, weight or RPE", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<ExerciseModal exercise={null} onSave={onSave} onClose={vi.fn()} />);
     await user.type(screen.getByRole("textbox", { name: "Exercise name" }), "Plank");
-    expect(screen.getByRole("combobox", { name: "Record" })).toHaveValue("repetitions");
+    expect(screen.getByRole("combobox", { name: "Record" })).toHaveValue("weighted_repetitions");
     await user.selectOptions(screen.getByRole("combobox", { name: "Record" }), "duration");
     expect(screen.queryByRole("combobox", { name: "Format" })).not.toBeInTheDocument();
     await user.click(screen.getByText("Customize optional fields"));
@@ -47,6 +61,8 @@ describe("exercise recording setup", () => {
     expect(onChange).toHaveBeenLastCalledWith("repetitions", ["reps", "load", "rpe"]);
     await user.selectOptions(screen.getByRole("combobox", { name: "Record" }), "distance");
     expect(onChange).toHaveBeenLastCalledWith("distance", ["distance", "duration", "rpe"]);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Record" }), "repetitions");
+    expect(onChange).toHaveBeenLastCalledWith("repetitions", ["reps", "rpe"]);
   });
 
   it("shows one recording summary on each library card", () => {

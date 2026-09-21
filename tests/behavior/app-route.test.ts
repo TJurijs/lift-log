@@ -13,17 +13,20 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("app view routing", () => {
   it("top-level navigation clears detail state even when the hash is unchanged", () => {
-    window.history.replaceState({}, "", "/#/program");
-    pushAppDetailHistory("program", "program");
-    updateAppViewUrl("program");
+    window.history.replaceState({}, "", "/#/training");
+    pushAppDetailHistory("program", "training");
+    updateAppViewUrl("training");
     expect(appDetailFromHistory()).toBeNull();
-    expect(window.location.hash).toBe("#/program");
+    expect(window.location.hash).toBe("#/training");
   });
   it("parses supported hash routes and defaults safely", () => {
     expect(parseAppView("#/calendar")).toBe("calendar");
-    expect(parseAppView("#program")).toBe("program");
-    expect(parseAppView("")).toBe("today");
-    expect(parseAppView("#/unknown")).toBe("today");
+    expect(parseAppView("#/training")).toBe("training");
+    expect(parseAppView("#/workout")).toBe("workout");
+    expect(parseAppView("#program")).toBe("training");
+    expect(parseAppView("#/today")).toBe("training");
+    expect(parseAppView("")).toBe("training");
+    expect(parseAppView("#/unknown")).toBe("training");
   });
 
   it("retains query parameters while updating browser history", () => {
@@ -34,32 +37,32 @@ describe("app view routing", () => {
   });
 
   it("records detail navigation without losing preview parameters", () => {
-    window.history.replaceState({}, "", "/?preview=mobile#/program");
-    pushAppDetailHistory("program", "program");
+    window.history.replaceState({}, "", "/?preview=mobile#/training");
+    pushAppDetailHistory("program", "training");
 
     expect(appDetailFromHistory()).toBe("program");
     expect(window.location.search).toBe("?preview=mobile");
-    expect(window.location.hash).toBe(appViewHash("program"));
+    expect(window.location.hash).toBe(appViewHash("training"));
   });
 
   it("replaces one detail with another instead of stacking nested screens", () => {
     window.history.replaceState({}, "", "/#/today");
     const replace = vi.spyOn(window.history, "replaceState");
-    pushAppDetailHistory("workout", "today");
-    pushAppDetailHistory("workout-log", "today");
+    pushAppDetailHistory("workout", "workout");
+    pushAppDetailHistory("workout-log", "workout");
 
     expect(replace).toHaveBeenCalledTimes(1);
     expect(appDetailFromHistory()).toBe("workout-log");
   });
 
   it("can stack a completed result over its program detail for native back", () => {
-    window.history.replaceState({}, "", "/#/program");
+    window.history.replaceState({}, "", "/#/training");
     const push = vi.spyOn(window.history, "pushState");
     const replace = vi.spyOn(window.history, "replaceState");
-    pushAppDetailHistory("program", "program");
+    pushAppDetailHistory("program", "training");
     push.mockClear();
 
-    pushAppDetailHistory("workout-log", "today", {
+    pushAppDetailHistory("workout-log", "workout", {
       stackOnDetail: true,
       data: {
         kind: "workout-log",
@@ -71,7 +74,7 @@ describe("app view routing", () => {
           rpe: 8,
         },
         athleteId: "athlete-1",
-        returnView: "program",
+        returnView: "training",
       },
     });
 
@@ -81,10 +84,10 @@ describe("app view routing", () => {
     expect(appDetailDataFromHistory()).toMatchObject({
       kind: "workout-log",
       athleteId: "athlete-1",
-      returnView: "program",
+      returnView: "training",
       session: { id: "session-1" },
     });
-    expect(window.location.hash).toBe(appViewHash("today"));
+    expect(window.location.hash).toBe(appViewHash("workout"));
   });
 
   it("stores a mobile athlete drill-down in native history", () => {
@@ -118,7 +121,7 @@ describe("app view routing", () => {
     const push = vi.spyOn(window.history, "pushState");
     const replace = vi.spyOn(window.history, "replaceState");
 
-    pushAppDetailHistory("workout-log", "today", {
+    pushAppDetailHistory("workout-log", "workout", {
       stackOnDetail: true,
       data: {
         kind: "workout-log",
@@ -144,9 +147,9 @@ describe("app view routing", () => {
   });
 
   it("stores enough identity to restore an exact program or run", () => {
-    window.history.replaceState({}, "", "/#/program");
+    window.history.replaceState({}, "", "/#/training");
 
-    pushAppDetailHistory("program", "program", {
+    pushAppDetailHistory("program", "training", {
       data: {
         kind: "program",
         programId: "program-1",
@@ -177,7 +180,7 @@ describe("app view routing", () => {
       data: { kind: "coach-athlete", athleteId: "athlete-7", tab: "plan" },
     });
 
-    pushAppDetailHistory("program", "program");
+    pushAppDetailHistory("program", "training");
 
     expect(appDetailFromHistory()).toBe("program");
     expect(appDetailDataFromHistory()).toBeNull();
@@ -188,7 +191,7 @@ describe("app view routing", () => {
     const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
     expect(leaveAppDetailHistory()).toBe(false);
 
-    pushAppDetailHistory("workout", "today");
+    pushAppDetailHistory("workout", "workout");
     expect(leaveAppDetailHistory()).toBe(true);
     expect(back).toHaveBeenCalledOnce();
   });

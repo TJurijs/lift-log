@@ -178,7 +178,7 @@ describe("program-run repository gateways", () => {
     expect(from).not.toHaveBeenCalled();
   });
 
-  it("keeps older backends usable while the additive run RPC rolls out", async () => {
+  it("surfaces an unavailable Training API instead of pretending training is empty", async () => {
     const rpc = vi.fn().mockResolvedValue({
       data: null,
       error: {
@@ -188,10 +188,7 @@ describe("program-run repository gateways", () => {
     });
     const { repository } = repositoryWithRpc(rpc);
 
-    await expect(repository.listProgramRuns()).resolves.toEqual({
-      items: [],
-      hasMore: false,
-    });
+    await expect(repository.listProgramRuns()).rejects.toThrow("Could not load training");
   });
 
   it("returns and forwards an immutable run-created keyset cursor", async () => {
@@ -287,35 +284,6 @@ describe("program-run repository gateways", () => {
     );
     expect(rpc).toHaveBeenCalledWith("get_program_run_program_detail", {
       target_run_id: "run-1",
-    });
-  });
-
-  it("repeats into a new run without reusing the source identity", async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      data: {
-        athleteId: "viewer-1",
-        runId: "run-new",
-        programId: "program-1",
-        programVersionId: "version-1",
-        created: true,
-      },
-      error: null,
-    });
-    const { repository } = repositoryWithRpc(rpc);
-
-    await expect(
-      repository.repeatProgramRun(
-        "run-old",
-        [{ workoutId: "workout-1", plannedDate: "2026-10-01" }],
-        "repeat-request",
-      ),
-    ).resolves.toMatchObject({ runId: "run-new", created: true });
-    expect(rpc).toHaveBeenCalledWith("repeat_program_run", {
-      target_run_id: "run-old",
-      target_workout_dates: [
-        { workoutId: "workout-1", plannedDate: "2026-10-01" },
-      ],
-      target_idempotency_key: "repeat-request",
     });
   });
 
@@ -415,61 +383,6 @@ describe("program-run repository gateways", () => {
     });
     expect(rpc).toHaveBeenCalledWith("get_program_run_detail", {
       target_run_id: "run-1",
-    });
-    expect(from).not.toHaveBeenCalled();
-  });
-
-  it("pages every upcoming occurrence with a stable date and id cursor", async () => {
-    const row = (id: string, date: string) => ({
-      id,
-      athlete_id: "viewer-1",
-      scheduled_by_id: "coach-1",
-      program_run_id: "run-1",
-      program_run_workout_id: `slot-${id}`,
-      program_id: "program-1",
-      program_version_id: "version-1",
-      program_title: "Ten-week plan",
-      workout_id: `workout-${id}`,
-      workout_title: `Workout ${id}`,
-      planned_date: date,
-      sequence_number: Number(id),
-      estimated_minutes: 60,
-      status: id === "2" ? "skipped" : "planned",
-      source_type: "coach",
-    });
-    const rpc = vi.fn().mockResolvedValue({
-      data: [
-        row("1", "2026-09-10"),
-        row("2", "2026-09-11"),
-        row("3", "2026-09-12"),
-      ],
-      error: null,
-    });
-    const { repository, from } = repositoryWithRpc(rpc);
-
-    await expect(
-      repository.listUpcomingScheduledWorkouts({
-        limit: 2,
-        cursor: { plannedDate: "2026-09-09", id: "cursor-0" },
-      }),
-    ).resolves.toEqual({
-      items: [
-        expect.objectContaining({
-          id: "1",
-          programRunId: "run-1",
-          sourceType: "coach",
-          plannedDate: "2026-09-10",
-          workout: expect.objectContaining({ durationMinutes: 60 }),
-        }),
-        expect.objectContaining({ id: "2", status: "skipped" }),
-      ],
-      hasMore: true,
-      nextCursor: { plannedDate: "2026-09-11", id: "2" },
-    });
-    expect(rpc).toHaveBeenCalledWith("list_upcoming_scheduled_workouts", {
-      page_limit: 3,
-      after_planned_date: "2026-09-09",
-      after_id: "cursor-0",
     });
     expect(from).not.toHaveBeenCalled();
   });

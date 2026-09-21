@@ -1,47 +1,47 @@
 # Lift Log product model and capability contract
 
-This document is the product-language and authorization contract for the stabilization pass. It separates facts stored by the database from viewer-relative presentation and keeps four independent state axes from being collapsed into one generic status.
+This document is the product-language and authorization contract. The user model is **workouts and programs**: create, optionally set dates, start, repeat, and assign. Creating training immediately puts it in Training. There is no separate Plan, Use, or Add to training action. Templates, publication, saved versions, availability switches, and “in use” editing locks are internal implementation concerns, not decisions users must make.
+
+Opening training shows its actions; Edit, Create, and Repeat open the editor. The editor uses Save to return to the action view, with background persistence retained for recovery. Programs show a selectable workout list at every viewport. Workout duration is optional and is never estimated by default. Exercise search can add the typed name as a workout-only snapshot; this does not create a library exercise, and copying or assigning the workout carries the snapshot with it.
+
+The September 21 workout/program refactor was verified locally. The subsequent unified Training approach is being implemented locally; see [its scope and review](review/2026-09-21-unified-training.md). Neither refactor has been deployed to hosted development.
 
 ## Glossary
 
 | Term | Contract |
 | --- | --- |
 | Account / athlete | Every account is an athlete account. Coaching is an active, revocable relationship capability, never a permanent account role. |
-| Program | Finite training content organized as one explicit, ordered workout sequence. Calendar dates are chosen when a workout is scheduled; the content editor does not expose weeks or weekdays. |
-| Quick workout | Single-workout training content that uses the same workout/item/prescription tree as a program. It is content, not a logged session. |
-| Program instance | The athlete-owned `programs` record through which a program or quick workout is edited, assigned, offered for scheduling, or archived. An assignment creates an independent athlete-owned instance. |
-| Program version | A snapshot of prescribed content in `draft`, `published`, or `superseded` lifecycle state. Published and superseded trees are immutable. |
-| Workout | Prescribed reusable content inside one program version. It contains one ordered exercise list and item prescriptions, but no performed result. |
-| Scheduled workout / occurrence | One workout placed into an athlete's sequence/calendar, optionally on a date, with `planned`, `in_progress`, `completed`, or `skipped` occurrence state. |
-| Workout session | The athlete's performed log. It snapshots the prescribed items and moves through `in_progress`, `completed`, or `abandoned`; completed results are immutable. |
-| Availability | Whether a published program instance is offered among the athlete's scheduling choices. Availability is not a calendar date and is not evidence of an occurrence. |
-| Assignment | An active coach copies their own published source content into an independent athlete-owned instance. A quick-workout assignment may atomically create the first planned occurrence on the coach-provided date. |
-| Library | Lift Log-authored immutable source content. An athlete can materialize/schedule it directly or copy it to an editable Own instance. |
-| Own | Content authored by the current viewer. “Own” is viewer-relative authorship language; it is not a synonym for athlete database ownership. |
-| Coach | Coach-authored content assigned to an athlete. The athlete owns the resulting instance and schedule but cannot edit the prescribed content; the athlete may copy it to Own. |
-| Published | A content-lifecycle state. It does not mean available and does not mean scheduled. |
-| Available / Ready | A published instance that is eligible to be selected for scheduling. “Ready” is presentation copy for that eligibility, not another database lifecycle. |
-| In schedule | The instance is an available scheduling choice. It does not imply that every workout has a date. |
+| Workout | One training session with an ordered exercise list and prescribed targets. It can stand alone or belong to a program. The UI uses the same word before and after it is planned; performed results remain separate internally. |
+| Program | A finite, ordered group of workouts. Dates are optional; the editor does not expose database weeks or versions. |
+| Training | The default home for all created and assigned workouts/programs. It groups unfinished training into Today and overdue, Upcoming, and No date; History shows finished or ended training and completed workout results. |
+| Set dates / Change dates | Choose or change dates on existing training. A standalone workout uses one date screen; a program exposes its unfinished workouts together. This action does not create a repeat. |
+| Start workout | Start the selected unfinished workout, including one without a date. Only its athlete may start or record it. An existing active session is resumed. |
+| Repeat | Open a fresh editable, undated copy in Training. Repeating a program includes its exercise and target changes; repeating a completed workout copies its prescribed content. Actual results are references, not new targets. |
+| Assign | Give currently connected athletes independent copies of the selected training, optionally with dates. Later edits affect only the selected athlete's upcoming workout. |
+| My training / From coach | Viewer-relative source groupings. Coaching is provenance and authorization, not a different workout format. |
+| Planned workout / occurrence | One athlete's particular workout, with an optional date. A future occurrence can be edited independently; starting freezes its prescribed content. |
+| Workout session | The performed log and its instruction/media snapshots. It moves through `in_progress`, `completed`, or `abandoned`; completed results are immutable. |
+| Run, source container, version | Internal records that preserve ordering, authorship, independent copies, and historical snapshots. They are not additional user-facing objects. |
+
+`quick_workout`, `templateId`, publication states, and legacy availability records remain internal compatibility names where needed. Their existence does not require template management or a Publish action in the product.
 
 ## Independent state axes
 
-The following transitions are independent. UI badges and repository guards must name the axis they represent.
+Training progress, occurrence state, and performed results remain independent. UI badges name the user's training state; internal version state does not become a visible editing lock.
 
 ```mermaid
 flowchart LR
-  subgraph Content[Content lifecycle]
-    CD[Draft] -->|publish| CP[Published]
-    CP -->|publish newer version| CS[Superseded]
-    CP -->|edit creates/reuses draft| CD2[New draft]
-  end
-
-  subgraph Availability[Scheduling availability]
-    AU[Unavailable] <--> |athlete toggles published instance| AA[Available]
+  subgraph Plan[Training plan]
+    PN[Not started] --> PI[In progress]
+    PI --> PC[Completed]
+    PN -->|end remaining training| PE[Ended]
+    PI -->|end remaining training| PE
   end
 
   subgraph Occurrence[Occurrence state]
-    ON[No occurrence] -->|schedule| OP[Planned]
-    OP -->|start| OI[In progress]
+    ON[Undated] -->|choose date| OP[Planned]
+    ON -->|start| OI[In progress]
+    OP -->|start| OI
     OI -->|finish| OC[Completed]
     OP -->|skip| OS[Skipped]
     OI -->|skip and abandon draft| OS
@@ -57,10 +57,17 @@ flowchart LR
 
 Additional invariants:
 
-- Archiving/deleting a program instance is a container lifecycle and must not erase published snapshots, completed occurrences, or completed sessions.
+- Creating or repeating puts training in the No date group immediately. Dates are optional metadata, never a condition for starting or a second activation step.
+- Repeating creates a separate editable copy with all dates cleared. Editing it never updates its original, another repeat, or another athlete's training.
+- Editing an upcoming workout changes only that occurrence. Its hidden draft is frozen atomically when the athlete starts; started or completed workouts cannot be edited through the planning editor.
+- Deleting an untouched own workout/program removes it from Training. Ending started training cancels its remaining work and retains completed history. Neither action erases another athlete's copies or results.
+- Skipping a workout and ending the remaining program are explicit progress actions. An undated workout is still unfinished work, not an inferred skip.
 - Completing early or late records the scheduled occurrence date as `completed_for_date`; it does not silently replace it with “today.”
 - Starting/resuming and finishing are exactly-once user actions even when requests are retried or two tabs act concurrently.
-- An availability change can create or remove scheduling choices, but it must not rewrite completed history.
+- Source records already represented by the athlete's runs are not shown as duplicate template cards; this holds across paginated reads.
+- A program is one expandable Training card, ordered by its next unfinished workout's date. Its individual workouts are revealed inside the card; standalone workout cards and program cards are not duplicated as another Next list.
+- Calendar is another view of the same training. Choosing training there changes existing dates; clearing a date returns unfinished training to No date. Creating another copy requires Repeat.
+- Navigation is Training, Calendar, Exercises, and Coaching. Historical Next links resolve to Training; an active workout remains reachable through Resume and recoverable across reloads.
 
 ## Provenance and viewer-relative presentation
 
@@ -70,7 +77,7 @@ These facts must remain independent and must not be inferred from one label:
 
 | Fact | Meaning |
 | --- | --- |
-| `athleteOwnerId` | Account that owns the program instance, schedule, and history. |
+| `athleteOwnerId` | Account that owns the particular training plan, schedule, and performed history. The source content may have a different author/owner. |
 | `authorId` | Account that authored the source/prescribed version. |
 | `origin` | `library`, `self`, or `coach`. This is durable provenance, not viewer copy. |
 | `templateId` / `assignedFromProgramId` | Optional lineage to library or coach source content. |
@@ -90,7 +97,7 @@ Unknown provenance stays unknown. Missing provenance must never default to Libra
 | Coach-authored and viewer is the athlete owner | Coach · _name_ | Created by your coach, _name_ |
 | Coach-authored and another authorized viewer | Coach · _name_ | Created by _name_ for _athlete name_ |
 
-The same projection is used in Programs, Next workouts, Calendar, and Coaching. It must not rely on a preformatted `sourceLabel` returned by one repository path.
+The same projection is used in Training, Calendar, and Coaching. It must not rely on a preformatted `sourceLabel` returned by one repository path.
 
 ## Capability rules
 
@@ -100,35 +107,28 @@ Legend: **Yes** = allowed; **No** = denied; **Conditional** = allowed only under
 
 ### Content capabilities
 
-| Viewer/content context | View | Copy to Own | Edit / create draft | Publish | Toggle availability | Schedule | Assign | Delete/archive |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Athlete viewing Library | Yes | Yes | No | No | Materialize only | Yes, through athlete-owned materialization | No | No |
-| Athlete viewing their Own draft | Yes | No | Yes | Yes | No | No | No | Yes, preserving history |
-| Athlete viewing their Own published instance | Yes | No | Yes, by creating/reusing a draft | No until a draft exists | Yes | Yes when available | Yes if the viewer also has active athletes; assignment source must be their own published content | Yes/archive, preserving published/history references |
-| Athlete viewing coach-assigned content | Yes | Yes | No | No | Yes | Yes when available | No | Remove/archive instance only through a history-preserving boundary |
-| Active authoring coach viewing their athlete-specific coach draft | Yes | No | Yes while relationship is active | Yes while relationship is active | No | No | No; this is already an assigned copy | No |
-| Active authoring coach viewing their published athlete copy | Yes | No | Yes, by creating/reusing an authorized future draft | No until a draft exists | No | No, except the one-shot quick-assignment date below | No | No |
-| Active coach assigning their own published source | Yes | No | Source edit follows Own rules | No until a draft exists | Own athlete workspace only | Own athlete workspace only | Yes, only to actively connected athletes | Own source follows Own rules |
-| Other active coach of the same athlete | No; coaching access is author-scoped | No | No | No | No | No | No | No |
-| Unrelated or revoked viewer | No | No | No | No | No | No | No | No |
+| Viewer/content context | Edit | Repeat | Set / change dates | Assign | Delete / end |
+| --- | --- | --- | --- | --- | --- |
+| Own unstarted workout/program | Yes | Fresh editable, undated copy | Optional dates; any unfinished workout may start without a date | To actively connected athletes | Remove own training; preserve existing copies/history |
+| Athlete's upcoming workout, including assigned training | This occurrence only | Fresh editable own copy | Choose/change dates on future work | Own training only; a repeated copy becomes own training | End remaining plan; preserve completed work |
+| Athlete's started/completed workout | No prescribed-content edits; active actuals use the logger | Fresh editable copy; previous actuals remain reference hints | New copies only | Own training/copies only | Completed history remains |
+| Active authoring coach viewing their assigned plan | Future workouts only, independently for that athlete | Copy exact readable plan | Schedule future workouts in that assigned plan | Own training/copies to current athletes | End remaining assigned plan |
+| Other coach or revoked viewer | No | No access to that athlete's plan/copy | No | No | No |
 
-Quick-workout date exception:
-
-- During assignment only, the authoring coach may provide the initial planned date in the same transactional RPC that creates the athlete-owned copy.
-- The coach is recorded as the creator of that initial placement, but the athlete owns the occurrence and all subsequent calendar actions.
-- The coach cannot later reschedule, skip, restore, remove, start, or complete the occurrence.
+Publication and hidden drafts are handled atomically by the repository/database. Users do not publish training, choose versions, or resolve “template in use” prompts. Assigning a selected run copies its effective content, including occurrence edits, instead of silently assigning its older source.
 
 ### Occurrence and session capabilities
 
 | Action | Athlete owner | Active authoring coach | Other/revoked coach |
 | --- | --- | --- | --- |
-| View planned occurrence | Yes | Read-only only when the occurrence came from that coach's authored program | No |
+| View planned occurrence | Yes | Only when it came from that coach's authored plan and the relationship remains active | No |
+| Edit upcoming prescription | Before any session exists for that occurrence | Same rule for that coach's own assigned plan | No |
 | View in-progress/completed session | Yes | Results for occurrences from that coach's authored program while the relationship is active; private athlete notes are excluded | No |
 | Start/resume | `planned` or the matching `in_progress` occurrence only | No | No |
-| Reschedule | Athlete-owned non-completed occurrence only; active-session handling must be explicit | No after assignment | No |
+| Reschedule | Future planned occurrence only | Future workouts in the coach's own assigned plan | No |
 | Skip | `planned` or `in_progress`; an active draft becomes abandoned | No | No |
 | Restore | `skipped` only | No | No |
-| Remove occurrence | Athlete-owned non-completed occurrence only | No | No |
+| End plan | No active workout; cancel remaining work and keep completed history | Same rule for that coach's own assigned plan | No |
 | Edit result / actual RPE | Matching `in_progress` session only | No | No |
 | Finish | Matching `in_progress` session after latest draft revision is confirmed | No | No |
 | Edit completed result | No | No | No |
@@ -142,18 +142,21 @@ These product and release decisions are resolved. Remaining entries in the imple
 3. **Historical metadata — version snapshot.** Every program version snapshots title and description. Published/superseded detail, schedules, completed history, and coach agenda use the referenced version's metadata, so later renames cannot rewrite historical labels.
 4. **Browser support — approved minima.** The supported floors are iOS/iPadOS Safari 17.4, Android Chrome 120, desktop Chrome/Edge 120, Firefox 121, and Safari 17.4, as maintained in [BROWSER_SUPPORT.md](BROWSER_SUPPORT.md).
 5. **Capacity envelope — approved.** Default authenticated bootstrap is limited to six bounded Data API calls; one program/workout/session detail open to two calls; request count per page must remain O(1); shaped mobile-4G bootstrap p95 is at most 2.5 seconds; cached navigation p95 is at most 500 ms; screen-summary database queries p95 are at most 200 ms in the scale environment; initial responses exclude full history/exercise/template/coach graphs unless requested; and initial bundle size must not regress from the measured baseline. The named scale gates remain 100/250 programs or coached athletes, 1,001/5,000 occurrences and sessions, 5,000 exercises, 208-workout sequences, historical versions, and the maximum assignment batch.
-6. **Development rollout — approved.** The pending migrations are approved only for hosted development project `ofyeejyfroblunbspgve`. Deploy the compatible frontend to `dev.liftlog.cc` immediately after the development migrations, run the smoke gate, and roll back the development frontend/database compatibility changes if smoke tests fail. This is not production deployment or production-data authorization.
-7. **Development deployment approved — current instruction.** On 2026-08-25 the product owner explicitly approved pushing the stabilized application to GitHub and deploying the compatible frontend to `dev.liftlog.cc`. The rollout remains limited to hosted development Supabase project `ofyeejyfroblunbspgve`, must retain an atomic frontend rollback target, and does not authorize a production deployment or production-data change.
+6. **Deployment scope.** Earlier approvals covered their specific hosted development releases on `dev.liftlog.cc` / `ofyeejyfroblunbspgve`. They are not standing authorization to deploy later refactors or change production. The September 21 workout/program refactor remains local for review; any later deployment must follow the current user instruction and retain an atomic rollback target.
 
 ## Tracking, units, and dates
 
 - Exercise identity, prescription, and performed result are separate snapshots.
 - `entry_mode` selects the logging structure; `tracking_fields` selects the actual inputs. A field not present in `tracking_fields` is not rendered, persisted, or required merely because of the mode.
+- New weighted strength exercises default to reps and weight. RPE remains available under optional tracking fields and is off by default; bodyweight, timed, distance, interval, and instruction-only exercises retain their appropriate base metrics. Existing prescribed fields and deliberately chosen personal exercise defaults are preserved.
 - Planned RPE is prescription data; actual RPE is performed/session data. Both use whole numbers 1–10 and the same vocabulary/color scale.
+- Starting prefills exact objective targets, while ranges and actual effort remain blank. Finishing assumes remaining, undeleted entries were completed. Previous performed values appear as muted references inside the cells and never become actuals merely by opening or completing a workout.
 - Load is stored canonically in kilograms and displayed/entered in the account's kg/lb preference. Distance is stored canonically in metres/kilometres and displayed/entered in km/mi. Preference changes never rewrite historical canonical values.
 - A date-only value is parsed/formatted by the central date-only utility and never by appending a local/UTC timestamp ad hoc. Calendar-week and overdue rules use the account timezone and week-start preference.
 
 ## Implementation-alignment status
+
+The historical entries below describe earlier stabilization work. For the current local refactor, migration `202609210001` makes default RPE optional and `202609210002` supplies isolated future edits, repeat/assignment copying, hidden snapshot protection, and history reuse. Both are applied to the local database (93 migrations total), with API, SQL, portable replay, and real desktop/mobile browser evidence in [the September 21 review](review/2026-09-21-training-refactor.md). These changes are not yet deployed to hosted development.
 
 1. **Implemented and validated in hosted development:** provenance is projected with viewer context, and absent provenance remains Unknown rather than falling back to Library.
 2. **Partially resolved:** shared capability policies drive the high-risk program and occurrence actions, handlers re-check them, and the visible coach capability copy now matches the author-scoped contract. `LiftLogApp.tsx` still contains local action predicates, and the remaining monolith/feature-boundary refactor is open.

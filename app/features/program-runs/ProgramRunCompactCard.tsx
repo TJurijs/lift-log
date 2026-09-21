@@ -1,5 +1,5 @@
 import { ObjectActionMenu } from "../../object-action-menu";
-import { ChevronRight, LoaderCircle } from "lucide-react";
+import { ChevronRight, LoaderCircle, RefreshCw, UserPlus } from "lucide-react";
 import type { ProgramRunSummary } from "../../../lib/domain";
 import { formatDateOnly } from "../../../lib/date-only";
 import { actionUi, trainingContentUi } from "../../ui-semantics";
@@ -27,6 +27,8 @@ export function ProgramRunCompactCard({
   onOpen,
   onSchedule,
   onEnd,
+  onRepeat,
+  onAssign,
 }: {
   run: ProgramRunSummary;
   sourceLabel?: string;
@@ -35,10 +37,11 @@ export function ProgramRunCompactCard({
   onOpen: () => void;
   onSchedule?: () => void;
   onEnd: () => void;
+  onRepeat?: () => void;
+  onAssign?: () => void;
 }) {
   const quickWorkout = run.contentType === "quick_workout";
   const { label: objectLabel, icon: ObjectIcon } = trainingContentUi(run.contentType);
-  const unscheduled = Math.max(0, run.totalWorkouts - run.scheduledWorkouts);
   const progress = run.status === "in_progress"
     ? quickWorkout
       ? "In progress"
@@ -47,7 +50,7 @@ export function ProgramRunCompactCard({
       ? `Scheduled${run.nextWorkout?.plannedDate ? ` · ${shortDate(run.nextWorkout.plannedDate)}` : ""}`
       : sourceLabel
         ? "Assigned"
-        : "Ready to schedule";
+        : "No date";
 
   return (
     <article className="program-catalog-card panel program-run-compact-card">
@@ -81,8 +84,12 @@ export function ProgramRunCompactCard({
           <span className="program-card-ready">{progress}</span>
         </div>
         <ObjectActionMenu title={run.title}
-          primary={unscheduled > 0 && onSchedule ? { ...actionUi.schedule, accessibleLabel: `Schedule ${run.title}`, onClick: onSchedule, disabled: openingDisabled } : undefined}
-          actions={[{ ...actionUi.end, label: `End ${objectLabel.toLowerCase()}`, accessibleLabel: `End ${run.title}`, onClick: onEnd, destructive: true, disabled: openingDisabled }]}
+          primary={onSchedule ? { ...actionUi.schedule, label: run.scheduledWorkouts ? "Change dates" : "Set dates", accessibleLabel: `${run.scheduledWorkouts ? "Change" : "Set"} dates for ${run.title}`, onClick: onSchedule, disabled: openingDisabled } : undefined}
+          actions={[
+            ...(onRepeat ? [{ label: "Repeat", accessibleLabel: `Repeat ${run.title}`, icon: RefreshCw, onClick: onRepeat, disabled: openingDisabled }] : []),
+            ...(onAssign ? [{ label: "Assign to athletes", accessibleLabel: `Assign ${run.title} to athletes`, icon: UserPlus, onClick: onAssign, disabled: openingDisabled }] : []),
+            { ...actionUi.end, label: `End ${objectLabel.toLowerCase()}`, accessibleLabel: `End ${run.title}`, onClick: onEnd, destructive: true, disabled: openingDisabled },
+          ]}
         />
       </div>
     </article>

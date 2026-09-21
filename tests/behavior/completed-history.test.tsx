@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { useCompletedHistory } from "../../app/features/next-workouts/useCompletedHistory";
+import { useCompletedHistory } from "../../app/features/history/useCompletedHistory";
 import type { CompletedSession, HistoryCursor } from "../../lib/domain";
 import type { LiftLogRepository } from "../../lib/repository";
 

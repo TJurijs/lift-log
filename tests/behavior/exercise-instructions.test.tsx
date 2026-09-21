@@ -17,7 +17,7 @@ describe("exercise instructions during training", () => {
   it("shows both cue and complete combination instructions, with timed plank sets rather than interval checkboxes", async () => {
     const workspace = createExerciseRecordingDemoWorkspace();
     render(<LiftLogApp viewer={demoViewer} onSignOut={vi.fn()} repository={null} initialWorkspace={workspace} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Start workout" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start workout: Strength + core" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Session notes optional" })).toBeEnabled());
     const plank = screen.getByText("Plank").closest(".log-item") as HTMLElement;
     expect(within(plank).getByRole("textbox", { name: "Plank, set 1, time in seconds" })).toHaveValue("30");

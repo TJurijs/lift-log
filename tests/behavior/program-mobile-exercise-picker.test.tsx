@@ -137,7 +137,7 @@ describe("mobile program exercise picker", () => {
     expect(document.body.style.overflow).toBe("");
   });
 
-  it("offers one compact native workout selector for a long program", async () => {
+  it("shows the workout list and highlights the selected workout in a long program", async () => {
     const user = userEvent.setup();
     const onSelectWorkout = vi.fn();
     const workouts = Array.from({ length: 40 }, (_, index): PlannedWorkout => ({
@@ -177,10 +177,12 @@ describe("mobile program exercise picker", () => {
       />,
     );
 
-    const selector = screen.getByRole("combobox", { name: "Current workout" });
-    expect(selector).toHaveValue("workout-1");
-    expect(screen.getAllByRole("option")).toHaveLength(40);
-    await user.selectOptions(selector, "workout-40");
+    expect(screen.queryByRole("combobox", { name: "Current workout" })).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".workout-row-main")).toHaveLength(40);
+    expect(screen.getByRole("button", { name: /^1 Workout 1/ })).toHaveAttribute("aria-pressed", "true");
+    const lastWorkout = screen.getByRole("button", { name: /^40 Workout 40/ });
+    expect(lastWorkout).toHaveAttribute("aria-pressed", "false");
+    await user.click(lastWorkout);
     expect(onSelectWorkout).toHaveBeenCalledWith("workout-40");
 
     const workoutList = container.querySelector(".workout-list");

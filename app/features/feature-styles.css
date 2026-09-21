@@ -1,5 +1,5 @@
-@import "./program-runs/program-run-wizard.css";
-@import "./program-runs/program-run-schedule-wizard.css";
-@import "./program-runs/self-program-runs.css";
+@import "./program-runs/assign-training-dialog.css";
+@import "./program-runs/training-dates-editor.css";
+@import "./programs/training-home.css";
 @import "./programs/program-workout-plan-preview.css";
 @import "./programs/program-view.css";

@@ -1,8 +1,8 @@
 import type { CompletedSession, ViewName } from "./domain";
 
 const viewNames = new Set<ViewName>([
-  "today",
-  "program",
+  "workout",
+  "training",
   "calendar",
   "exercises",
   "coaching",
@@ -22,13 +22,14 @@ export type AppDetailData =
       assignmentId?: string;
       programRunId?: string;
       workoutId?: string;
+      editing?: boolean;
       returnView: ViewName;
     }
   | {
       kind: "workout-log";
       session: CompletedSession;
       athleteId?: string;
-      returnView: "today" | "calendar" | "coaching" | "program";
+      returnView: "training" | "calendar" | "coaching";
     }
   | {
       kind: "coach-athlete";
@@ -48,9 +49,11 @@ function isViewName(value: unknown): value is ViewName {
 
 export function parseAppView(hash: string): ViewName {
   const candidate = hash.replace(/^#\/?/, "").split(/[/?]/, 1)[0];
+  // Old shared URLs resolve to the unified home without retaining a second feed.
+  if (candidate === "today" || candidate === "program") return "training";
   return viewNames.has(candidate as ViewName)
     ? (candidate as ViewName)
-    : "today";
+    : "training";
 }
 
 export function appViewHash(view: ViewName) {
@@ -87,8 +90,9 @@ export function appDetailDataFromHistory(
   state: unknown = typeof window === "undefined" ? null : window.history.state,
 ): AppDetailData | null {
   if (!isRecord(state)) return null;
-  const value = state[appDetailDataStateKey];
-  if (!isRecord(value)) return null;
+  const rawValue = state[appDetailDataStateKey];
+  if (!isRecord(rawValue)) return null;
+  const value: Record<string, unknown> = { ...rawValue, returnView: rawValue.returnView === "today" || rawValue.returnView === "program" ? "training" : rawValue.returnView };
   if (
     value.kind === "coach-athlete" &&
     typeof value.athleteId === "string" &&
@@ -124,6 +128,7 @@ export function appDetailDataFromHistory(
       ...(typeof value.workoutId === "string"
         ? { workoutId: value.workoutId }
         : {}),
+      ...(typeof value.editing === "boolean" ? { editing: value.editing } : {}),
       returnView: value.returnView,
     };
   }
@@ -136,10 +141,9 @@ export function appDetailDataFromHistory(
     typeof session.date !== "string" ||
     typeof session.durationMinutes !== "number" ||
     typeof session.rpe !== "number" ||
-    (value.returnView !== "today" &&
+    (value.returnView !== "training" &&
       value.returnView !== "calendar" &&
-      value.returnView !== "coaching" &&
-      value.returnView !== "program")
+      value.returnView !== "coaching")
   ) {
     return null;
   }

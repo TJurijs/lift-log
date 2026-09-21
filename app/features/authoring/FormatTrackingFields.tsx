@@ -16,11 +16,13 @@ export function RecordConfiguration({ format, value, onChange }: {
         <select value={selected} onChange={(event) => {
           const weighted = event.target.value === "weighted_repetitions";
           const nextFormat = weighted ? "repetitions" : event.target.value as LoggingFormat;
-          // Preserve deliberately selected compatible extras. New exercises
-          // start with no optional extras.
+          // Each named choice defines its base metrics. Preserve deliberately
+          // selected effort/heart-rate extras, but do not carry weight into a
+          // newly selected time or distance format.
           const extras = value.filter((field) => field === "rpe" || field === "heartRate");
-          const defaults = trackingFieldsForLoggingFormat(nextFormat);
-          if (weighted || (nextFormat !== "repetitions" && value.includes("load"))) defaults.push("load");
+          const defaults = nextFormat === "repetitions"
+            ? (weighted ? ["reps", "load"] : ["reps"]) as TrackingField[]
+            : trackingFieldsForLoggingFormat(nextFormat);
           onChange(nextFormat, trackingFieldsForLoggingFormat(nextFormat, [...defaults, ...extras]));
         }}>
           <option value="repetitions">Reps</option>
@@ -47,13 +49,7 @@ export function FormatTrackingFields({
 }) {
   const optional = optionalTrackingFieldsForLoggingFormat(format);
   const selectedExtras = optional.filter((field) => value.includes(field)).map(trackingFieldLabel);
-  if (!optional.length) {
-    return (
-      <div className="format-tracking-empty full">
-        Show instructions without entering a result.
-      </div>
-    );
-  }
+  if (!optional.length) return null;
   return (
     <details className="format-tracking-field full" key={format}>
       <summary className="text-button">Customize optional fields{selectedExtras.length > 0 && <span> · {selectedExtras.join(", ")}</span>}</summary>

@@ -16,14 +16,14 @@ async function readAppSource() {
 }
 test("program creation presents an ordered workout sequence instead of a week plan", async () => {
   const app = await readAppSource();
-  const programModal = app.slice(
-    app.indexOf("function ProgramModal"),
-    app.indexOf("function ScheduleModal"),
+  const programModal = await readFile(
+    new URL("../app/features/authoring/ProgramModal.tsx", import.meta.url),
+    "utf8",
   );
 
   assert.match(
     app,
-    /repository\.createBlankProgram\(target\.id, title\)/,
+    /repository\.createBlankProgram\(viewer\.id, title\)/,
     "program creation should not require a planning-mode choice",
   );
   assert.doesNotMatch(app, /program\.mode|template\.mode/);
@@ -33,7 +33,8 @@ test("program creation presents an ordered workout sequence instead of a week pl
   );
   assert.match(
     programModal,
-    /Add workouts in training order\. Choose dates when you use or assign the program\./,
+    /Workout name.*Program name/,
+    "program creation should ask directly for a name",
   );
   assert.doesNotMatch(programModal, /Week 1|week as many times|Duplicate week/);
 });

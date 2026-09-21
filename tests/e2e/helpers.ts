@@ -50,7 +50,7 @@ export async function signInAsTestPersona(page: Page, personaName: string) {
     appUrl: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000",
   });
   await expect(
-    page.getByRole("button", { name: "Next workouts", exact: true }),
+    page.getByRole("button", { name: "Training", exact: true }),
   ).toBeVisible();
 }
 

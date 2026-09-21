@@ -1,5 +1,5 @@
 export type ViewName =
-  "today" | "program" | "calendar" | "exercises" | "coaching";
+  "workout" | "training" | "calendar" | "exercises" | "coaching";
 
 export type ContentOrigin = "self" | "coach" | "library";
 export type TrainingContentType = "program" | "quick_workout";
@@ -52,7 +52,7 @@ const defaultTrackingFieldsByMode: Record<
   readonly TrackingField[]
 > = {
   none: [],
-  sets: ["reps"],
+  sets: ["reps", "load"],
   result: ["duration"],
   intervals: ["rounds", "duration"],
 };
@@ -115,7 +115,7 @@ const defaultTrackingFieldsByFormat: Record<
   LoggingFormat,
   readonly TrackingField[]
 > = {
-  repetitions: ["reps"],
+  repetitions: ["reps", "load"],
   duration: ["duration"],
   distance: ["distance", "duration"],
   intervals: ["rounds", "duration"],
@@ -261,12 +261,16 @@ export interface WorkoutSection {
 
 export interface PlannedWorkout {
   id: string;
+  /** Stable occurrence identity when this workout is an independently edited copy. */
+  runWorkoutId?: string;
+  originalWorkoutId?: string;
   programVersionId?: string;
   scheduledWorkoutId?: string;
   plannedDate?: string;
   title: string;
   dayLabel: string;
-  durationMinutes: number;
+  /** Optional estimate, independent of the elapsed duration recorded after training. */
+  durationMinutes?: number;
   sections: WorkoutSection[];
 }
 
@@ -319,11 +323,13 @@ export interface Program {
   createdByName: string;
   sourceType: ContentOrigin;
   sourceLabel: string;
-  templateId?: string;
   /** Present when immutable published content is assigned without cloning. */
   assignmentId?: string;
   /** Present when viewing the immutable content used by one concrete run. */
   programRunId?: string;
+  /** Internal editor context for one upcoming workout; never a separate library entry. */
+  editableRunId?: string;
+  editableRunWorkoutId?: string;
   /** Present after an assigned program is explicitly forked for customization. */
   customizedProgramId?: string;
   /** A quick workout uses the same editable workout tree without week planning. */
@@ -334,6 +340,8 @@ export interface Program {
   workoutCount?: number;
   /** Workout ids are enough to render scheduling progress without loading exercises. */
   workoutIds?: string[];
+  /** True even when the associated own training is on another history page. */
+  hasOwnRuns?: boolean;
   /** False means this is a lightweight catalog row, not an editable program tree. */
   detailsLoaded?: boolean;
 }
@@ -364,9 +372,13 @@ export interface ProgramRunWorkout {
   id: string;
   runId: string;
   workoutId: string;
+  effectiveWorkoutId?: string;
+  effectiveProgramId?: string;
+  effectiveProgramVersionId?: string;
+  canEdit?: boolean;
   title: string;
   position: number;
-  estimatedMinutes: number;
+  estimatedMinutes?: number;
   plannedDate?: string;
   status: ProgramRunWorkoutStatus;
   scheduledWorkoutId?: string;
@@ -403,6 +415,8 @@ export interface ProgramRunSummary {
   createdAt: string;
   finishedAt?: string;
   endedAt?: string;
+  /** Date key returned by the active Training feed, including undated sentinel. */
+  sortDate?: string;
 }
 
 export interface ProgramRunDetail extends ProgramRunSummary {
@@ -425,42 +439,7 @@ export interface ProgramCursor {
 export interface ProgramRunCursor {
   createdAt: string;
   id: string;
-}
-
-export interface SchedulableWorkoutCursor {
-  programTitle: string;
-  weekIndex: number;
-  workoutPosition: number;
-  id: string;
-}
-
-export interface SchedulableWorkoutCandidate {
-  kind: "program" | "assignment";
-  programId: string;
-  assignmentId?: string;
-  programVersionId: string;
-  workoutId: string;
-  programTitle: string;
-  workoutTitle: string;
-  contentType: TrainingContentType;
-  isQuickWorkout: boolean;
-  weekIndex: number;
-  weekLabel: string;
-  workoutPosition: number;
-  scheduleLabel: string;
-  estimatedMinutes: number;
-  latestOccurrence?: {
-    id: string;
-    plannedDate?: string;
-    status: OccurrenceStatus;
-    sequenceNumber: number;
-  };
-}
-
-export interface FrequentSchedulableWorkoutCandidate
-  extends SchedulableWorkoutCandidate {
-  usageCount: number;
-  lastUsedAt: string;
+  sortDate?: string;
 }
 
 export interface CalendarCursor {
@@ -483,17 +462,9 @@ export interface CoachAthleteCursor {
   id: string;
 }
 
-export interface ProgramTemplate {
-  id: string;
-  title: string;
-  description: string;
-  weekCount: number;
-  sessionsPerWeek: number;
-  sourceLabel: string;
-}
-
 export interface CompletedSession {
   id: string;
+  sourceType?: "self" | "coach";
   programRunId?: string;
   programRunWorkoutId?: string;
   programVersionId?: string;
@@ -536,29 +507,6 @@ export interface CompletedSessionDetail extends CompletedSession {
   items: CompletedSessionItemResult[];
 }
 
-export type CoachAssignedProgramStatus =
-  "awaiting_schedule" | "scheduled" | "in_progress" | "completed";
-
-export interface CoachAssignedProgramSummary {
-  id: string;
-  programId: string;
-  assignmentId?: string;
-  versionId: string;
-  title: string;
-  assignedAt: string;
-  status: CoachAssignedProgramStatus;
-  totalWorkouts: number;
-  scheduledWorkouts: number;
-  scheduledPercent: number;
-  completedWorkouts: number;
-  completionPercent: number;
-  nextWorkout?: {
-    id: string;
-    title: string;
-    date: string;
-  };
-}
-
 export interface CoachAgendaEntry {
   id: string;
   assignmentId?: string;
@@ -584,8 +532,7 @@ export interface AthleteSummary {
   initials: string;
   assignedProgramCount?: number;
   detailsLoaded?: boolean;
-  assignedPrograms: CoachAssignedProgramSummary[];
-  /** Universal self/coach runs; absent while an older backend is rolling out. */
+  /** Concrete self/coach training; loaded when its workspace opens. */
   programRuns?: ProgramRunSummary[];
   /** Keyset cursor for the athlete's next page of program runs. */
   programRunCursor?: ProgramRunCursor;
@@ -688,7 +635,7 @@ export interface WorkspaceData {
     pendingInviteCount: number;
   };
   programCatalog: Program[];
-  /** Universal self/coach runs; absent while an older backend is rolling out. */
+  /** Concrete self/coach training; loaded when its workspace opens. */
   programRuns?: ProgramRunSummary[];
   /** Keyset cursor for the viewer's next page of program runs. */
   programRunCursor?: ProgramRunCursor;
@@ -741,7 +688,7 @@ export type ProgramWorkspaceData = Pick<
   | "draftProgram"
   | "activeProgram"
 > & {
-  /** Universal self/coach runs; absent while an older backend is rolling out. */
+  /** Concrete self/coach training; loaded when its workspace opens. */
   programRuns?: ProgramRunSummary[];
   /** Keyset cursor for the viewer's next page of program runs. */
   programRunCursor?: ProgramRunCursor;

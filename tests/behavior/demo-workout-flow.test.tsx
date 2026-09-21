@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LiftLogApp from "../../app/LiftLogApp";
 import { demoViewer } from "../../lib/auth";
+import type { ScheduledWorkout } from "../../lib/domain";
 import { demoWorkspace } from "../../lib/demo-data";
 import { loadCachedActiveWorkoutWorkspace } from "../../app/features/active-workout/useActiveWorkoutPersistence";
 
@@ -13,6 +14,11 @@ beforeEach(() => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
 });
 
+function demoForSchedule(schedule: ScheduledWorkout) {
+  const source={...structuredClone(demoWorkspace.programCatalog[0]),id:schedule.programId,versionId:schedule.programVersionId,title:schedule.workoutTitle,contentType:"quick_workout" as const,weeks:[{id:"demo-week",index:1,label:"Workout",workouts:[schedule.workout]}]};
+  return {...demoWorkspace,programCatalog:[source],activeProgram:source,draftProgram:source,activeSession:null,scheduledWorkouts:[],completedSessions:[]};
+}
+
 describe("demo workout lifecycle", () => {
   it.each([false, true])("finishes planned values directly and preserves a removed final set (removed: %s)", async (removeOptionalSet) => {
     const schedule = structuredClone(demoWorkspace.scheduledWorkouts[0]);
@@ -21,8 +27,8 @@ describe("demo workout lifecycle", () => {
       { id: "planned-hold", title: "Planned hold", cue: "", mode: "sets", fields: ["duration"], prescription: { sets: 2, durationMinutes: 0.5 } },
       { id: "optional-curls", title: "Optional curls", cue: "", mode: "sets", fields: ["reps", "load"], prescription: { sets: 1, reps: "7", loadKg: 20 } },
     ] }];
-    render(<LiftLogApp viewer={demoViewer} onSignOut={vi.fn()} repository={null} initialWorkspace={{ ...demoWorkspace, activeSession: null, scheduledWorkouts: [schedule], completedSessions: [] }} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Start workout" }));
+    render(<LiftLogApp viewer={demoViewer} onSignOut={vi.fn()} repository={null} initialWorkspace={demoForSchedule(schedule)} />);
+    fireEvent.click(await screen.findByRole("button", { name: `Start workout: ${schedule.workoutTitle}` }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Session notes optional" })).toBeEnabled());
     expect(screen.getByLabelText("Planned squat, set 1, reps")).toHaveValue("5");
     expect(screen.getByLabelText("Planned squat, set 2, load in kg")).toHaveValue("40");
@@ -36,7 +42,7 @@ describe("demo workout lifecycle", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "Finish and save session" }));
     expect(screen.queryByRole("button", { name: "Finish without those results" })).not.toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "Show completed" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "History" }));
     const history = screen.getByRole("region", { name: "Completed workouts" });
     fireEvent.click(within(history).getByRole("button", { name: new RegExp(schedule.workoutTitle) }));
     expect(await screen.findAllByLabelText("5 reps · 40 kg")).toHaveLength(2);
@@ -53,8 +59,8 @@ describe("demo workout lifecycle", () => {
     const user = userEvent.setup();
     const schedule = demoWorkspace.scheduledWorkouts[0];
     const item = schedule.workout.sections.flatMap((section) => section.items).find((candidate) => candidate.mode === "sets")!;
-    render(<LiftLogApp viewer={demoViewer} onSignOut={vi.fn()} repository={null} initialWorkspace={{ ...demoWorkspace, activeSession: null, scheduledWorkouts: [schedule], completedSessions: [] }} />);
-    await user.click(await screen.findByRole("button", { name: "Start workout" }));
+    render(<LiftLogApp viewer={demoViewer} onSignOut={vi.fn()} repository={null} initialWorkspace={demoForSchedule(schedule)} />);
+    await user.click(await screen.findByRole("button", { name: `Start workout: ${schedule.workoutTitle}` }));
     const note = await screen.findByRole("textbox", { name: "Session notes optional" });
     await waitFor(() => expect(note).toBeEnabled());
     await user.type(note, "Demo session completed");
@@ -63,7 +69,7 @@ describe("demo workout lifecycle", () => {
     await user.click(screen.getByRole("button", { name: "Finish and save session" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Finish and save session" })).not.toBeInTheDocument());
     expect(await loadCachedActiveWorkoutWorkspace(demoViewer)).toBeNull();
-    await user.click(await screen.findByRole("button", { name: "Show completed" }));
+    await user.click(await screen.findByRole("tab", { name: "History" }));
     const history = screen.getByRole("region", { name: "Completed workouts" });
     await user.click(within(history).getByRole("button", { name: new RegExp(schedule.workoutTitle) }));
     expect(await screen.findByText("Demo session completed")).toBeVisible();
@@ -72,14 +78,14 @@ describe("demo workout lifecycle", () => {
 
   it("can set a demo workout back to scheduled and start again with fresh entries", async () => {
     const schedule = demoWorkspace.scheduledWorkouts[0];
-    render(<LiftLogApp viewer={demoViewer} onSignOut={vi.fn()} repository={null} initialWorkspace={{ ...demoWorkspace, activeSession: null, scheduledWorkouts: [schedule], completedSessions: [] }} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Start workout" }));
+    render(<LiftLogApp viewer={demoViewer} onSignOut={vi.fn()} repository={null} initialWorkspace={demoForSchedule(schedule)} />);
+    fireEvent.click(await screen.findByRole("button", { name: `Start workout: ${schedule.workoutTitle}` }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Session notes optional" })).toBeEnabled());
     fireEvent.change(screen.getByRole("textbox", { name: "Session notes optional" }), { target: { value: "Discard with reset" } });
     await act(async () => { window.dispatchEvent(new Event("pagehide")); });
     fireEvent.click(screen.getByLabelText(`More actions for ${schedule.workout.title}`));
-    fireEvent.click(screen.getByRole("button", { name: "Set back to scheduled" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Start workout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore workout" }));
+    fireEvent.click(await screen.findByRole("button", { name: `Start workout: ${schedule.workoutTitle}` }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Session notes optional" })).toBeEnabled());
     expect(screen.getByRole("textbox", { name: "Session notes optional" })).toHaveValue("");
   });

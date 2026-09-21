@@ -499,8 +499,7 @@ function navigationButton(page, label) {
 
 async function navigate(page, label) {
   for (const backName of [
-    /^(?:All programs|Back to Programs)$/u,
-    /^(?:Next workouts|Back to Next(?: workouts)?)$/u,
+    /^Back to Training$/u,
     /^(?:Calendar|Back to Calendar)$/u,
     /^(?:Coaching|Back to Coaching)$/u,
   ]) {
@@ -520,21 +519,16 @@ function appContent(page) {
 }
 
 async function openProgramCatalog(page) {
-  const back = appContent(page).getByRole("button", {
-    name: /^(?:All programs|Back to Programs)$/u,
-  });
-  if (await back.isVisible()) await back.click();
-  await navigate(page, "Programs");
-  await appContent(page).locator(".program-compact-list").waitFor({
+  await navigate(page, "Training");
+  await page.getByRole("tab", { name: "Active", exact: true }).click();
+  await appContent(page).locator(".training-card-list").first().waitFor({
     state: "visible",
   });
 }
 
 function firstProgramDetailTrigger(page) {
   return appContent(page)
-    .locator(
-      '.program-content-section[aria-labelledby="program-list-heading"] .program-card-main',
-    )
+    .locator(".training-card-open")
     .first();
 }
 
@@ -641,9 +635,9 @@ async function signInPersona({
     // the product UI. Measure the resulting shell bootstrap instead.
     action: async () => undefined,
     // A seeded persona may resume straight into an active workout, in which
-    // case the app shell is ready even though the Next navigation item is not
+    // case the app shell is ready even though the Training navigation item is not
     // the current page until the user leaves that detail.
-    ready: () => navigationButton(page, "Next workouts").waitFor({
+    ready: () => navigationButton(page, "Training").waitFor({
       state: "visible",
     }),
     page,
@@ -778,18 +772,18 @@ async function measureTarget({
 function janisTargets(page) {
   return [
     {
-      id: "next-workouts",
-      label: "Next workouts",
-      setup: () => navigate(page, "Programs"),
-      action: () => navigationButton(page, "Next workouts").click(),
-      ready: () => waitForNavigationSelection(page, "Next workouts"),
+      id: "training",
+      label: "Training",
+      setup: () => navigate(page, "Calendar"),
+      action: () => navigationButton(page, "Training").click(),
+      ready: () => waitForNavigationSelection(page, "Training"),
     },
     {
-      id: "programs",
-      label: "Programs",
-      setup: () => navigate(page, "Next workouts"),
-      action: () => navigationButton(page, "Programs").click(),
-      ready: () => waitForNavigationSelection(page, "Programs"),
+      id: "training-history",
+      label: "Training history",
+      setup: () => openProgramCatalog(page),
+      action: () => page.getByRole("tab", { name: "History", exact: true }).click(),
+      ready: () => waitForSelected(page.getByRole("tab", { name: "History", exact: true })),
     },
     {
       id: "program-detail",
@@ -800,21 +794,21 @@ function janisTargets(page) {
       ready: () =>
         appContent(page)
           .getByRole("button", {
-            name: /^(?:All programs|Back to Programs)$/u,
+            name: /^Back to Training$/u,
           })
           .waitFor({ state: "visible" }),
     },
     {
       id: "calendar",
       label: "Calendar",
-      setup: () => navigate(page, "Next workouts"),
+      setup: () => navigate(page, "Training"),
       action: () => navigationButton(page, "Calendar").click(),
       ready: () => waitForNavigationSelection(page, "Calendar"),
     },
     {
       id: "exercises",
       label: "Exercise library",
-      setup: () => navigate(page, "Next workouts"),
+      setup: () => navigate(page, "Training"),
       action: () => navigationButton(page, "Exercises").click(),
       ready: () => waitForNavigationSelection(page, "Exercises"),
     },
@@ -829,7 +823,7 @@ function raimondsTargets(page) {
     {
       id: "coaching-my-coaches",
       label: "Coaching · My coaches",
-      setup: () => navigate(page, "Next workouts"),
+      setup: () => navigate(page, "Training"),
       action: () => navigationButton(page, "Coaching").click(),
       ready: async () => {
         await waitForNavigationSelection(page, "Coaching");

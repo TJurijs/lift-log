@@ -1,13 +1,13 @@
 import {
   ChevronRight,
-  LoaderCircle,
   Pencil,
+  Play,
   Plus,
-  Search,
+  RefreshCw,
   Trash2,
   UserPlus,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type {
   Exercise,
   PlannedWorkout,
@@ -17,24 +17,19 @@ import type {
   CoachAgendaEntry,
   WorkoutItem,
 } from "../../../lib/domain";
-import {
-  loggingFormatFor,
-  loggingFormatLabel,
-} from "../../../lib/domain";
 import type { TrainingContentCapabilities } from "../../../lib/capabilities";
 import { cn } from "../../../lib/presentation";
 import { formatDateOnly } from "../../../lib/date-only";
 import { programRunLifecycleLabel } from "../../../lib/program-progress";
 import { presentProgramProvenance } from "../../../lib/provenance";
-import { ExerciseCategoryMark } from "../../exercise-category-icons";
-import { ExerciseVideoLinks } from "../../exercise-video-link";
+import WorkoutExercisePicker from "../authoring/WorkoutExercisePicker";
+import { ObjectActionMenu } from "../../object-action-menu";
 import type { ProgramMetadata, ProgramMetadataState } from "./useProgramMetadataDraft";
 import { actionUi, destinationLabel, trainingContentUi } from "../../ui-semantics";
 const WorkoutIcon = trainingContentUi("quick_workout").icon;
 import {
   DetailNavigation,
   InlineError,
-  ModalShell,
   PageHeader,
   SourceTag,
   StatusBadge,
@@ -58,7 +53,10 @@ export interface ProgramViewProps {
   onAddWorkout: () => void;
   onDeleteWorkout: () => void;
   onReorderWorkouts: (ids: string[]) => void;
-  onAddExercise: (exercise: Exercise) => void;
+  onAddExercise: (exercise: Exercise) => void | Promise<void>;
+  onCreateCustomExercise?: (name: string) => Promise<void>;
+  editing?: boolean;
+  onEdit?: () => void;
   onEditItem: (item: WorkoutItem) => void;
   onRemoveItem: (id: string) => void;
   onReorderItems: (ids: string[]) => void;
@@ -67,12 +65,17 @@ export interface ProgramViewProps {
   onBack: () => void;
   backLabel?: string;
   onAssignProgram?: () => void;
+  onEndProgram?: () => void;
   onEditWorkout: () => void;
-  onSchedule?: () => void;
+  onSetDates?: () => void;
+  onStart?: () => void;
   renderWorkoutItem: (item: WorkoutItem) => ReactNode;
   /** Complete, run-scoped slot metadata. Unlike coach agenda, this is not a preview. */
   runWorkouts?: ProgramRunWorkout[];
   onOpenRunWorkout?: (workout: ProgramRunWorkout) => void;
+  onStartRunWorkout?: (workout: ProgramRunWorkout) => void;
+  onOpenRunWorkoutResults?: (workout: ProgramRunWorkout) => void;
+  onEditRunWorkout?: (workout: ProgramRunWorkout) => void;
   /** Optional result/RPE enrichment for the selected workout. */
   workoutActivity?: CoachAgendaEntry[];
   onOpenActivity?: (entry: CoachAgendaEntry) => void;
@@ -95,6 +98,9 @@ export default function ProgramView({
   onDeleteWorkout,
   onReorderWorkouts,
   onAddExercise,
+  onCreateCustomExercise,
+  editing = true,
+  onEdit,
   onEditItem,
   onRemoveItem,
   onReorderItems,
@@ -103,41 +109,41 @@ export default function ProgramView({
   onBack,
   backLabel: explicitBackLabel,
   onAssignProgram,
+  onEndProgram,
   onEditWorkout,
-  onSchedule,
+  onSetDates,
+  onStart,
   renderWorkoutItem,
   runWorkouts = [],
   onOpenRunWorkout,
+  onStartRunWorkout,
+  onOpenRunWorkoutResults,
+  onEditRunWorkout,
   workoutActivity = [],
   onOpenActivity,
 }: ProgramViewProps) {
-  const [pickerQuery, setPickerQuery] = useState("");
-  const [pickerResults, setPickerResults] = useState<Exercise[]>([]);
-  const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerError, setPickerError] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [reorderingWorkouts, setReorderingWorkouts] = useState(false);
   const [reorderingExercises, setReorderingExercises] = useState(false);
-  const isEditable = program.versionStatus === "draft";
   const isQuickWorkout = program.contentType === "quick_workout";
   const { label: objectLabel, icon: ObjectIcon } = trainingContentUi(program.contentType);
-  const UseIcon = program.sourceType === "self" ? actionUi.use.icon : actionUi.schedule.icon;
+  const ScheduleIcon = actionUi.schedule.icon;
   const backLabel = explicitBackLabel ?? (
     program.programRunId
       ? program.athleteId === viewerId
-        ? destinationLabel("today")
+        ? destinationLabel("training")
         : destinationLabel("coaching")
-      : destinationLabel("program")
+      : destinationLabel("training")
   );
   const headerTitle = isQuickWorkout
     ? (selectedWorkout?.title ?? program.title)
     : program.title;
   const { title, description } = metadata;
-  const editable = isEditable && capabilities.edit;
+  const editable = capabilities.edit && editing;
   const reorderEnabled = editable && !mutationPending;
   const exerciseReorderEnabled = reorderEnabled && reorderingExercises;
   const runWorkoutByWorkoutId = useMemo(
-    () => new Map(runWorkouts.map((workout) => [workout.workoutId, workout])),
+    () => new Map(runWorkouts.map((workout) => [workout.effectiveWorkoutId ?? workout.workoutId, workout])),
     [runWorkouts],
   );
   const selectedRunWorkout = selectedWorkout
@@ -157,15 +163,33 @@ export default function ProgramView({
       selectedRunActivity.kind === "completed" &&
       selectedRunActivity.sessionId,
   );
-  const canDuplicate = Boolean(
-    !isEditable && capabilities.copyToOwn && onDuplicate,
+  const selectedRunWorkoutCanOpen = Boolean(
+    onOpenRunWorkout && selectedRunWorkout &&
+    programRun?.athleteId === viewerId &&
+    ((selectedRunWorkout.status === "completed" && selectedRunWorkout.sessionId) ||
+      (selectedRunWorkout.scheduledWorkoutId && (selectedRunWorkout.status === "scheduled" || selectedRunWorkout.status === "in_progress"))),
+  );
+  const selectedRunWorkoutCanStart = Boolean(
+    onStartRunWorkout && selectedRunWorkout && programRun?.athleteId === viewerId &&
+    (programRun.status === "not_started" || programRun.status === "in_progress") &&
+    (selectedRunWorkout.status === "unscheduled" || selectedRunWorkout.status === "scheduled" || selectedRunWorkout.status === "in_progress"),
+  );
+  const startSelectedWorkout = selectedRunWorkoutCanStart && selectedRunWorkout
+    ? () => onStartRunWorkout?.(selectedRunWorkout)
+    : !programRun && selectedWorkout ? onStart : undefined;
+  const canDuplicate = Boolean(capabilities.copyToOwn && onDuplicate);
+  const canEditSelectedRunWorkout = Boolean(
+    onEditRunWorkout && selectedRunWorkout &&
+    selectedRunWorkout.canEdit &&
+    (selectedRunWorkout.status === "scheduled" || selectedRunWorkout.status === "unscheduled") &&
+    (programRun?.status === "not_started" || programRun?.status === "in_progress"),
   );
   const runContextLabel = programRun
     ? programRun.createdById === programRun.athleteId
       ? programRun.athleteId === viewerId
-        ? `Your ${isQuickWorkout ? "workout" : "training plan"}`
-        : `${program.ownerName}'s ${isQuickWorkout ? "workout" : "training plan"}`
-      : `Assigned ${isQuickWorkout ? "workout" : "plan"}`
+        ? `Your ${isQuickWorkout ? "workout" : "program"}`
+        : `${program.ownerName}'s ${isQuickWorkout ? "workout" : "program"}`
+      : `Assigned ${isQuickWorkout ? "workout" : "program"}`
     : "";
   const runStatus = programRun
     ? programRun.status === "not_started"
@@ -179,55 +203,7 @@ export default function ProgramView({
             }
           : { status: "locked" as const, label: "Ended" }
     : null;
-  useEffect(() => {
-    if (!editable || !pickerOpen) return;
-    let active = true;
-    const timer = window.setTimeout(() => {
-      setPickerLoading(true);
-      setPickerError("");
-      void onSearchExercises(pickerQuery)
-        .then((results) => {
-          if (active) setPickerResults(results.slice(0, 20));
-        })
-        .catch((error: unknown) => {
-          if (!active) return;
-          setPickerError(
-            error instanceof Error
-              ? error.message
-              : "The exercise library could not be searched.",
-          );
-        })
-        .finally(() => {
-          if (active) setPickerLoading(false);
-        });
-    }, 250);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [editable, onSearchExercises, pickerOpen, pickerQuery]);
   const workoutItems = selectedWorkout?.sections.flatMap((section) => section.items) ?? [];
-  const selectedWorkoutIndex = workouts.findIndex(
-    (workout) => workout.id === selectedWorkout?.id,
-  );
-
-  function openExercisePicker() {
-    setPickerQuery("");
-    setPickerResults([]);
-    setPickerError("");
-    setPickerLoading(true);
-    setPickerOpen(true);
-  }
-
-  function closeExercisePicker() {
-    setPickerOpen(false);
-  }
-
-  function addExerciseFromPicker(exercise: Exercise) {
-    if (!selectedWorkout?.sections[0]) return;
-    setPickerOpen(false);
-    onAddExercise(exercise);
-  }
 
   function moveWorkout(index: number, offset: -1 | 1) {
     if (mutationPending) return;
@@ -241,66 +217,10 @@ export default function ProgramView({
     if (ids) onReorderItems(ids);
   }
 
-  const exercisePickerBody = selectedWorkout?.sections.length ? (
-    <>
-      <label className="search-field">
-        <Search size={16} />
-        <input
-          aria-label="Search exercises"
-          value={pickerQuery}
-          onChange={(event) => {
-            setPickerQuery(event.target.value);
-            setPickerLoading(true);
-            setPickerResults([]);
-            setPickerError("");
-          }}
-          placeholder="Search exercises"
-        />
-      </label>
-      <div className="picker-results">
-        {pickerLoading && !pickerResults.length && (
-          <div className="empty-inline" role="status">
-            <LoaderCircle className="button-spinner" size={16} />
-            Searching…
-          </div>
-        )}
-        {pickerError && (
-          <div className="empty-inline" role="alert">
-            {pickerError}
-          </div>
-        )}
-        {pickerResults.map((exercise) => (
-          <ExercisePickerRow
-            key={exercise.id}
-            exercise={exercise}
-            disabled={!reorderEnabled}
-            onAdd={() => addExerciseFromPicker(exercise)}
-          />
-        ))}
-        {!pickerLoading && !pickerError && !pickerResults.length && (
-          <div className="empty-inline">No matching exercises.</div>
-        )}
-      </div>
-      <small className="picker-help">
-        Select an exercise, then prescribe sets, weight or time.
-      </small>
-    </>
-  ) : (
-    <div className="empty-inline">This workout is not ready for exercises.</div>
-  );
   const detailAction = editable ? (
     <span className="program-save-status" role="status">
       {metadata.status === "saving" ? "Saving…" : metadata.status === "unsaved" ? "Unsaved" : metadata.status === "error" ? "Couldn't save" : "Saved"}
     </span>
-  ) : canDuplicate ? (
-    <button
-      type="button"
-      className="detail-navigation-primary"
-      disabled={Boolean(action)}
-      onClick={onDuplicate}
-    >
-      {action === "duplicate" ? "Duplicating…" : "Duplicate"}
-    </button>
   ) : undefined;
   return (
     <>
@@ -314,13 +234,13 @@ export default function ProgramView({
         eyebrow={
           programRun
             ? program.athleteId === viewerId
-              ? `${programRun.status === "completed" || programRun.status === "ended" ? "Past" : "Your"} ${isQuickWorkout ? "workout" : "training plan"}`
+              ? `${programRun.status === "completed" || programRun.status === "ended" ? "Past" : "Your"} ${isQuickWorkout ? "workout" : "program"}`
               : `Training for ${program.ownerName}`
             : program.athleteId === viewerId
             ? isQuickWorkout
               ? "Your workout"
               : "Your program"
-            : `Planning for ${program.ownerName}`
+            : `Training for ${program.ownerName}`
         }
         title={
           <>
@@ -351,37 +271,54 @@ export default function ProgramView({
         description={!editable ? program.description : undefined}
       >
         <div className="program-editor-header-actions">
-          <SourceTag
+          {program.sourceType !== "self" && <SourceTag
             presentation={presentProgramProvenance(program, viewerId)}
-          />
-          <StatusBadge
-            status={runStatus?.status ?? (isEditable ? "editable" : "locked")}
-            label={runStatus?.label ?? (isEditable ? "Template" : "Saved version")}
-          />
-          {(onSchedule || onAssignProgram) && (
+          />}
+          {runStatus && <StatusBadge status={runStatus.status} label={runStatus.label} />}
+          {editable ? (
             <div className="program-editor-secondary-actions">
-              {onSchedule && (
-                <button className="button secondary small" onClick={onSchedule}>
-                  <UseIcon size={15} />
-                  {program.sourceType === "self" ? `Use ${objectLabel.toLowerCase()}` : "Schedule"}
+              <button type="button" className="button primary small" disabled={Boolean(action) || mutationPending || metadata.status === "saving" || !title.trim()} onClick={() => onSave(title, description)}>Save</button>
+            </div>
+          ) : (startSelectedWorkout || onSetDates || onAssignProgram || canDuplicate || onEndProgram || onEdit) && (
+            <div className="program-editor-secondary-actions">
+              {startSelectedWorkout && (
+                <button type="button" className="button primary small" disabled={Boolean(action) || mutationPending} onClick={startSelectedWorkout}>
+                  <Play size={15} />{selectedRunWorkout?.status === "in_progress" ? "Resume workout" : "Start workout"}
+                </button>
+              )}
+              {onSetDates && (
+                <button className={`button ${startSelectedWorkout ? "secondary" : "primary"} small`} disabled={Boolean(action) || mutationPending} onClick={onSetDates}>
+                  <ScheduleIcon size={15} />
+                  {programRun?.scheduledWorkouts ? "Change dates" : "Set dates"}
+                </button>
+              )}
+              {capabilities.edit && onEdit && <button type="button" className="button secondary small" disabled={Boolean(action) || mutationPending} onClick={onEdit}><Pencil size={15} />Edit</button>}
+              {canDuplicate && (
+                <button type="button" className="button secondary small" disabled={Boolean(action) || mutationPending} onClick={onDuplicate}>
+                  <RefreshCw size={15} />
+                  {action === "duplicate" ? "Preparing…" : "Repeat"}
                 </button>
               )}
               {onAssignProgram && (
                 <button
                   className="button secondary small"
-                  disabled={Boolean(action)}
+                  disabled={Boolean(action) || mutationPending}
                   onClick={onAssignProgram}
                 >
                   <UserPlus size={15} />
                   Assign to athletes
                 </button>
               )}
+              {onEndProgram && <ObjectActionMenu title={program.title} actions={[{
+                ...actionUi.delete, label: "Remove from training", accessibleLabel: `Remove ${program.title} from training`,
+                onClick: onEndProgram, destructive: true, disabled: Boolean(action) || mutationPending,
+              }]} />}
             </div>
           )}
         </div>
       </PageHeader>
       {programRun && (
-        <section className="program-run-context" aria-label="Training plan progress">
+        <section className="program-run-context" aria-label="Training progress">
           <div className="program-run-context-copy">
             <span className="program-run-context-icon" aria-hidden="true">
               <ObjectIcon size={18} />
@@ -430,12 +367,7 @@ export default function ProgramView({
           />
         </label>
       )}
-      {editable && (
-        <div className="program-metadata-status">
-          <p>Changes save automatically.</p>
-          {metadata.error && <InlineError>{metadata.error} <button type="button" className="text-button" onClick={() => onSave(title, description)}>Try again</button></InlineError>}
-        </div>
-      )}
+      {editable && metadata.error && <div className="program-metadata-status"><InlineError>{metadata.error} <button type="button" className="text-button" onClick={() => onSave(title, description)}>Try again</button></InlineError></div>}
       <div
         className={`builder-layout${isQuickWorkout ? " quick-workout-builder" : ""}`}
       >
@@ -446,43 +378,6 @@ export default function ProgramView({
               reorderingWorkouts && "mobile-reorder-open",
             )}
           >
-            <div className="mobile-workout-switcher">
-              <label className="form-field">
-                <span>
-                  {selectedWorkoutIndex >= 0
-                    ? `Workout ${selectedWorkoutIndex + 1} of ${workouts.length}`
-                    : "Choose a workout"}
-                </span>
-                <select
-                  aria-label="Current workout"
-                  value={selectedWorkout?.id ?? ""}
-                  disabled={!workouts.length}
-                  onChange={(event) => onSelectWorkout(event.target.value)}
-                >
-                  {!selectedWorkout && <option value="">Choose a workout</option>}
-                  {workouts.map((workout, index) => {
-                    const runWorkout = runWorkoutByWorkoutId.get(workout.id);
-                    return (
-                      <option key={workout.id} value={workout.id}>
-                        {index + 1}. {workout.title} · {runWorkout
-                          ? compactRunWorkoutMeta(runWorkout)
-                          : `${workout.durationMinutes} min`}
-                      </option>
-                    );
-                  })}
-                </select>
-              </label>
-              {editable && workouts.length > 1 && (
-                <button
-                  type="button"
-                  className="text-button workout-reorder-toggle"
-                  aria-pressed={reorderingWorkouts}
-                  onClick={() => setReorderingWorkouts((current) => !current)}
-                >
-                  {reorderingWorkouts ? "Done" : "Reorder"}
-                </button>
-              )}
-            </div>
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Workout sequence</p>
@@ -516,7 +411,7 @@ export default function ProgramView({
                 />
               ))}
             </div>
-            {!isQuickWorkout && (
+            {editable && (
               <button
                 className="button secondary full"
                 disabled={!editable}
@@ -535,20 +430,28 @@ export default function ProgramView({
                   <div>
                     <div className="editor-title-row">
                       <h2>{selectedWorkout.title}</h2>
-                      {editable && !isQuickWorkout && (
+                      {editable && (
                         <button
-                          className="button secondary small"
+                          className="icon-button"
+                          title="Edit workout details"
                           onClick={onEditWorkout}
                           aria-label={`Edit details for ${selectedWorkout.title}`}
                         >
                           <Pencil size={14} />
-                          Edit details
                         </button>
                       )}
                     </div>
-                    <p>Estimated {selectedWorkout.durationMinutes} minutes</p>
+                    {selectedWorkout.durationMinutes !== undefined && <p>{selectedWorkout.durationMinutes} min</p>}
                   </div>
                   <div className="editor-actions">
+                    {canEditSelectedRunWorkout && selectedRunWorkout && (
+                      <button type="button" className="button secondary small"
+                        disabled={Boolean(action) || mutationPending}
+                        onClick={() => onEditRunWorkout?.(selectedRunWorkout)}
+                        aria-label={`Edit ${selectedWorkout.title}`}>
+                        <Pencil size={15} />Edit workout
+                      </button>
+                    )}
                     {editable && !isQuickWorkout && (
                       <button
                         className="icon-button danger"
@@ -578,7 +481,9 @@ export default function ProgramView({
                             selectedRunActivity &&
                             onOpenActivity
                               ? () => onOpenActivity(selectedRunActivity)
-                              : onOpenRunWorkout
+                              : selectedRunWorkout.status === "completed" && selectedRunWorkout.sessionId && onOpenRunWorkoutResults
+                                ? () => onOpenRunWorkoutResults(selectedRunWorkout)
+                              : selectedRunWorkoutCanOpen && onOpenRunWorkout
                                 ? () => onOpenRunWorkout(selectedRunWorkout)
                                 : undefined
                           }
@@ -632,7 +537,7 @@ export default function ProgramView({
                         className="button secondary full"
                         type="button"
                         disabled={mutationPending}
-                        onClick={openExercisePicker}
+                        onClick={() => setPickerOpen(true)}
                       >
                         <Plus size={15} />
                         Add exercise
@@ -649,14 +554,13 @@ export default function ProgramView({
           )}
         </section>
         {editable && pickerOpen && (
-          <ModalShell
-            title="Add exercise"
-            description="Choose an exercise, then set its prescription."
-            onClose={closeExercisePicker}
-            className="exercise-picker-modal"
-          >
-            {exercisePickerBody}
-          </ModalShell>
+          <WorkoutExercisePicker
+            onSearch={onSearchExercises}
+            onSelect={onAddExercise}
+            onCreateCustom={onCreateCustomExercise}
+            onClose={() => setPickerOpen(false)}
+            pending={mutationPending}
+          />
         )}
       </div>
     </>
@@ -682,9 +586,9 @@ function runWorkoutStatusLabel(status: ProgramRunWorkout["status"]) {
     case "skipped":
       return "Skipped";
     case "cancelled":
-      return "Cancelled";
+      return "Removed";
     default:
-      return "Not scheduled";
+      return "No date";
   }
 }
 
@@ -693,7 +597,7 @@ function compactRunWorkoutMeta(workout: ProgramRunWorkout) {
   const date = workout.plannedDate
     ? ` ${coachActivityDate(workout.plannedDate)}`
     : "";
-  const duration = workout.estimatedMinutes > 0
+  const duration = (workout.estimatedMinutes ?? 0) > 0
     ? ` · ${workout.estimatedMinutes} min`
     : "";
   return `${status}${date}${duration}`;
@@ -743,43 +647,6 @@ function RunWorkoutActivityRow({
         <ChevronRight size={15} />
       ) : null}
     </button>
-  );
-}
-
-function ExercisePickerRow({
-  exercise,
-  disabled,
-  onAdd,
-}: {
-  exercise: Exercise;
-  disabled: boolean;
-  onAdd: () => void;
-}) {
-  return (
-    <div className="picker-result-row">
-      <button
-        className="picker-result-main"
-        type="button"
-        disabled={disabled}
-        onClick={onAdd}
-      >
-        <ExerciseCategoryMark category={exercise.category} />
-        <div>
-          <strong>{exercise.name}</strong>
-          <small>
-            {exercise.category} · {loggingFormatLabel(
-              loggingFormatFor(exercise.defaultMode, exercise.defaultFields),
-            )}
-          </small>
-        </div>
-        <Plus size={15} />
-      </button>
-      <ExerciseVideoLinks
-        url={exercise.videoUrl}
-        videoLinks={exercise.videoLinks}
-        exerciseName={exercise.name}
-      />
-    </div>
   );
 }
 
@@ -839,15 +706,13 @@ function WorkoutOrderRow({
       ) : (
         <span className="drag-handle-placeholder" aria-hidden />
       )}
-      <button type="button" className="workout-row-main" onClick={onSelect}>
+      <button type="button" className="workout-row-main" aria-pressed={selected}
+        aria-label={[index + 1, workout.title, runWorkout ? compactRunWorkoutMeta(runWorkout) : workout.durationMinutes !== undefined ? `${workout.durationMinutes} min` : ""].filter(Boolean).join(" ")}
+        onClick={onSelect}>
         <span>{index + 1}</span>
         <div>
           <strong>{workout.title}</strong>
-          <small>{
-            runWorkout
-              ? compactRunWorkoutMeta(runWorkout)
-              : `${workout.durationMinutes} min`
-          }</small>
+          {(runWorkout || workout.durationMinutes !== undefined) && <small>{runWorkout ? compactRunWorkoutMeta(runWorkout) : `${workout.durationMinutes} min`}</small>}
         </div>
         <ChevronRight size={16} />
       </button>

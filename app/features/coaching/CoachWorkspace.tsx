@@ -1,5 +1,4 @@
 import {
-  CalendarPlus,
   Check,
   ChevronRight,
   Clock3,
@@ -15,7 +14,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AthleteSummary,
   CoachAgendaEntry,
-  CoachAssignedProgramSummary,
   PendingCoachInvite,
   ProgramRunStatus,
   ProgramRunSummary,
@@ -39,13 +37,8 @@ import { ProgramRunCompactCard } from "../program-runs/ProgramRunCompactCard";
 
 export type CoachAthleteWorkspaceTab = "plan" | "history";
 
-export type CoachWorkspaceRun = ProgramRunSummary & {
-  assignmentId?: string;
-  legacy?: boolean;
-};
-export type CoachWorkspaceProgram =
-  | CoachWorkspaceRun
-  | CoachAssignedProgramSummary;
+export type CoachWorkspaceRun = ProgramRunSummary;
+export type CoachWorkspaceProgram = ProgramRunSummary;
 
 export interface CoachWorkspaceProps {
   panelId?: string;
@@ -111,46 +104,8 @@ const programStatusPresentation: Record<
   ended: { badge: "planned" },
 };
 
-function normalizeLegacyRun(
-  athlete: AthleteSummary,
-  program: CoachAssignedProgramSummary,
-): CoachWorkspaceRun {
-  return {
-    id: program.id,
-    athleteId: athlete.id,
-    createdById: "legacy",
-    programId: program.programId,
-    programVersionId: program.versionId,
-    title: program.title,
-    status:
-      program.status === "completed"
-        ? "completed"
-        : program.status === "in_progress"
-          ? "in_progress"
-          : "not_started",
-    totalWorkouts: program.totalWorkouts,
-    scheduledWorkouts: program.scheduledWorkouts,
-    completedWorkouts: program.completedWorkouts,
-    completionPercent: program.completionPercent,
-    nextWorkout: program.nextWorkout
-      ? {
-          id: program.nextWorkout.id,
-          title: program.nextWorkout.title,
-          plannedDate: program.nextWorkout.date,
-          status: "scheduled",
-        }
-      : undefined,
-    createdAt: program.assignedAt,
-    assignmentId: program.assignmentId,
-    legacy: true,
-  };
-}
-
 function runsForAthlete(athlete: AthleteSummary) {
-  if (athlete.programRuns?.length) return athlete.programRuns as CoachWorkspaceRun[];
-  return athlete.assignedPrograms.map((program) =>
-    normalizeLegacyRun(athlete, program),
-  );
+  return athlete.programRuns ?? [];
 }
 
 function dateLabel(value: string, includeYear = false) {
@@ -170,22 +125,9 @@ function dateLabel(value: string, includeYear = false) {
 
 function agendaForProgram(
   athlete: AthleteSummary,
-  value: CoachWorkspaceProgram,
+  program: CoachWorkspaceProgram,
 ) {
-  const program =
-    "programVersionId" in value ? value : normalizeLegacyRun(athlete, value);
-  return athlete.agenda.filter((entry) => {
-    if (entry.programRunId || !program.legacy) {
-      return entry.programRunId === program.id;
-    }
-    if (program.assignmentId && entry.assignmentId) {
-      return entry.assignmentId === program.assignmentId;
-    }
-    return (
-      entry.programId === program.programId &&
-      entry.programVersionId === program.programVersionId
-    );
-  });
+  return athlete.agenda.filter((entry) => entry.programRunId === program.id);
 }
 
 function completedHistory(athlete: AthleteSummary) {
@@ -368,7 +310,7 @@ export function CoachWorkspace({
           <section className="panel coach-workspace-empty">
             <Users size={28} />
             <h2>Select an athlete</h2>
-            <p>Choose an athlete to review their plan and workout history.</p>
+            <p>Choose an athlete to review their training and workout history.</p>
           </section>
         )}
       </div>
@@ -506,8 +448,8 @@ function AthleteDirectory({
           const programCount = athlete.detailsLoaded === false
             ? (athlete.assignedProgramCount ?? loadedProgramCount) : loadedProgramCount;
           const summary = partial
-            ? (programCount ? `${programCount}+ active plans loaded` : "More training to load")
-            : (programCount ? `${programCount} active ${programCount === 1 ? "plan" : "plans"}` : "No active training");
+            ? (programCount ? `${programCount}+ active training items loaded` : "More training to load")
+            : (programCount ? `${programCount} active` : "No active training");
           return (
             <button
               type="button"
@@ -515,7 +457,7 @@ function AthleteDirectory({
               className={selectedAthleteId === athlete.id ? "active" : undefined}
               onClick={() => onSelectAthlete(athlete)}
               aria-current={selectedAthleteId === athlete.id ? "page" : undefined}
-              aria-label={partial ? `Open ${athlete.name}, ${summary}` : `Open ${athlete.name}, ${programCount} active training ${programCount === 1 ? "plan" : "plans"}`}
+              aria-label={partial ? `Open ${athlete.name}, ${summary}` : `Open ${athlete.name}, ${programCount} active training ${programCount === 1 ? "item" : "items"}`}
             >
               <PersonAvatar initials={athlete.initials} name={athlete.name} />
               <span>
@@ -619,7 +561,6 @@ function AthleteWorkspace({
             <>
               <LoaderCircle className="button-spinner" size={28} />
               <h2>Loading {athlete.name}…</h2>
-            <p>Fetching active training and recent workout results.</p>
             </>
           ) : (
             <>
@@ -651,7 +592,6 @@ function AthleteWorkspace({
           <div>
             <p className="eyebrow">Athlete</p>
             <h2>{athlete.name}</h2>
-            <p>Assigned training and workout results</p>
           </div>
         </div>
         <button type="button" className="button primary" onClick={onAssign}>
@@ -662,7 +602,7 @@ function AthleteWorkspace({
 
       <SegmentedTabs
         tabs={[
-          { value: "plan", label: "Plan", icon: CalendarPlus },
+          { value: "plan", label: "Training", icon: trainingContentUi("program").icon },
           { value: "history", label: "History", icon: History },
         ]}
         value={tab}
@@ -675,7 +615,7 @@ function AthleteWorkspace({
       <div
         id="coach-athlete-workspace-panel"
         role="tabpanel"
-        aria-label={tab === "plan" ? "Athlete plan" : "Workout history"}
+        aria-label={tab === "plan" ? "Athlete training" : "Workout history"}
       >
         {tab === "plan" ? (
           <AthletePlan
@@ -742,9 +682,9 @@ function AthletePlan({
     <section className="panel coach-plan-panel">
       <div className="coach-section-heading">
         <div>
-          <p className="eyebrow">Plan</p>
+          <p className="eyebrow">Workouts and programs</p>
           <h2>
-            {athlete.hasMoreProgramRuns ? "Active training" : `${runs.length} active ${runs.length === 1 ? "plan" : "plans"}`}
+            Active training{athlete.hasMoreProgramRuns ? "" : ` (${runs.length})`}
           </h2>
         </div>
       </div>
@@ -766,13 +706,13 @@ function AthletePlan({
       ) : athlete.hasMoreProgramRuns ? (
         <div className="coach-plan-empty" role="status">
           <h3>More training available</h3>
-          <p>No active plans appear in the training loaded so far. Load more training below to find older active plans.</p>
+          <p>No unfinished workouts or programs are loaded yet. Load more training below.</p>
         </div>
       ) : (
         <div className="coach-plan-empty">
           <span><Dumbbell size={24} /></span>
           <h3>No training assigned</h3>
-          <p>Assign a program or workout to give {athlete.name} a clear plan.</p>
+          <p>Assign a program or workout to {athlete.name}.</p>
           <button type="button" className="button primary" onClick={onAssign}>
             <Dumbbell size={15} />
             Assign training
@@ -838,24 +778,11 @@ function AthleteHistory({
   const { finishedRuns, programForEntry } = useMemo(() => {
     const runs = runsForAthlete(athlete);
     const byId = new Map(runs.map((run) => [run.id, run]));
-    const byAssignment = new Map<string, CoachWorkspaceRun>();
-    const byVersion = new Map<string, CoachWorkspaceRun | null>();
-    const versionKey = (value: { programId: string; programVersionId: string }) =>
-      `${value.programId}:${value.programVersionId}`;
-    for (const run of runs) {
-      if (run.assignmentId) byAssignment.set(run.assignmentId, run);
-      const key = versionKey(run);
-      // Repeated runs share a version. A legacy result without a run or
-      // assignment ID must never open an arbitrary repetition of that plan.
-      byVersion.set(key, byVersion.has(key) ? null : run);
-    }
     return {
       finishedRuns: runs.filter((run) => run.status === "completed" || run.status === "ended"),
       programForEntry: (entry: CoachAgendaEntry) => entry.programRunId
         ? byId.get(entry.programRunId)
-        : entry.assignmentId
-          ? byAssignment.get(entry.assignmentId)
-          : byVersion.get(versionKey(entry)),
+        : undefined,
     };
   }, [athlete]);
   return (
@@ -896,7 +823,7 @@ function AthleteHistory({
                       : <ChevronRight size={16} aria-hidden="true" />}
                   </span>
                 </button>
-                {!run.legacy && onRepeat && (
+                {onRepeat && (
                   <div className="coach-finished-run-actions">
                     <button
                       type="button"

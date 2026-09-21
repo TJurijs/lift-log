@@ -141,17 +141,16 @@ export default function CalendarView({
       <PageHeader
         eyebrow="Your schedule"
         title="Calendar"
-        description="Plan your workout dates and review completed training."
       >
         {canSchedule ? (
           <button className="button primary" onClick={onSchedule}>
             <ScheduleIcon size={15} />
-            Schedule workout
+            Set training dates
           </button>
         ) : (
-          <button className="button primary" onClick={() => onNavigate("program")}>
+          <button className="button primary" onClick={() => onNavigate("training")}>
             <ProgramIcon size={15} />
-            Choose a program
+            Open training
           </button>
         )}
       </PageHeader>
@@ -159,17 +158,14 @@ export default function CalendarView({
         <div className="panel">
           <span><ScheduleIcon size={18} /></span>
           <div><small>Scheduled this month</small><strong>{monthSchedules.length}</strong></div>
-          <em>Upcoming and overdue</em>
         </div>
         <div className="panel">
           <span><TrendingUp size={18} /></span>
           <div><small>Completed this month</small><strong>{monthSessions.length}</strong></div>
-          <em>{monthSessions.length ? "Synced history" : "No sessions yet"}</em>
         </div>
         <div className="panel">
           <span><Activity size={18} /></span>
           <div><small>Average session RPE</small><strong>{averageRpe ? averageRpe.toFixed(1) : "—"}</strong></div>
-          <em>{averageRpe ? "From completed logs" : "Add RPE after training"}</em>
         </div>
       </div>
       <div className="calendar-layout">
@@ -217,7 +213,7 @@ export default function CalendarView({
                     <button
                       type="button"
                       className="calendar-day-action calendar-day-schedule"
-                      aria-label={`Schedule a workout on ${date}`}
+                      aria-label={`Set training dates from ${date}`}
                       onClick={() => { setSelectedDate(date); onScheduleDay(date); }}
                     ><span aria-hidden="true">{day}</span></button>
                   ) : <span className="calendar-day-number">{day}</span>}
@@ -272,7 +268,7 @@ export default function CalendarView({
               <div><small>Selected day</small><h3 id="calendar-selected-date-title" aria-live="polite">{selectedDateLabel}</h3></div>
               {canSchedule && (
                 <button type="button" className="button secondary small" onClick={() => onScheduleDay(selectedDate)}>
-                  <ScheduleIcon size={15} />Schedule workout
+                  <ScheduleIcon size={15} />Set training dates
                 </button>
               )}
             </div>

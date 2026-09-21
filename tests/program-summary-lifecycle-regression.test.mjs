@@ -16,10 +16,6 @@ const programViewUrl = new URL(
   "../app/features/programs/ProgramView.tsx",
   import.meta.url,
 );
-const coachWorkspaceUrl = new URL(
-  "../app/features/coaching/CoachWorkspace.tsx",
-  import.meta.url,
-);
 
 test("first use freezes one run revision while a reusable draft remains editable", async () => {
   const [migration, repository, app, programView] = await Promise.all([
@@ -45,8 +41,12 @@ test("first use freezes one run revision while a reusable draft remains editable
   assert.doesNotMatch(app, /repository\.publishProgram/);
   assert.match(app, /useProgramMetadataDraft\(program\)/);
   assert.doesNotMatch(app, /stays editable until you schedule or assign it/i);
-  assert.match(programView, /Changes save automatically\./);
-  assert.match(programView, /Duplicate/);
+  assert.match(programView, /const editable = capabilities\.edit && editing;/);
+  assert.match(programView, /onClick=\{\(\) => onSave\(title, description\)\}>Save<\/button>/);
+  assert.match(app, /async function finishProgramEditing\(\)[\s\S]*await programMetadata\.flush\(\);[\s\S]*setProgramEditing\(false\)/,
+    "Save confirms pending metadata before leaving editor mode");
+  assert.match(programView, /capabilities\.copyToOwn && onDuplicate/);
+  assert.match(programView, /onClick=\{onDuplicate\}[\s\S]*"Repeat"/);
 });
 
 test("changed legacy drafts survive as editable copies", async () => {
@@ -55,18 +55,4 @@ test("changed legacy drafts survive as editable copies", async () => {
   assert.match(migration, /is distinct from private\.program_version_semantic_payload/i);
   assert.match(migration, /\(editable copy\)/i);
   assert.match(migration, /clone_program_version_tree/i);
-});
-
-test("coach assignment status requires a real upcoming dated occurrence", async () => {
-  const [repository, coachWorkspace] = await Promise.all([
-    readFile(repositoryUrl, "utf8"),
-    readFile(coachWorkspaceUrl, "utf8"),
-  ]);
-
-  assert.match(
-    repository,
-    /nextStatus === "planned"[\s\S]*?\? "scheduled"[\s\S]*?: "awaiting_schedule"/,
-  );
-  assert.doesNotMatch(repository, /scheduledWorkouts > 0[\s\S]*?\? "scheduled"/);
-  assert.match(coachWorkspace, /ProgramRunCompactCard/);
 });

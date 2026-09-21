@@ -8,14 +8,14 @@ test("mobile preview loads the signed-in app and changes viewport without resett
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await signInAsTestPersona(page, "Raimonds Vējonis");
-  await page.goto("/?preview=mobil#/program");
+  await page.goto("/?preview=mobil#/training");
 
   const viewport = page.getByRole("combobox", { name: "Viewport", exact: true });
   await expect(viewport).toBeVisible();
   const frameElement = page.getByTitle("Lift Log mobile preview", { exact: true });
-  await expect(frameElement).toHaveAttribute("src", /\?preview=mobile&preview_frame=1#\/program$/);
+  await expect(frameElement).toHaveAttribute("src", /\?preview=mobile&preview_frame=1#\/training$/);
   const frame = page.frameLocator('iframe[title="Lift Log mobile preview"]');
-  await expect(frame.getByRole("heading", { name: "Programs", exact: true })).toBeVisible();
+  await expect(frame.getByRole("heading", { name: "Training", exact: true })).toBeVisible();
   await expect(frame.locator("html")).toHaveClass(/dev-mobile-preview-frame/);
   await expect(frame.locator("iframe")).toHaveCount(0);
   await expect.poll(() => frame.locator("html").evaluate((element) => element.ownerDocument.defaultView?.innerWidth)).toBe(393);

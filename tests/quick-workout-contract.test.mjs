@@ -25,7 +25,7 @@ const runMigrationPath = new URL(
   import.meta.url,
 );
 const runWizardPath = new URL(
-  "../app/features/program-runs/ProgramRunWizard.tsx",
+  "../app/features/program-runs/AssignTrainingDialog.tsx",
   import.meta.url,
 );
 
@@ -43,11 +43,8 @@ test("quick workouts use the shared tree and the same run flow as programs", asy
   assert.match(app, /Create workout/);
   assert.match(app, /createQuickWorkout\(title: string\)/);
   assert.match(app, /contentType === "quick_workout"/);
-  assert.match(
-    app,
-    /const workoutItems = sortDraftsFirst\([\s\S]*contentType === "quick_workout"/,
-    "single workouts remain distinct reusable library items",
-  );
+  // Card state and repeat/start flows have behavior coverage. A separate
+  // reusable library card is no longer required after a workout is planned.
   assert.doesNotMatch(app, /isQuickWorkout \? "One session" : "Training program"/);
   assert.match(
     app,
@@ -59,14 +56,16 @@ test("quick workouts use the shared tree and the same run flow as programs", asy
     /\.builder-layout\.quick-workout-builder\s*\{[\s\S]*grid-template-columns:\s*minmax\(340px, 1fr\)/,
     "a quick workout must use the full builder width without a persistent picker column",
   );
-  assert.match(app, /Changes save automatically\./);
+  assert.match(app, /const editable = capabilities\.edit && editing;/);
+  assert.match(app, /onClick=\{\(\) => onSave\(title, description\)\}>Save<\/button>/);
   assert.doesNotMatch(app, /stays editable until you schedule or assign it/i);
   assert.match(app, /className="program-save-status" role="status"/);
   assert.match(app, /Assign to athletes/);
-  assert.match(runWizard, /program or a standalone workout/);
-  assert.match(runWizard, /mode: "self" \| "coach"/);
-  assert.match(runWizard, /Assign and schedule/);
-  assert.match(runWizard, /Set full schedule later/);
+  assert.match(runWizard, /trainingContentUi\(candidate\.training\.contentType\)/);
+  assert.match(runWizard, /choice\.kind === "run" \? choice\.training\.totalWorkouts : programWorkoutCount\(choice\.training\)/);
+  assert.doesNotMatch(runWizard, /mode: "self" \| "coach"/);
+  assert.match(runWizard, /Each athlete gets an independent copy/);
+  assert.match(runWizard, /No dates/);
   assert.match(app, /repository\.createProgramRuns\(/);
   assert.match(repository, /async createProgramRuns[\s\S]*rpc\("create_program_runs"/);
   assert.match(

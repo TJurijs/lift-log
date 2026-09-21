@@ -36,11 +36,12 @@ describe("exercise logging formats", () => {
     );
   });
 
-  it("uses lean defaults instead of inferring tracking from category", () => {
-    expect(trackingFieldsForLoggingFormat("repetitions")).toEqual(["reps"]);
+  it("defaults lifting to reps and weight while keeping RPE opt-in in every format", () => {
+    expect(trackingFieldsForLoggingFormat("repetitions")).toEqual(["reps", "load"]);
     expect(trackingFieldsForLoggingFormat("duration")).toEqual(["duration"]);
     expect(trackingFieldsForLoggingFormat("distance")).toEqual(["distance", "duration"]);
-    expect(trackingFieldsForMode("sets")).toEqual(["reps"]);
+    expect(trackingFieldsForLoggingFormat("intervals")).toEqual(["rounds", "duration"]);
+    expect(trackingFieldsForMode("sets")).toEqual(["reps", "load"]);
   });
 
   it("recognizes timed and distance sets without adding repetitions", () => {

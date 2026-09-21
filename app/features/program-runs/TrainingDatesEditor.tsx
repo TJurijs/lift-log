@@ -18,8 +18,9 @@ import {
 } from "../../../lib/program-run-schedule";
 import { InlineError, ModalShell } from "../../ui-primitives";
 
-export interface ProgramRunScheduleWizardProps {
+export interface TrainingDatesEditorProps {
   run: ProgramRunSummary;
+  initialDate?: string;
   athleteName?: string;
   onLoad: (runId: string) => Promise<ProgramRunDetail | null>;
   onClose: () => void;
@@ -44,13 +45,14 @@ function readableDate(value: string) {
   });
 }
 
-export default function ProgramRunScheduleWizard({
+export default function TrainingDatesEditor({
   run,
+  initialDate,
   athleteName,
   onLoad,
   onClose,
   onSave,
-}: ProgramRunScheduleWizardProps) {
+}: TrainingDatesEditorProps) {
   const [loadState, setLoadState] = useState<{
     runId: string;
     detail: ProgramRunDetail | null;
@@ -77,22 +79,22 @@ export default function ProgramRunScheduleWizard({
         setLoadState({
           runId: run.id,
           detail: loaded,
-          error: loaded ? "" : "This program run could not be loaded.",
+          error: loaded ? "" : "This training could not be loaded.",
         });
         const futureWorkouts = (loaded?.workouts ?? []).filter(
           (workout) =>
             workout.status === "unscheduled" || workout.status === "scheduled",
         );
         const nextFrequency = Math.min(3, Math.max(1, futureWorkouts.length));
-        const today = localDateOnly(new Date());
+        const today = initialDate ?? localDateOnly(new Date());
         setFrequency(nextFrequency);
         setStartDate(today);
         setTrainingDays(suggestProgramTrainingDays(today, nextFrequency));
         setDates(
           Object.fromEntries(
-            futureWorkouts.map((workout) => [
+            futureWorkouts.map((workout, index) => [
               workout.workoutId,
-              workout.plannedDate ?? "",
+              index === 0 && initialDate ? initialDate : workout.plannedDate ?? "",
             ]),
           ),
         );
@@ -105,14 +107,14 @@ export default function ProgramRunScheduleWizard({
             error:
               loadError instanceof Error
                 ? loadError.message
-                : "This program run could not be loaded.",
+                : "This training could not be loaded.",
           });
         }
       });
     return () => {
       active = false;
     };
-  }, [loadAttempt, onLoad, run.id]);
+  }, [initialDate, loadAttempt, onLoad, run.id]);
 
   const detail = loadState.runId === run.id ? loadState.detail : null;
   const loading = loadState.runId !== run.id;
@@ -214,19 +216,11 @@ export default function ProgramRunScheduleWizard({
 
   return (
     <ModalShell
-      title={`Schedule ${run.title}`}
-      description={
-        athleteName
-          ? isQuickWorkout
-            ? `Scheduling for ${athleteName}.`
-            : `Add or adjust future workout dates for ${athleteName}.`
-          : isQuickWorkout
-            ? "Choose when this workout happens."
-            : "Add or adjust future workout dates."
-      }
+      title={isQuickWorkout ? "Set workout date" : "Set program dates"}
+      description={athleteName ? `${run.title} · ${athleteName}` : run.title}
       onClose={onClose}
       dismissible={!saving}
-      className="program-run-schedule-wizard"
+      className="training-dates-editor"
       wide={!isQuickWorkout}
     >
       {loading ? (
@@ -257,7 +251,7 @@ export default function ProgramRunScheduleWizard({
             </button>
           </div>
           <label className="form-field">
-            <span>Choose another date</span>
+            <span>Date</span>
             <input
               type="date"
               aria-label={`Date for ${quickWorkout.title}`}
@@ -268,6 +262,9 @@ export default function ProgramRunScheduleWizard({
               }}
             />
           </label>
+          <button type="button" className="button secondary" onClick={() => setDates({ [quickWorkout.workoutId]: "" })}>
+            No date
+          </button>
         </section>
       ) : detail && editableWorkouts.length ? (
         <>
@@ -276,7 +273,7 @@ export default function ProgramRunScheduleWizard({
               <span><CalendarDays size={18} /></span>
               <div>
                 <strong>Generate a schedule</strong>
-                <small>Fill empty dates from a rhythm. Existing dates stay unchanged.</small>
+                <small>Existing dates stay unchanged.</small>
               </div>
             </div>
             <div className="program-run-generator-fields">
@@ -350,7 +347,7 @@ export default function ProgramRunScheduleWizard({
               </div>
               <span>
                 {undatedCount
-                  ? `${undatedCount} ${undatedCount === 1 ? "needs a date" : "need dates"}`
+                  ? `${undatedCount} undated`
                   : "All dated"}
               </span>
             </div>
@@ -363,7 +360,7 @@ export default function ProgramRunScheduleWizard({
                     <strong>{workout.title}</strong>
                     <small>
                       {date ? readableDate(date) : "Not on the calendar"}
-                      {workout.estimatedMinutes > 0
+                      {(workout.estimatedMinutes ?? 0) > 0
                         ? ` · ~${workout.estimatedMinutes} min`
                         : ""}
                     </small>
@@ -390,7 +387,7 @@ export default function ProgramRunScheduleWizard({
       ) : detail ? (
         <div className="program-run-schedule-loading">
           <Check size={22} />
-          There are no future workouts left to schedule.
+          There are no unfinished workouts with editable dates.
         </div>
       ) : null}
 
@@ -417,13 +414,13 @@ export default function ProgramRunScheduleWizard({
         <button
           type="button"
           className="button primary"
-          disabled={loading || saving || !editableWorkouts.length || (isQuickWorkout && !quickDate)}
+          disabled={loading || saving || !editableWorkouts.length}
           onClick={() => void save()}
         >
           {saving ? (
             <><LoaderCircle className="button-spinner" size={16} />Saving…</>
           ) : (
-            <><Check size={16} />{isQuickWorkout ? "Add to calendar" : "Save all dates"}</>
+            <><Check size={16} />{isQuickWorkout ? "Save date" : "Save dates"}</>
           )}
         </button>
       </div>
